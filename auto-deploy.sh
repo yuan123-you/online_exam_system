@@ -24,9 +24,13 @@ cd "$APP_DIR"
 echo "$(date -Iseconds) Pulling latest code..." >> "$LOG_FILE"
 git pull origin master >> "$LOG_FILE" 2>&1
 
-# 2. Frontend is static (green theme in backend/src/main/resources/static/)
-#    No build step needed — files are served directly by Nginx
-echo "$(date -Iseconds) Frontend: using static files (no build needed)" >> "$LOG_FILE"
+# 2. Copy green theme frontend files to dist/ (Nginx serves from here)
+echo "$(date -Iseconds) Updating frontend files..." >> "$LOG_FILE"
+mkdir -p "$APP_DIR/dist"
+cp "$APP_DIR/backend/src/main/resources/static/index.html" "$APP_DIR/dist/index.html"
+cp "$APP_DIR/backend/src/main/resources/static/styles.css" "$APP_DIR/dist/styles.css"
+cp "$APP_DIR/backend/src/main/resources/static/app.js" "$APP_DIR/dist/app.js"
+echo "$(date -Iseconds) Frontend files updated." >> "$LOG_FILE"
 
 # 3. Rebuild backend
 echo "$(date -Iseconds) Building backend..." >> "$LOG_FILE"
@@ -37,18 +41,7 @@ mvn -f pom.xml -DskipTests package -q >> "$LOG_FILE" 2>&1
 echo "$(date -Iseconds) Restarting backend service..." >> "$LOG_FILE"
 sudo systemctl restart online-exam
 
-# 5. Update Nginx config: change root to green theme static files
-echo "$(date -Iseconds) Updating Nginx root path..." >> "$LOG_FILE"
-NGINX_CONF="/etc/nginx/sites-available/online-exam"
-if [ -f "$NGINX_CONF" ]; then
-  # Replace the root directive to point to green theme static files
-  sudo sed -i 's|root /opt/online-exam/dist;|root /opt/online-exam/backend/src/main/resources/static;|g' "$NGINX_CONF"
-  # Remove the /assets/ caching block (Vite-specific, not needed)
-  sudo sed -i '/location \/assets\//,/^    }/d' "$NGINX_CONF"
-  sudo nginx -t >> "$LOG_FILE" 2>&1 && echo "$(date -Iseconds) Nginx config OK" >> "$LOG_FILE"
-fi
-
-# 6. Reload Nginx
+# 5. Reload Nginx (to pick up any changed static assets)
 sudo systemctl reload nginx 2>/dev/null || true
 
 echo "$(date -Iseconds) === Auto-deploy completed ===" >> "$LOG_FILE"

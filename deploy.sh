@@ -152,6 +152,15 @@ fi
 # No Vite build needed — static HTML/CSS/JS files are used directly
 echo "  Frontend: using static files from backend/src/main/resources/static/"
 
+# Copy green theme static files to dist/ for Nginx to serve
+echo ""
+echo "  Setting up frontend files..."
+mkdir -p "$APP_DIR/dist"
+cp "$APP_DIR/backend/src/main/resources/static/index.html" "$APP_DIR/dist/index.html"
+cp "$APP_DIR/backend/src/main/resources/static/styles.css" "$APP_DIR/dist/styles.css"
+cp "$APP_DIR/backend/src/main/resources/static/app.js" "$APP_DIR/dist/app.js"
+echo "  Green theme frontend files copied to dist/"
+
 # Build Backend
 echo ""
 echo "  Building backend (this may take a few minutes)..."
@@ -240,8 +249,8 @@ server {
     listen 80;
     server_name ${DOMAIN} 54.179.150.131;
 
-    # Frontend static files (green theme from Spring Boot resources)
-    root /opt/online-exam/backend/src/main/resources/static;
+    # Frontend static files (green theme)
+    root /opt/online-exam/dist;
     index index.html;
 
     # Frontend routes
