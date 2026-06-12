@@ -245,9 +245,16 @@ sudo apt-get install -y -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::=
 
 # Create Nginx configuration
 sudo tee /etc/nginx/sites-available/online-exam > /dev/null <<NGINX_EOF
+# Redirect IP access to domain
+server {
+    listen 80 default_server;
+    server_name _;
+    return 301 https://${DOMAIN}\$request_uri;
+}
+
 server {
     listen 80;
-    server_name ${DOMAIN} 54.179.150.131;
+    server_name ${DOMAIN};
 
     # Frontend static files (green theme)
     root /opt/online-exam/dist;
