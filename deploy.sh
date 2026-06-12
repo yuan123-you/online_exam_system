@@ -157,6 +157,7 @@ cd "$APP_DIR"
 npm config set registry https://registry.npmmirror.com
 
 npm install
+rm -rf dist
 npx vite build
 echo "  Frontend built to dist/ (green theme)"
 
