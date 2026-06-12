@@ -37,7 +37,18 @@ mvn -f pom.xml -DskipTests package -q >> "$LOG_FILE" 2>&1
 echo "$(date -Iseconds) Restarting backend service..." >> "$LOG_FILE"
 sudo systemctl restart online-exam
 
-# 5. Reload Nginx (in case static assets changed)
+# 5. Update Nginx config: change root to green theme static files
+echo "$(date -Iseconds) Updating Nginx root path..." >> "$LOG_FILE"
+NGINX_CONF="/etc/nginx/sites-available/online-exam"
+if [ -f "$NGINX_CONF" ]; then
+  # Replace the root directive to point to green theme static files
+  sudo sed -i 's|root /opt/online-exam/dist;|root /opt/online-exam/backend/src/main/resources/static;|g' "$NGINX_CONF"
+  # Remove the /assets/ caching block (Vite-specific, not needed)
+  sudo sed -i '/location \/assets\//,/^    }/d' "$NGINX_CONF"
+  sudo nginx -t >> "$LOG_FILE" 2>&1 && echo "$(date -Iseconds) Nginx config OK" >> "$LOG_FILE"
+fi
+
+# 6. Reload Nginx
 sudo systemctl reload nginx 2>/dev/null || true
 
 echo "$(date -Iseconds) === Auto-deploy completed ===" >> "$LOG_FILE"
