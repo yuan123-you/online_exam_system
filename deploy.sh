@@ -148,18 +148,17 @@ else
     cd "$APP_DIR"
 fi
 
-# Frontend is served from backend/src/main/resources/static/ (green theme)
-# No Vite build needed — static HTML/CSS/JS files are used directly
-echo "  Frontend: using static files from backend/src/main/resources/static/"
-
-# Copy green theme static files to dist/ for Nginx to serve
+# Build Frontend (Vite now produces green theme from public/ files)
 echo ""
-echo "  Setting up frontend files..."
-mkdir -p "$APP_DIR/dist"
-cp "$APP_DIR/backend/src/main/resources/static/index.html" "$APP_DIR/dist/index.html"
-cp "$APP_DIR/backend/src/main/resources/static/styles.css" "$APP_DIR/dist/styles.css"
-cp "$APP_DIR/backend/src/main/resources/static/app.js" "$APP_DIR/dist/app.js"
-echo "  Green theme frontend files copied to dist/"
+echo "  Building frontend..."
+cd "$APP_DIR"
+
+# Configure npm registry mirror for speed
+npm config set registry https://registry.npmmirror.com
+
+npm install
+npx vite build
+echo "  Frontend built to dist/ (green theme)"
 
 # Build Backend
 echo ""

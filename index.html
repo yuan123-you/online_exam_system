@@ -2,19 +2,47 @@
 <html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="description" content="在线考试系统 - 支持管理员、教师、学生三端协同的在线考试平台" />
-    <meta name="theme-color" content="#007aff" />
+    <meta name="theme-color" content="#3d9980" />
     <meta name="color-scheme" content="light" />
-    <meta name="apple-mobile-web-app-capable" content="yes" />
-    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
-    <meta name="format-detection" content="telephone=no" />
     <title>在线考试系统</title>
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📝</text></svg>" />
-    <link rel="stylesheet" href="/styles.css?v=20260612" />
+    <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
-    <div id="app"></div>
-    <script type="module" src="/src/main.ts"></script>
+    <main class="page-shell">
+      <section id="loginView" class="login-shell" aria-label="登录区域">
+        <div class="login-card card">
+          <div class="brand-block">
+            <p class="eyebrow">ONLINE EXAM</p>
+            <h1>在线考试系统</h1>
+          </div>
+          <form id="loginForm" class="form-grid" autocomplete="on">
+            <label>
+              <span>账号</span>
+              <input name="username" value="admin" required autocomplete="username" />
+            </label>
+            <label>
+              <span>密码</span>
+              <input type="password" name="password" value="123456" required autocomplete="current-password" />
+            </label>
+            <button type="submit" class="primary-btn wide">进入系统</button>
+          </form>
+          <p id="loginMessage" class="message" role="alert"></p>
+        </div>
+      </section>
+
+      <section id="dashboardView" class="workspace-shell hidden" aria-label="工作台"></section>
+    </main>
+
+    <div id="modal" class="modal hidden" role="dialog" aria-modal="true">
+      <div class="modal-card">
+        <button id="closeModalBtn" class="close-btn" type="button" aria-label="关闭弹窗">&times;</button>
+        <div id="modalContent"></div>
+      </div>
+    </div>
+
+    <script src="/app.js"></script>
   </body>
 </html>

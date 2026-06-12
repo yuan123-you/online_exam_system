@@ -24,13 +24,10 @@ cd "$APP_DIR"
 echo "$(date -Iseconds) Pulling latest code..." >> "$LOG_FILE"
 git pull origin master >> "$LOG_FILE" 2>&1
 
-# 2. Copy green theme frontend files to dist/ (Nginx serves from here)
-echo "$(date -Iseconds) Updating frontend files..." >> "$LOG_FILE"
-mkdir -p "$APP_DIR/dist"
-cp "$APP_DIR/backend/src/main/resources/static/index.html" "$APP_DIR/dist/index.html"
-cp "$APP_DIR/backend/src/main/resources/static/styles.css" "$APP_DIR/dist/styles.css"
-cp "$APP_DIR/backend/src/main/resources/static/app.js" "$APP_DIR/dist/app.js"
-echo "$(date -Iseconds) Frontend files updated." >> "$LOG_FILE"
+# 2. Rebuild frontend (Vite produces green theme in dist/)
+echo "$(date -Iseconds) Building frontend..." >> "$LOG_FILE"
+npm install --production=false >> "$LOG_FILE" 2>&1
+npx vite build >> "$LOG_FILE" 2>&1
 
 # 3. Rebuild backend
 echo "$(date -Iseconds) Building backend..." >> "$LOG_FILE"
@@ -41,7 +38,7 @@ mvn -f pom.xml -DskipTests package -q >> "$LOG_FILE" 2>&1
 echo "$(date -Iseconds) Restarting backend service..." >> "$LOG_FILE"
 sudo systemctl restart online-exam
 
-# 5. Reload Nginx (to pick up any changed static assets)
+# 5. Reload Nginx
 sudo systemctl reload nginx 2>/dev/null || true
 
 echo "$(date -Iseconds) === Auto-deploy completed ===" >> "$LOG_FILE"
