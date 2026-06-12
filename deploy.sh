@@ -115,15 +115,19 @@ fi
 # Ensure MySQL is running
 sudo systemctl start mysql
 
-# Create the database
-sudo mysql -u root -p"${MYSQL_ROOT_PASS}" -e "CREATE DATABASE IF NOT EXISTS ${MYSQL_DB} CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
+# Create the database and import full dump (only on first deploy)
+echo "  Checking database..."
+DB_EXISTS=$(sudo mysql -u root -p"${MYSQL_ROOT_PASS}" -sN -e "SELECT SCHEMA_NAME FROM INFORMATION_SCHEMA.SCHEMATA WHERE SCHEMA_NAME='${MYSQL_DB}';" 2>/dev/null)
+TABLE_COUNT=$(sudo mysql -u root -p"${MYSQL_ROOT_PASS}" -sN -e "SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA='${MYSQL_DB}';" 2>/dev/null || echo "0")
 
-# Import seed data (departments, classes, users, questions)
-echo "  Importing seed data..."
-sudo mysql -u root -p"${MYSQL_ROOT_PASS}" "${MYSQL_DB}" < /opt/online-exam/backend/src/main/resources/schema.sql 2>/dev/null || true
-sudo mysql -u root -p"${MYSQL_ROOT_PASS}" "${MYSQL_DB}" < /opt/online-exam/backend/src/main/resources/data.sql 2>/dev/null || true
-sudo mysql -u root -p"${MYSQL_ROOT_PASS}" "${MYSQL_DB}" < /opt/online-exam/scripts/bulk-questions.sql 2>/dev/null || true
-echo "  MySQL configured. Database '${MYSQL_DB}' created and seeded."
+if [ -z "$DB_EXISTS" ] || [ "$TABLE_COUNT" -eq 0 ]; then
+    echo "  First deploy detected — importing full database dump..."
+    sudo mysql -u root -p"${MYSQL_ROOT_PASS}" < /opt/online-exam/db/full_dump.sql
+    echo "  Database '${MYSQL_DB}' created and seeded with full dump."
+else
+    echo "  Database '${MYSQL_DB}' already exists (${TABLE_COUNT} tables), skipping import."
+    echo "  Existing data will be preserved (application handles CRUD)."
+fi
 
 #--------------------------------------------------------------
 # 6. Clone Repository and Build
