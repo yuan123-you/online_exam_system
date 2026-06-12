@@ -3,7 +3,7 @@
     <template #header>
       <div>
         <h3>{{ submission.examName || "答卷详情" }}</h3>
-        <p class="muted">{{ submission.studentName }} · {{ submission.status }} · {{ formatDate(submission.submittedAt) }}</p>
+        <p class="muted" style="font-size:13px;margin-top:4px;">{{ submission.studentName }} · <span class="tag">{{ submission.status }}</span> · {{ formatDate(submission.submittedAt) }}</p>
       </div>
     </template>
 
@@ -25,18 +25,18 @@
     <form class="preview-list" @submit.prevent="submitGrade">
       <div v-for="detail in submission.answerDetail || []" :key="detail.questionId" class="preview-item">
         <div class="between">
-          <h4>{{ detail.title }}</h4>
+          <h4 style="flex:1;">{{ detail.title }}</h4>
           <span class="tag">{{ typeLabel(detail.type) }}</span>
         </div>
-        <p class="muted">作答：{{ joinAnswer(detail.answer) }}</p>
+        <p class="muted" style="margin-top:8px;">学生作答：{{ joinAnswer(detail.answer) || "未作答" }}</p>
         <p class="muted">参考答案：{{ joinAnswer(detail.expectedAnswer) }}</p>
-        <p class="muted">当前得分：{{ detail.score }} / {{ detail.fullScore }}</p>
+        <p class="muted">当前得分：<strong style="color:var(--primary);">{{ detail.score }}</strong> / {{ detail.fullScore }}</p>
         <label v-if="canGrade" class="grade-input">
           <span>人工评分</span>
           <input v-model.number="scores[detail.questionId]" :max="detail.fullScore" min="0" type="number" />
         </label>
       </div>
-      <div class="action-row">
+      <div class="action-row" style="justify-content:flex-end;margin-top:8px;">
         <button class="ghost-btn" type="button" @click="$emit('close')">关闭</button>
         <button v-if="canGrade" class="primary-btn" type="submit">提交阅卷</button>
       </div>

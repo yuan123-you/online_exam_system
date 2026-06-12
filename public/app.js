@@ -2,10 +2,24 @@ const state = {
   currentUser: null,
   bootstrap: null,
   activeMenu: "",
+  teacherTab: "questions",
+  questionPage: 1,
+  QUESTION_PAGE_SIZE: 20,
+  studentTab: "overview",
+  recordPage: 1,
+  wrongBookPage: 1,
+  STUDENT_PAGE_SIZE: 20,
   selectedQuestionIds: [],
+  _delegatedEventsSetup: false,
+  _cachedQuestionSubjects: null,
+  questionPageData: null,
+  questionSubjects: null,
+  _questionPageCacheKey: "",
   examSession: null,
   examTimer: null,
   examAutoSaveTimer: null,
+  gradingSession: null,
+  analysisTab: "exam-stats",
   filters: {
     user_student: "",
     user_teacher: "",
@@ -30,6 +44,41 @@ const closeModalBtn = document.getElementById("closeModalBtn");
 loginForm.addEventListener("submit", handleLogin);
 closeModalBtn.addEventListener("click", () => closeModal({ preserveExamSession: false }));
 document.addEventListener("visibilitychange", handleVisibilityChange);
+window.addEventListener("beforeunload", (event) => {
+  if (state.examSession) {
+    event.preventDefault();
+    event.returnValue = "考试进行中，离开将导致答卷自动保存。确定要离开吗？";
+    return event.returnValue;
+  }
+});
+document.addEventListener("keydown", (event) => {
+  // Exam keyboard navigation
+  if (state.examSession && !modal.classList.contains("hidden")) {
+    const tag = document.activeElement?.tagName;
+    const isInput = tag === "TEXTAREA" || tag === "INPUT";
+
+    if (event.key === "ArrowLeft" && !isInput) {
+      event.preventDefault();
+      document.getElementById("examPrevBtn")?.click();
+      return;
+    }
+    if (event.key === "ArrowRight" && !isInput) {
+      event.preventDefault();
+      document.getElementById("examNextBtn")?.click();
+      return;
+    }
+    if (event.key === "Escape") {
+      event.preventDefault();
+      return; // Block Escape during exam to prevent accidental close
+    }
+    return;
+  }
+
+  // Normal modal close
+  if (event.key === "Escape" && !modal.classList.contains("hidden")) {
+    closeModal({ preserveExamSession: false });
+  }
+});
 window.addEventListener("error", (event) => {
   const message = getFriendlyErrorMessage(event.error || event.message);
   if (loginView && !loginView.classList.contains("hidden")) {
@@ -115,15 +164,18 @@ const DISPLAY_TEXT_REPLACEMENTS = [
   ["寤舵椂", "延时"],
 ];
 
+// Build a lookup map + single compiled regex for O(1) text normalization
+const _textReplaceMap = new Map(DISPLAY_TEXT_REPLACEMENTS);
+const _textReplaceRegex = new RegExp(
+  DISPLAY_TEXT_REPLACEMENTS.map(([from]) => from.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|"),
+  "g"
+);
+
 function normalizeDisplayText(text) {
   if (typeof text !== "string") {
     return text;
   }
-  let next = text;
-  DISPLAY_TEXT_REPLACEMENTS.forEach(([from, to]) => {
-    next = next.split(from).join(to);
-  });
-  return next;
+  return text.replace(_textReplaceRegex, (match) => _textReplaceMap.get(match) || match);
 }
 
 function escapeHtml(value) {
@@ -232,6 +284,8 @@ function loadBootstrap() {
   return api("/api/bootstrap")
     .then((data) => {
       state.bootstrap = data;
+      state._cachedQuestionSubjects = null; // invalidate subject cache
+      invalidateQuestionCache(); // invalidate server-side question page cache
       state.selectedQuestionIds = state.selectedQuestionIds.filter((id) =>
         data.questions.some((item) => item.id === id)
       );
@@ -303,83 +357,125 @@ function menuMap() {
   };
 }
 
-function getActiveMenuMeta() {
-  return menuMap()[state.currentUser.role].find((item) => item.key === state.activeMenu);
+function iconForMenuKey(key) {
+  const icons = {
+    stats: '<svg viewBox="0 0 24 24"><rect x="3" y="12" width="4" height="9" rx="1"/><rect x="10" y="8" width="4" height="13" rx="1"/><rect x="17" y="3" width="4" height="18" rx="1"/></svg>',
+    students: '<svg viewBox="0 0 24 24"><circle cx="9" cy="7" r="4"/><path d="M3 21v-2a4 4 0 014-4h4a4 4 0 014 4v2"/><circle cx="17" cy="7" r="3"/><path d="M21 21v-2a4 4 0 00-3-3.87"/></svg>',
+    teachers: '<svg viewBox="0 0 24 24"><path d="M22 10L12 5 2 10l10 5 10-5z"/><path d="M6 12v5c0 0 3 3 6 3s6-3 6-3v-5"/></svg>',
+    org: '<svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>',
+    logs: '<svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="14" y2="17"/></svg>',
+    overview: '<svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="9" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/><rect x="14" y="12" width="7" height="9" rx="1"/><rect x="3" y="16" width="7" height="5" rx="1"/></svg>',
+    questions: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 015.83 1c0 2-3 3-3 3"/><circle cx="12" cy="17" r=".5"/></svg>',
+    papers: '<svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>',
+    exams: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>',
+    grading: '<svg viewBox="0 0 24 24"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg>',
+    analysis: '<svg viewBox="0 0 24 24"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>',
+    "student-exams": '<svg viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 013 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>',
+    records: '<svg viewBox="0 0 24 24"><path d="M4 19.5A2.5 2.5 0 016.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z"/></svg>',
+    wrongbook: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>',
+    profile: '<svg viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>',
+  };
+  return icons[key] || '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/></svg>';
 }
 
 function renderDashboard() {
   const menuItems = menuMap()[state.currentUser.role];
-  const currentMeta = getActiveMenuMeta();
+  const isCollapsed = sessionStorage.getItem("sidebar-collapsed") === "true";
+
+  if (isCollapsed) {
+    dashboardView.classList.add("sidebar-collapsed");
+  } else {
+    dashboardView.classList.remove("sidebar-collapsed");
+  }
+
   dashboardView.innerHTML = `
     <aside class="sidebar">
-      <section class="brand-panel">
-        <h2>${roleLabel(state.currentUser.role)}工作台</h2>
-        <p class="muted">当前菜单聚焦高频操作，右侧显示对应业务功能。</p>
-      </section>
-      <section class="user-panel">
-        <p class="eyebrow">当前登录</p>
-        <h3>${state.currentUser.name}</h3>
-        <p>${roleLabel(state.currentUser.role)} · ${state.currentUser.username}</p>
-      </section>
-      <nav class="menu-list">
-        ${menuItems
-          .map(
-            (item) => `
-          <button class="menu-btn ${state.activeMenu === item.key ? "active" : ""}" data-menu="${item.key}">
-            ${item.label}
-          </button>`
-          )
-          .join("")}
-      </nav>
-      <div class="menu-footer">
-        <button class="ghost-btn" id="refreshBtn" type="button">刷新数据</button>
-        <button class="danger-btn" id="logoutBtn" type="button">退出登录</button>
+      <button class="sidebar-expand-btn" id="sidebarExpandBtn" type="button" title="展开侧边栏">&#9654;</button>
+      <div class="sidebar-top">
+        <div class="sidebar-brand">
+          <div class="sidebar-brand-icon">&#128221;</div>
+          <div class="sidebar-brand-text">
+            <h2>在线考试</h2>
+            <p class="eyebrow">${roleLabel(state.currentUser.role)}</p>
+          </div>
+        </div>
+        <button class="sidebar-collapse-btn" id="sidebarCollapseBtn" type="button" title="收起侧边栏">&#9664;</button>
+      </div>
+      <div class="sidebar-body">
+        <div class="sidebar-user">
+          <div class="sidebar-user-avatar">${escapeHtml(state.currentUser.name.charAt(0))}</div>
+          <div class="sidebar-user-info">
+            <h3>${escapeHtml(state.currentUser.name)}</h3>
+            <span>${roleLabel(state.currentUser.role)} &middot; ${escapeHtml(state.currentUser.username)}</span>
+          </div>
+        </div>
+        <nav class="menu-list">
+          <div class="menu-section-label">功能菜单</div>
+          ${menuItems
+            .map(
+              (item) => `
+            <button class="menu-btn ${state.activeMenu === item.key ? "active" : ""}" data-menu="${item.key}" title="${item.desc}">
+              <span class="menu-icon">${iconForMenuKey(item.key)}</span>
+              <span class="menu-label">
+                <strong>${item.label}</strong>
+              </span>
+            </button>`
+            )
+            .join("")}
+        </nav>
+        <div class="menu-footer">
+          <button class="ghost-btn" id="refreshBtn" type="button">
+            <span class="menu-icon"><svg viewBox="0 0 24 24"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 11-2.12-9.36L23 10"/></svg></span>
+            <span class="menu-footer-label">刷新数据</span>
+          </button>
+          <button class="danger-btn" id="logoutBtn" type="button">
+            <span class="menu-icon"><svg viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg></span>
+            <span class="menu-footer-label">退出登录</span>
+          </button>
+        </div>
       </div>
     </aside>
+    <div class="sidebar-overlay" id="sidebarOverlay"></div>
     <section class="workspace-main">
-      <header class="workspace-topbar panel">
-        <div class="workspace-title">
-          <p class="eyebrow">${roleLabel(state.currentUser.role)}</p>
-          <h2>${currentMeta.label}</h2>
-          <p>${currentMeta.desc}</p>
-        </div>
-        <div class="topbar-actions">
-          ${renderQuickAction()}
-        </div>
-      </header>
+      <div class="mobile-topbar">
+        <button class="mobile-menu-btn" id="mobileMenuBtn" type="button" title="打开菜单">
+          <svg viewBox="0 0 24 24"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+        </button>
+      </div>
       <div class="content-grid">${renderContent()}</div>
     </section>
   `;
 
-  dashboardView.querySelectorAll("[data-menu]").forEach((button) => {
-    button.addEventListener("click", () => {
-      state.activeMenu = button.dataset.menu;
-      renderDashboard();
-    });
-  });
-  document.getElementById("refreshBtn").addEventListener("click", () => loadBootstrap());
-  document.getElementById("logoutBtn").addEventListener("click", logout);
+  setupDelegatedEvents();
+  bindPermanentEvents();
   repairRenderedText(dashboardView);
-  bindContentEvents();
+
+  // Bind password form if present (student profile tab)
+  const passwordForm = document.getElementById("passwordForm");
+  if (passwordForm) passwordForm.onsubmit = updatePassword;
+
+  // Trigger async fetch for questions tab if teacher is on it
+  if (state.currentUser?.role === "teacher" && state.teacherTab === "questions") {
+    refreshQuestionBankView();
+  }
 }
 
-function renderQuickAction() {
-  if (state.currentUser.role === "admin") {
-    return `
-      <button class="primary-btn" type="button" data-open-form="student">新增学生</button>
-      <button class="ghost-btn" type="button" data-open-form="teacher">新增教师</button>
-    `;
-  }
-  if (state.currentUser.role === "teacher") {
-    return `
-      <button class="primary-btn" type="button" data-open-form="question">新增题目</button>
-      <button class="ghost-btn" type="button" data-open-form="exam">发布考试</button>
-    `;
-  }
-  return `
-    <button class="primary-btn" type="button" data-menu-jump="student-exams">进入考试列表</button>
-    <button class="ghost-btn" type="button" data-menu-jump="records">查看考试记录</button>
-  `;
+function collapseSidebar() {
+  dashboardView.classList.add("sidebar-collapsed");
+  sessionStorage.setItem("sidebar-collapsed", "true");
+}
+
+function expandSidebar() {
+  dashboardView.classList.remove("sidebar-collapsed");
+  sessionStorage.setItem("sidebar-collapsed", "false");
+}
+
+function openMobileSidebar() {
+  dashboardView.classList.add("sidebar-open");
+}
+
+function closeMobileSidebar() {
+  dashboardView.classList.remove("sidebar-open");
 }
 
 function renderContent() {
@@ -395,28 +491,68 @@ function renderContent() {
     case "logs":
       return renderLogs();
     case "overview":
-      return state.currentUser.role === "teacher" ? renderTeacherOverview() : renderStudentOverview();
+      if (state.currentUser.role === "teacher") return renderTeacherOverview();
+      if (state.currentUser.role === "student") {
+        state.studentTab = "overview";
+        return renderStudentUnifiedPanel();
+      }
+      return renderStudentOverview();
     case "questions":
-      return renderQuestions();
     case "papers":
-      return renderPapers();
     case "exams":
-      return renderTeacherExams();
     case "grading":
-      return renderGrading();
+      // Teacher: unified panel with tabs
+      if (state.currentUser.role === "teacher") {
+        if (["questions", "papers", "exams", "grading"].includes(state.activeMenu)) {
+          state.teacherTab = state.activeMenu;
+        }
+        return renderTeacherUnifiedPanel();
+      }
+      return state.activeMenu === "questions" ? renderQuestions() : "";
     case "analysis":
       return renderAnalysis();
     case "student-exams":
-      return renderStudentExams();
     case "records":
-      return renderRecords();
     case "wrongbook":
-      return renderWrongBook();
     case "profile":
-      return renderProfile();
+      if (state.currentUser.role === "student") {
+        if (["overview", "student-exams", "records", "wrongbook", "profile"].includes(state.activeMenu)) {
+          state.studentTab = state.activeMenu;
+        }
+        return renderStudentUnifiedPanel();
+      }
+      if (state.activeMenu === "student-exams") return renderStudentExams();
+      if (state.activeMenu === "records") return renderRecords();
+      if (state.activeMenu === "wrongbook") return renderWrongBook();
+      if (state.activeMenu === "profile") return renderProfile();
+      return "";
     default:
       return "";
   }
+}
+
+function panel(content, extraClass = "") {
+  return `<section class="panel${extraClass ? " " + extraClass : ""}">${content}</section>`;
+}
+
+function sectionTitle(title, subtitle, actions = "") {
+  const sub = subtitle ? `<p class="section-subtitle">${subtitle}</p>` : "";
+  const act = actions ? `<div class="section-actions">${actions}</div>` : "";
+  if (!sub && !act) {
+    return `<div class="section-title"><h3>${title}</h3></div>`;
+  }
+  return `<div class="section-title">
+    <div><h3>${title}</h3>${sub}</div>
+    ${act}
+  </div>`;
+}
+
+function dataTable(headCols, bodyRows, emptyText) {
+  const empty = `<tr><td colspan="${headCols.length}">${emptyText || "暂无数据"}</td></tr>`;
+  return `<div class="table-wrap"><table>
+    <thead><tr>${headCols.map((col) => `<th>${col}</th>`).join("")}</tr></thead>
+    <tbody>${bodyRows || empty}</tbody>
+  </table></div>`;
 }
 
 function renderAdminStats() {
@@ -431,8 +567,8 @@ function renderAdminStats() {
   const recentExams = exams.slice(0, 5);
 
   return `
-    <section class="panel">
-      <div class="section-title"><h3>运行概览</h3></div>
+    ${panel(`
+      ${sectionTitle("运行概览")}
       <div class="stats-grid">
         <article class="stat-card"><span>总用户数</span><strong>${users.length}</strong></article>
         <article class="stat-card"><span>学生数</span><strong>${students}</strong></article>
@@ -443,14 +579,14 @@ function renderAdminStats() {
         <article class="stat-card"><span>异常答卷</span><strong>${suspicious}</strong></article>
         <article class="stat-card"><span>组织数量</span><strong>${state.bootstrap.departments.length + state.bootstrap.classes.length}</strong></article>
       </div>
-    </section>
+    `)}
     <section class="two-column">
       <article class="panel">
-        <div class="section-title"><h3>最近考试</h3></div>
+        ${sectionTitle("最近考试")}
         ${recentExams.length ? renderMiniExamList(recentExams) : renderEmptyState("暂无考试数据")}
       </article>
       <article class="panel">
-        <div class="section-title"><h3>最近操作</h3></div>
+        ${sectionTitle("最近操作")}
         ${state.bootstrap.logs.length ? renderMiniLogList(state.bootstrap.logs.slice(0, 6)) : renderEmptyState("暂无日志")}
       </article>
     </section>
@@ -471,63 +607,47 @@ function renderUserSection(role) {
   const departments = indexBy(state.bootstrap.departments);
   const title = role === "student" ? "学生管理" : "教师管理";
 
-  return `
-    <section class="panel">
-      <div class="section-title">
-        <div>
-          <h3>${title}</h3>
-          <p class="section-subtitle">支持搜索、编辑、重置密码和删除。</p>
-        </div>
-        <div class="section-actions">
-          <button class="ghost-btn" type="button" data-import-users="${role}">批量导入</button>
-          ${role === "student" ? `<button class="accent-btn" type="button" data-export-users="users">导出名单</button>` : ""}
-          <button class="primary-btn" type="button" data-open-form="${role}">新增${role === "student" ? "学生" : "教师"}</button>
-        </div>
+  return panel(`
+    ${sectionTitle(title, "支持搜索、编辑、重置密码和删除。", `
+      <button class="ghost-btn" type="button" data-import-users="${role}">批量导入</button>
+      ${role === "student" ? `<button class="accent-btn" type="button" data-export-users="users">导出名单</button>` : ""}
+      <button class="primary-btn" type="button" data-open-form="${role}">新增${role === "student" ? "学生" : "教师"}</button>
+    `)}
+    <div class="filter-bar">
+      <div class="toolbar-form">
+        <label>
+          <span>关键词搜索</span>
+          <input value="${escapeAttr(state.filters[filterKey])}" data-filter-key="${filterKey}" placeholder="账号 / 姓名 / 专业" />
+        </label>
       </div>
-      <div class="filter-bar">
-        <div class="toolbar-form">
-          <label>
-            <span>关键词搜索</span>
-            <input value="${state.filters[filterKey]}" data-filter-key="${filterKey}" placeholder="账号 / 姓名 / 专业" />
-          </label>
-        </div>
-        <p class="toolbar-note">当前共 ${users.length} 条记录。</p>
-      </div>
-      <div class="table-wrap">
-        <table>
-          <thead><tr><th>账号</th><th>姓名</th><th>附属信息</th><th>操作</th></tr></thead>
-          <tbody>
-            ${
-              users.length
-                ? users
-                    .map((user) => {
-                      const extra =
-                        role === "student"
-                          ? `${classes[user.classId]?.name || "-"} / ${user.major || "-"}`
-                          : departments[user.departmentId]?.name || "-";
-                      return `
-                        <tr>
-                          <td>${user.username}</td>
-                          <td>${user.name}</td>
-                          <td>${extra}</td>
-                          <td>
-                            <div class="action-row">
-                              <button class="ghost-btn" type="button" data-edit-user="${user.id}">编辑</button>
-                              <button class="accent-btn" type="button" data-reset-password="${user.id}">重置密码</button>
-                              <button class="danger-btn" type="button" data-delete="users:${user.id}">删除</button>
-                            </div>
-                          </td>
-                        </tr>
-                      `;
-                    })
-                    .join("")
-                : `<tr><td colspan="4">暂无匹配记录</td></tr>`
-            }
-          </tbody>
-        </table>
-      </div>
-    </section>
-  `;
+      <p class="toolbar-note">当前共 ${users.length} 条记录。</p>
+    </div>
+    ${dataTable(["账号", "姓名", "附属信息", "操作"],
+      users.length
+        ? users.map((user) => {
+            const extra =
+              role === "student"
+                ? `${escapeHtml(classes[user.classId]?.name || "-")} / ${escapeHtml(user.major || "-")}`
+                : escapeHtml(departments[user.departmentId]?.name || "-");
+            return `
+              <tr>
+                <td>${escapeHtml(user.username)}</td>
+                <td>${escapeHtml(user.name)}</td>
+                <td>${extra}</td>
+                <td>
+                  <div class="action-row">
+                    <button class="ghost-btn" type="button" data-edit-user="${escapeAttr(user.id)}">编辑</button>
+                    <button class="accent-btn" type="button" data-reset-password="${escapeAttr(user.id)}">重置密码</button>
+                    <button class="danger-btn" type="button" data-delete="users:${escapeAttr(user.id)}">删除</button>
+                  </div>
+                </td>
+              </tr>
+            `;
+          }).join("")
+        : null,
+      "暂无匹配记录"
+    )}
+  `);
 }
 
 function renderOrgSection() {
@@ -544,74 +664,51 @@ function renderOrgSection() {
       <article class="stat-card"><span>在读学生</span><strong>${state.bootstrap.users.filter((item) => item.role === "student").length}</strong></article>
     </section>
     <section class="org-column">
-      <section class="panel org-panel">
-        <div class="section-title">
-          <div>
-            <h3>院系管理</h3>
-            <p class="section-subtitle">支持新增、编辑和删除院系。</p>
-          </div>
-          <button class="primary-btn" type="button" data-open-form="department">新增院系</button>
-        </div>
-        <div class="table-wrap">
-          <table>
-            <thead><tr><th>院系</th><th>班级数</th><th>教师/管理员</th><th>操作</th></tr></thead>
-            <tbody>
-              ${departmentCounts
-                .map(
-                  (item) => `
-                <tr>
-                  <td>${item.name}</td>
-                  <td>${item.classCount}</td>
-                  <td>${item.teacherCount}</td>
-                  <td>
-                    <div class="action-row">
-                      <button class="ghost-btn" type="button" data-edit-entity="departments:${item.id}">编辑</button>
-                      <button class="danger-btn" type="button" data-delete="departments:${item.id}">删除</button>
-                    </div>
-                  </td>
-                </tr>`
-                )
-                .join("")}
-            </tbody>
-          </table>
-        </div>
-      </section>
-      <section class="panel org-panel">
-        <div class="section-title">
-          <div>
-            <h3>班级管理</h3>
-            <p class="section-subtitle">支持新增、编辑和删除班级。</p>
-          </div>
-          <button class="primary-btn" type="button" data-open-form="class">新增班级</button>
-        </div>
-        <div class="table-wrap">
-          <table>
-            <thead><tr><th>班级</th><th>专业</th><th>院系</th><th>学生数</th><th>操作</th></tr></thead>
-            <tbody>
-              ${state.bootstrap.classes
-                .map((item) => {
-                  const studentCount = state.bootstrap.users.filter((row) => row.classId === item.id).length;
-                  const department = state.bootstrap.departments.find((row) => row.id === item.departmentId);
-                  return `
-                    <tr>
-                      <td>${item.name}</td>
-                      <td>${item.major}</td>
-                      <td>${department?.name || "-"}</td>
-                      <td>${studentCount}</td>
-                      <td>
-                        <div class="action-row">
-                          <button class="ghost-btn" type="button" data-edit-entity="classes:${item.id}">编辑</button>
-                          <button class="danger-btn" type="button" data-delete="classes:${item.id}">删除</button>
-                        </div>
-                      </td>
-                    </tr>
-                  `;
-                })
-                .join("")}
-            </tbody>
-          </table>
-        </div>
-      </section>
+      ${panel(`
+        ${sectionTitle("院系管理", "支持新增、编辑和删除院系。",
+          `<button class="primary-btn" type="button" data-open-form="department">新增院系</button>`
+        )}
+        ${dataTable(["院系", "班级数", "教师/管理员", "操作"],
+          departmentCounts.map((item) => `
+            <tr>
+              <td>${escapeHtml(item.name)}</td>
+              <td>${item.classCount}</td>
+              <td>${item.teacherCount}</td>
+              <td>
+                <div class="action-row">
+                  <button class="ghost-btn" type="button" data-edit-entity="departments:${escapeAttr(item.id)}">编辑</button>
+                  <button class="danger-btn" type="button" data-delete="departments:${escapeAttr(item.id)}">删除</button>
+                </div>
+              </td>
+            </tr>`
+          ).join("")
+        )}
+      `, "org-panel")}
+      ${panel(`
+        ${sectionTitle("班级管理", "支持新增、编辑和删除班级。",
+          `<button class="primary-btn" type="button" data-open-form="class">新增班级</button>`
+        )}
+        ${dataTable(["班级", "专业", "院系", "学生数", "操作"],
+          state.bootstrap.classes.map((item) => {
+            const studentCount = state.bootstrap.users.filter((row) => row.classId === item.id).length;
+            const department = state.bootstrap.departments.find((row) => row.id === item.departmentId);
+            return `
+              <tr>
+                <td>${escapeHtml(item.name)}</td>
+                <td>${escapeHtml(item.major)}</td>
+                <td>${escapeHtml(department?.name || "-")}</td>
+                <td>${studentCount}</td>
+                <td>
+                  <div class="action-row">
+                    <button class="ghost-btn" type="button" data-edit-entity="classes:${escapeAttr(item.id)}">编辑</button>
+                    <button class="danger-btn" type="button" data-delete="classes:${escapeAttr(item.id)}">删除</button>
+                  </div>
+                </td>
+              </tr>
+            `;
+          }).join("")
+        )}
+      `, "org-panel")}
     </section>
   `;
 }
@@ -625,48 +722,31 @@ function renderLogs() {
     return text.includes(keyword);
   });
 
-  return `
-    <section class="panel">
-      <div class="section-title">
-        <div>
-          <h3>系统日志</h3>
-          <p class="section-subtitle">按动作、详情或操作人过滤。</p>
-        </div>
+  return panel(`
+    ${sectionTitle("系统日志", "按动作、详情或操作人过滤。")}
+    <div class="filter-bar">
+      <div class="toolbar-form">
+        <label>
+          <span>关键词</span>
+          <input value="${escapeAttr(state.filters.logs)}" data-filter-key="logs" placeholder="登录、删除、用户名..." />
+        </label>
       </div>
-      <div class="filter-bar">
-        <div class="toolbar-form">
-          <label>
-            <span>关键词</span>
-            <input value="${state.filters.logs}" data-filter-key="logs" placeholder="登录、删除、用户名..." />
-          </label>
-        </div>
-        <p class="toolbar-note">当前显示 ${rows.length} 条日志。</p>
-      </div>
-      <div class="table-wrap">
-        <table>
-          <thead><tr><th>时间</th><th>操作人</th><th>动作</th><th>详情</th></tr></thead>
-          <tbody>
-            ${
-              rows.length
-                ? rows
-                    .map(
-                      (log) => `
-                  <tr>
-                    <td>${formatDate(log.time)}</td>
-                    <td>${users[log.actorId]?.name || log.actorId}</td>
-                    <td>${log.action}</td>
-                    <td>${log.detail || "-"}</td>
-                  </tr>
-                `
-                    )
-                    .join("")
-                : `<tr><td colspan="4">暂无匹配日志</td></tr>`
-            }
-          </tbody>
-        </table>
-      </div>
-    </section>
-  `;
+      <p class="toolbar-note">当前显示 ${rows.length} 条日志。</p>
+    </div>
+    ${dataTable(["时间", "操作人", "动作", "详情"],
+      rows.length
+        ? rows.map((log) => `
+            <tr>
+              <td>${formatDate(log.time)}</td>
+              <td>${escapeHtml(users[log.actorId]?.name || log.actorId)}</td>
+              <td>${escapeHtml(log.action)}</td>
+              <td>${escapeHtml(log.detail || "-")}</td>
+            </tr>
+          `).join("")
+        : null,
+      "暂无匹配日志"
+    )}
+  `);
 }
 
 function renderTeacherOverview() {
@@ -686,15 +766,14 @@ function renderTeacherOverview() {
     </section>
     <section class="two-column">
       <article class="panel">
-        <div class="section-title"><h3>最近考试</h3></div>
+        ${sectionTitle("最近考试")}
         ${exams.length ? renderMiniExamList(exams.slice(0, 5)) : renderEmptyState("暂无考试")}
       </article>
       <article class="panel">
-        <div class="section-title"><h3>待处理答卷</h3></div>
-        ${
-          pending.length
-            ? renderMiniSubmissionList(pending.slice(0, 5))
-            : renderEmptyState("当前没有待阅卷答卷")
+        ${sectionTitle("待处理答卷")}
+        ${pending.length
+          ? renderMiniSubmissionList(pending.slice(0, 5))
+          : renderEmptyState("当前没有待阅卷答卷")
         }
       </article>
     </section>
@@ -702,177 +781,152 @@ function renderTeacherOverview() {
 }
 
 function renderQuestions() {
+  // If server data is loaded, use it; otherwise trigger async fetch
+  if (state.questionPageData) return renderQuestionsFromServer();
+  return `<div class="empty-state">加载中…</div>`;
+}
+
+function renderQuestionsFromServer() {
   const type = state.filters.question_type;
   const subject = state.filters.question_subject;
-  const subjects = [...new Set(state.bootstrap.questions.map((item) => item.subject))];
-  const rows = getVisibleQuestionRows();
+  const subjects = state.questionSubjects || state._cachedQuestionSubjects || [];
+  const data = state.questionPageData;
+  const pageRows = data.rows || [];
+  const total = data.total || 0;
+  const pageSize = data.pageSize || state.QUESTION_PAGE_SIZE;
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  const currentPage = data.page || state.questionPage;
   const selectedSet = new Set(state.selectedQuestionIds);
-  const allSelected = rows.length > 0 && rows.every((item) => selectedSet.has(item.id));
+  const allSelected = pageRows.length > 0 && pageRows.every((item) => selectedSet.has(item.id));
+  const pageStart = (currentPage - 1) * pageSize;
 
-  return `
-    <section class="panel">
-      <div class="section-title">
-        <div>
-          <h3>题库管理</h3>
-          <p class="section-subtitle">按关键词、题型、科目筛选题目。</p>
-        </div>
-        <div class="section-actions">
-          <button class="ghost-btn" type="button" data-import-questions="open">批量导入</button>
-          <button class="danger-btn" type="button" data-delete-selected-questions="1" ${state.selectedQuestionIds.length ? "" : "disabled"}>批量删除</button>
-          <button class="accent-btn" type="button" data-clear-selected-questions="1" ${state.selectedQuestionIds.length ? "" : "disabled"}>清空已选</button>
-          <button class="primary-btn" type="button" data-open-form="question">新增题目</button>
-        </div>
+  const paginationHtml = total > pageSize ? `
+    <div class="pagination-bar">
+      <button class="ghost-btn" type="button" data-question-page="first" ${currentPage <= 1 ? "disabled" : ""}>首页</button>
+      <button class="ghost-btn" type="button" data-question-page="prev" ${currentPage <= 1 ? "disabled" : ""}>上一页</button>
+      <span class="pagination-info">第 <strong>${currentPage}</strong> / ${totalPages} 页（共 ${total} 条）</span>
+      <button class="ghost-btn" type="button" data-question-page="next" ${currentPage >= totalPages ? "disabled" : ""}>下一页</button>
+      <button class="ghost-btn" type="button" data-question-page="last" ${currentPage >= totalPages ? "disabled" : ""}>末页</button>
+    </div>
+  ` : "";
+
+  return panel(`
+    ${sectionTitle("题库管理", "按关键词、题型、科目筛选题目。", `
+      <button class="ghost-btn" type="button" data-import-questions="open">批量导入</button>
+      <button class="danger-btn" type="button" data-delete-selected-questions="1" ${state.selectedQuestionIds.length ? "" : "disabled"}>批量删除</button>
+      <button class="accent-btn" type="button" data-clear-selected-questions="1" ${state.selectedQuestionIds.length ? "" : "disabled"}>清空已选</button>
+      <button class="primary-btn" type="button" data-open-form="question">新增题目</button>
+    `)}
+    <div class="filter-bar">
+      <div class="toolbar-form">
+        <label><span>关键词</span><input value="${escapeAttr(state.filters.question_keyword)}" data-filter-key="question_keyword" placeholder="题目 / 知识点" /></label>
+        <label>
+          <span>题型</span>
+          <select data-filter-key="question_type">
+            <option value="all" ${type === "all" ? "selected" : ""}>全部</option>
+            <option value="single" ${type === "single" ? "selected" : ""}>单选</option>
+            <option value="multiple" ${type === "multiple" ? "selected" : ""}>多选</option>
+            <option value="judge" ${type === "judge" ? "selected" : ""}>判断</option>
+            <option value="fill" ${type === "fill" ? "selected" : ""}>填空</option>
+            <option value="short" ${type === "short" ? "selected" : ""}>简答</option>
+            <option value="coding" ${type === "coding" ? "selected" : ""}>编程</option>
+          </select>
+        </label>
+        <label>
+          <span>科目</span>
+          <select data-filter-key="question_subject">
+            <option value="all" ${subject === "all" ? "selected" : ""}>全部</option>
+            ${subjects.map((item) => `<option value="${escapeAttr(item)}" ${subject === item ? "selected" : ""}>${escapeHtml(item)}</option>`).join("")}
+          </select>
+        </label>
       </div>
-      <div class="filter-bar">
-        <div class="toolbar-form">
-          <label><span>关键词</span><input value="${state.filters.question_keyword}" data-filter-key="question_keyword" placeholder="题目 / 知识点" /></label>
-          <label>
-            <span>题型</span>
-            <select data-filter-key="question_type">
-              <option value="all" ${type === "all" ? "selected" : ""}>全部</option>
-              <option value="single" ${type === "single" ? "selected" : ""}>单选</option>
-              <option value="multiple" ${type === "multiple" ? "selected" : ""}>多选</option>
-              <option value="judge" ${type === "judge" ? "selected" : ""}>判断</option>
-              <option value="fill" ${type === "fill" ? "selected" : ""}>填空</option>
-              <option value="short" ${type === "short" ? "selected" : ""}>简答</option>
-              <option value="coding" ${type === "coding" ? "selected" : ""}>编程</option>
-            </select>
-          </label>
-          <label>
-            <span>科目</span>
-            <select data-filter-key="question_subject">
-              <option value="all" ${subject === "all" ? "selected" : ""}>全部</option>
-              ${subjects.map((item) => `<option value="${item}" ${subject === item ? "selected" : ""}>${item}</option>`).join("")}
-            </select>
-          </label>
-        </div>
-        <p class="toolbar-note">筛选后共 ${rows.length} 道题，当前已选 ${state.selectedQuestionIds.length} 道。</p>
-      </div>
-      <div class="table-wrap">
-        <table>
-          <thead><tr><th><input type="checkbox" data-select-all-questions="1" ${allSelected ? "checked" : ""} /></th><th>题型</th><th>题目</th><th>科目</th><th>知识点</th><th>难度</th><th>分值</th><th>操作</th></tr></thead>
-          <tbody>
-            ${
-              rows.length
-                ? rows
-                    .map(
-                      (item) => `
-                <tr>
-                  <td><input type="checkbox" data-select-question="${item.id}" ${selectedSet.has(item.id) ? "checked" : ""} /></td>
-                  <td>${typeLabel(item.type)}</td>
-                  <td>${item.title}</td>
-                  <td>${item.subject}</td>
-                  <td>${item.knowledgePoint}</td>
-                  <td>${item.difficulty}</td>
-                  <td>${item.score}</td>
-                  <td>
-                    <div class="action-row">
-                      <button class="ghost-btn" type="button" data-edit-question="${item.id}">编辑</button>
-                      <button class="danger-btn" type="button" data-delete="questions:${item.id}">删除</button>
-                    </div>
-                  </td>
-                </tr>`
-                    )
-                    .join("")
-                : `<tr><td colspan="8">暂无匹配题目</td></tr>`
-            }
-          </tbody>
-        </table>
-      </div>
-    </section>
-  `;
+      <p class="toolbar-note">筛选后共 ${total} 道题，当前已选 ${state.selectedQuestionIds.length} 道。${total > pageSize ? `（第 ${pageStart + 1}–${Math.min(pageStart + pageSize, total)} 条）` : ""}</p>
+    </div>
+    ${dataTable(
+      [`<input type="checkbox" data-select-all-questions="1" ${allSelected ? "checked" : ""} />`, "题型", "题目", "科目", "知识点", "难度", "分值", "操作"],
+      pageRows.length
+        ? pageRows.map((item) => `
+            <tr>
+              <td><input type="checkbox" data-select-question="${escapeAttr(item.id)}" ${selectedSet.has(item.id) ? "checked" : ""} /></td>
+              <td>${escapeHtml(typeLabel(item.type))}</td>
+              <td>${escapeHtml(item.title)}</td>
+              <td>${escapeHtml(item.subject)}</td>
+              <td>${escapeHtml(item.knowledgePoint)}</td>
+              <td>${escapeHtml(item.difficulty)}</td>
+              <td>${item.score}</td>
+              <td>
+                <div class="action-row">
+                  <button class="ghost-btn" type="button" data-edit-question="${escapeAttr(item.id)}">编辑</button>
+                  <button class="danger-btn" type="button" data-delete="questions:${escapeAttr(item.id)}">删除</button>
+                </div>
+              </td>
+            </tr>`
+          ).join("")
+        : null,
+      "暂无匹配题目"
+    )}
+    ${paginationHtml}
+  `);
 }
 
 function renderPapers() {
-  return `
-    <section class="panel">
-      <div class="section-title">
-        <div>
-          <h3>试卷管理</h3>
-          <p class="section-subtitle">支持预览试卷内容与删除未使用试卷。</p>
-        </div>
-        <div class="section-actions">
-          <button class="ghost-btn" type="button" data-auto-paper="open">自动组卷</button>
-          <button class="primary-btn" type="button" data-open-form="paper">新增试卷</button>
-        </div>
-      </div>
-      <div class="table-wrap">
-        <table>
-          <thead><tr><th>试卷名称</th><th>题量</th><th>总分</th><th>时长</th><th>及格线</th><th>操作</th></tr></thead>
-          <tbody>
-            ${
-              state.bootstrap.papers.length
-                ? state.bootstrap.papers
-                    .map(
-                      (paper) => `
-                <tr>
-                  <td>${paper.name}</td>
-                  <td>${paper.questionIds.length}</td>
-                  <td>${paper.totalScore}</td>
-                  <td>${paper.durationMinutes} 分钟</td>
-                  <td>${paper.passScore}</td>
-                  <td>
-                    <div class="action-row">
-                      <button class="accent-btn" type="button" data-edit-paper="${paper.id}">编辑</button>
-                      <button class="ghost-btn" type="button" data-preview-paper="${paper.id}">预览</button>
-                      <button class="danger-btn" type="button" data-delete="papers:${paper.id}">删除</button>
-                    </div>
-                  </td>
-                </tr>`
-                    )
-                    .join("")
-                : `<tr><td colspan="6">暂无试卷</td></tr>`
-            }
-          </tbody>
-        </table>
-      </div>
-    </section>
-  `;
+  return panel(`
+    ${sectionTitle("试卷管理", "支持预览试卷内容与删除未使用试卷。", `
+      <button class="ghost-btn" type="button" data-auto-paper="open">自动组卷</button>
+      <button class="primary-btn" type="button" data-open-form="paper">新增试卷</button>
+    `)}
+    ${dataTable(["试卷名称", "题量", "总分", "时长", "及格线", "操作"],
+      state.bootstrap.papers.length
+        ? state.bootstrap.papers.map((paper) => `
+            <tr>
+              <td>${escapeHtml(paper.name)}</td>
+              <td>${paper.questionIds.length}</td>
+              <td>${paper.totalScore}</td>
+              <td>${paper.durationMinutes} 分钟</td>
+              <td>${paper.passScore}</td>
+              <td>
+                <div class="action-row">
+                  <button class="accent-btn" type="button" data-edit-paper="${escapeAttr(paper.id)}">编辑</button>
+                  <button class="ghost-btn" type="button" data-preview-paper="${escapeAttr(paper.id)}">预览</button>
+                  <button class="danger-btn" type="button" data-delete="papers:${escapeAttr(paper.id)}">删除</button>
+                </div>
+              </td>
+            </tr>`
+          ).join("")
+        : null,
+      "暂无试卷"
+    )}
+  `);
 }
 
 function renderTeacherExams() {
   const classes = indexBy(state.bootstrap.classes);
-  return `
-    <section class="panel">
-      <div class="section-title">
-        <div>
-          <h3>考试管理</h3>
-          <p class="section-subtitle">支持考试监控、查看异常答卷与删除无答卷考试。</p>
-        </div>
-        <button class="primary-btn" type="button" data-open-form="exam">发布考试</button>
-      </div>
-      <div class="table-wrap">
-        <table>
-          <thead><tr><th>考试名称</th><th>试卷</th><th>班级</th><th>时间</th><th>状态</th><th>操作</th></tr></thead>
-          <tbody>
-            ${
-              state.bootstrap.exams.length
-                ? state.bootstrap.exams
-                    .map(
-                      (exam) => `
-                <tr>
-                  <td>${exam.name}</td>
-                  <td>${exam.paperName}</td>
-                  <td>${exam.targetClassIds.map((id) => classes[id]?.name || id).join("、")}</td>
-                  <td>${formatDate(exam.startTime)}<br/>${formatDate(exam.endTime)}</td>
-                  <td><span class="tag">${exam.statusText}</span></td>
-                  <td>
-                    <div class="action-row">
-                      <button class="accent-btn" type="button" data-edit-exam="${exam.id}">编辑</button>
-                      <button class="ghost-btn" type="button" data-monitor-exam="${exam.id}">监控</button>
-                      <button class="danger-btn" type="button" data-delete="exams:${exam.id}">删除</button>
-                    </div>
-                  </td>
-                </tr>`
-                    )
-                    .join("")
-                : `<tr><td colspan="6">暂无考试</td></tr>`
-            }
-          </tbody>
-        </table>
-      </div>
-    </section>
-  `;
+  return panel(`
+    ${sectionTitle("考试管理", "支持考试监控、查看异常答卷与删除无答卷考试。",
+      `<button class="primary-btn" type="button" data-open-form="exam">发布考试</button>`
+    )}
+    ${dataTable(["考试名称", "试卷", "班级", "时间", "状态", "操作"],
+      state.bootstrap.exams.length
+        ? state.bootstrap.exams.map((exam) => `
+            <tr>
+              <td>${escapeHtml(exam.name)}</td>
+              <td>${escapeHtml(exam.paperName)}</td>
+              <td>${escapeHtml(exam.targetClassIds.map((id) => classes[id]?.name || id).join("、"))}</td>
+              <td>${formatDate(exam.startTime)}<br/>${formatDate(exam.endTime)}</td>
+              <td><span class="tag">${escapeHtml(exam.statusText)}</span></td>
+              <td>
+                <div class="action-row">
+                  <button class="accent-btn" type="button" data-edit-exam="${escapeAttr(exam.id)}">编辑</button>
+                  <button class="ghost-btn" type="button" data-monitor-exam="${escapeAttr(exam.id)}">监控</button>
+                  <button class="danger-btn" type="button" data-delete="exams:${escapeAttr(exam.id)}">删除</button>
+                </div>
+              </td>
+            </tr>`
+          ).join("")
+        : null,
+      "暂无考试"
+    )}
+  `);
 }
 
 function renderGrading() {
@@ -880,45 +934,104 @@ function renderGrading() {
   const rows = [...state.bootstrap.submissions].sort((a, b) => {
     return new Date(b.submittedAt || b.updatedAt || 0) - new Date(a.submittedAt || a.updatedAt || 0);
   });
+  return panel(`
+    ${sectionTitle("阅卷中心", "待阅卷答卷可直接评分，已交卷答卷可查看详情。")}
+    ${dataTable(["学生", "考试", "得分", "状态", "异常", "操作"],
+      rows.length
+        ? rows.map((item) => `
+            <tr>
+              <td>${escapeHtml(item.studentName)}</td>
+              <td>${escapeHtml(exams[item.examId]?.name || item.examName || item.examId)}</td>
+              <td>${item.finalScore ?? item.autoScore ?? "-"}</td>
+              <td>${escapeHtml(item.status)}</td>
+              <td class="${item.suspicious ? "danger" : "ok"}">${item.suspicious ? escapeHtml(item.suspiciousReasons?.join("、") || "疑似异常") : "正常"}</td>
+              <td>
+                <div class="action-row">
+                  ${item.status === "待阅卷" ? `<button class="primary-btn" type="button" data-grade="${escapeAttr(item.id)}">评分</button>` : ""}
+                  <button class="ghost-btn" type="button" data-view-submission="${escapeAttr(item.id)}">详情</button>
+                </div>
+              </td>
+            </tr>`
+          ).join("")
+        : null,
+      "暂无答卷"
+    )}
+  `);
+}
+
+function renderTeacherUnifiedPanel() {
+  const tabs = [
+    { key: "questions", label: "题库管理" },
+    { key: "papers", label: "试卷管理" },
+    { key: "exams", label: "考试管理" },
+    { key: "grading", label: "阅卷中心" },
+  ];
+  const activeTab = state.teacherTab || "questions";
+
+  let content = "";
+  if (activeTab === "questions") content = renderQuestions();
+  else if (activeTab === "papers") content = renderPapers();
+  else if (activeTab === "exams") content = renderTeacherExams();
+  else if (activeTab === "grading") content = renderGrading();
+
   return `
-    <section class="panel">
-      <div class="section-title">
-        <div>
-          <h3>阅卷中心</h3>
-          <p class="section-subtitle">待阅卷答卷可直接评分，已交卷答卷可查看详情。</p>
-        </div>
+    <div class="panel">
+      <div class="teacher-workspace-tabs">
+        ${tabs.map((tab) => `
+          <button class="teacher-tab-btn ${activeTab === tab.key ? "active" : ""}" type="button" data-teacher-tab="${tab.key}">${tab.label}</button>
+        `).join("")}
       </div>
-      <div class="table-wrap">
-        <table>
-          <thead><tr><th>学生</th><th>考试</th><th>得分</th><th>状态</th><th>异常</th><th>操作</th></tr></thead>
-          <tbody>
-            ${
-              rows.length
-                ? rows
-                    .map(
-                      (item) => `
-                <tr>
-                  <td>${item.studentName}</td>
-                  <td>${exams[item.examId]?.name || item.examName || item.examId}</td>
-                  <td>${item.finalScore ?? item.autoScore ?? "-"}</td>
-                  <td>${item.status}</td>
-                  <td class="${item.suspicious ? "danger" : "ok"}">${item.suspicious ? (item.suspiciousReasons?.join("、") || "疑似异常") : "正常"}</td>
-                  <td>
-                    <div class="action-row">
-                      ${item.status === "待阅卷" ? `<button class="primary-btn" type="button" data-grade="${item.id}">评分</button>` : ""}
-                      <button class="ghost-btn" type="button" data-view-submission="${item.id}">详情</button>
-                    </div>
-                  </td>
-                </tr>`
-                    )
-                    .join("")
-                : `<tr><td colspan="6">暂无答卷</td></tr>`
-            }
-          </tbody>
-        </table>
+      <div class="teacher-workspace-content">
+        ${content}
       </div>
-    </section>
+    </div>
   `;
+}
+
+function switchTeacherTab(tabKey) {
+  state.teacherTab = tabKey;
+  state.activeMenu = tabKey;
+  if (tabKey === "questions") state.questionPage = 1;
+
+  // Update tab buttons active state
+  const tabContainer = dashboardView.querySelector(".teacher-workspace-tabs");
+  if (tabContainer) {
+    tabContainer.querySelectorAll(".teacher-tab-btn").forEach((btn) => {
+      btn.classList.toggle("active", btn.dataset.teacherTab === tabKey);
+    });
+  }
+
+  // Re-render only the content area
+  const contentArea = dashboardView.querySelector(".teacher-workspace-content");
+  if (!contentArea) { renderDashboard(); return; }
+
+  // For questions tab, use server-side fetch
+  if (tabKey === "questions") {
+    contentArea.innerHTML = `<div class="empty-state">加载中…</div>`;
+    const needsSubjects = !state.questionSubjects;
+    const fetches = [fetchQuestionPage()];
+    if (needsSubjects) fetches.push(fetchQuestionSubjects());
+    Promise.all(fetches).then(() => {
+      if (state.teacherTab === "questions") {
+        contentArea.innerHTML = renderQuestionsFromServer();
+      }
+    }).catch((err) => {
+      if (state.teacherTab === "questions") {
+        contentArea.innerHTML = `<div class="empty-state">${escapeHtml(getFriendlyErrorMessage(err))}</div>`;
+      }
+    });
+  } else {
+    let content = "";
+    if (tabKey === "papers") content = renderPapers();
+    else if (tabKey === "exams") content = renderTeacherExams();
+    else if (tabKey === "grading") content = renderGrading();
+    contentArea.innerHTML = content;
+  }
+
+  // Update sidebar active state
+  dashboardView.querySelectorAll(".menu-btn").forEach((btn) => {
+    btn.classList.toggle("active", btn.dataset.menu === tabKey);
+  });
 }
 
 function renderAnalysis() {
@@ -944,101 +1057,78 @@ function renderAnalysis() {
   const allScores = finished.map((item) => Number(item.finalScore ?? item.autoScore ?? 0));
   const classCompareRows = buildClassComparisonRows();
   const questionQualityRows = buildQuestionQualityRows();
+  const activeTab = state.analysisTab || "exam-stats";
 
-  return `
-    <section class="stats-grid">
-      <article class="stat-card"><span>已完成答卷</span><strong>${finished.length}</strong></article>
-      <article class="stat-card"><span>平均分</span><strong>${allScores.length ? (allScores.reduce((sum, item) => sum + item, 0) / allScores.length).toFixed(1) : "0"}</strong></article>
-      <article class="stat-card"><span>最高分</span><strong>${allScores.length ? Math.max(...allScores) : 0}</strong></article>
-      <article class="stat-card"><span>最低分</span><strong>${allScores.length ? Math.min(...allScores) : 0}</strong></article>
-    </section>
-    <section class="panel">
-      <div class="section-title">
-        <div>
-          <h3>分考试统计</h3>
-          <p class="section-subtitle">统计每场考试的人数、平均分和及格率。</p>
-        </div>
-        <button class="primary-btn" type="button" data-export-scores="teacher">导出成绩 CSV</button>
-      </div>
-      <div class="table-wrap">
-        <table>
-          <thead><tr><th>考试</th><th>试卷</th><th>完成人数</th><th>平均分</th><th>最高分</th><th>最低分</th><th>及格率</th></tr></thead>
-          <tbody>
-            ${
-              rows.length
-                ? rows
-                    .map(
-                      (item) => `
-                <tr>
-                  <td>${item.exam.name}</td>
-                  <td>${item.paper?.name || "-"}</td>
-                  <td>${item.count}</td>
-                  <td>${item.avg}</td>
-                  <td>${item.max}</td>
-                  <td>${item.min}</td>
-                  <td>${item.passRate}</td>
-                </tr>`
-                    )
-                    .join("")
-                : `<tr><td colspan="7">暂无可分析考试</td></tr>`
-            }
-          </tbody>
-        </table>
-      </div>
-    </section>
-    <section class="two-column">
-      <article class="panel">
-        <div class="section-title"><h3>班级成绩对比</h3></div>
-        <div class="table-wrap">
-          <table>
-            <thead><tr><th>班级</th><th>考试人次</th><th>平均分</th><th>及格率</th></tr></thead>
-            <tbody>
-              ${
-                classCompareRows.length
-                  ? classCompareRows
-                      .map(
-                        (item) => `
-                <tr>
-                  <td>${item.className}</td>
-                  <td>${item.count}</td>
-                  <td>${item.avgScore}</td>
-                  <td>${item.passRate}</td>
-                </tr>`
-                      )
-                      .join("")
-                  : `<tr><td colspan="4">暂无班级成绩数据</td></tr>`
-              }
-            </tbody>
-          </table>
-        </div>
-      </article>
-      <article class="panel">
-        <div class="section-title"><h3>试题质量分析</h3></div>
-        <div class="table-wrap">
-          <table>
-            <thead><tr><th>题目</th><th>答题人数</th><th>正确率</th><th>平均得分</th></tr></thead>
-            <tbody>
-              ${
-                questionQualityRows.length
-                  ? questionQualityRows
-                      .map(
-                        (item) => `
-                <tr>
-                  <td>${item.title}</td>
-                  <td>${item.count}</td>
-                  <td>${item.correctRate}</td>
-                  <td>${item.avgScore}</td>
-                </tr>`
-                      )
-                      .join("")
-                  : `<tr><td colspan="4">暂无试题质量数据</td></tr>`
-              }
-            </tbody>
-          </table>
-        </div>
-      </article>
-    </section>
-  `;
+  const tabItems = [
+    { key: "exam-stats", label: "考试统计" },
+    { key: "class-compare", label: "班级成绩对比" },
+    { key: "question-quality", label: "试题质量分析" },
+  ];
+
+  return panel(`
+    <nav class="analysis-tabs">
+      ${tabItems.map((tab) => `<button class="analysis-tab-btn ${activeTab === tab.key ? "active" : ""}" data-analysis-tab="${tab.key}">${tab.label}</button>`).join("")}
+    </nav>
+    <div class="analysis-tab-content">
+      ${activeTab === "exam-stats" ? `
+        <section class="stats-grid">
+          <article class="stat-card"><span>已完成答卷</span><strong>${finished.length}</strong></article>
+          <article class="stat-card"><span>平均分</span><strong>${allScores.length ? (allScores.reduce((sum, item) => sum + item, 0) / allScores.length).toFixed(1) : "0"}</strong></article>
+          <article class="stat-card"><span>最高分</span><strong>${allScores.length ? Math.max(...allScores) : 0}</strong></article>
+          <article class="stat-card"><span>最低分</span><strong>${allScores.length ? Math.min(...allScores) : 0}</strong></article>
+        </section>
+        ${sectionTitle("分考试统计", "统计每场考试的人数、平均分和及格率。", '<button class="primary-btn" type="button" data-export-scores="teacher">导出成绩 CSV</button>')}
+        ${dataTable(
+          ["考试", "试卷", "完成人数", "平均分", "最高分", "最低分", "及格率"],
+          rows.length
+            ? rows.map((item) => `
+              <tr>
+                <td>${escapeHtml(item.exam.name)}</td>
+                <td>${escapeHtml(item.paper?.name || "-")}</td>
+                <td>${item.count}</td>
+                <td>${item.avg}</td>
+                <td>${item.max}</td>
+                <td>${item.min}</td>
+                <td>${item.passRate}</td>
+              </tr>`).join("")
+            : null,
+          "暂无可分析考试"
+        )}
+      ` : ""}
+      ${activeTab === "class-compare" ? `
+        ${sectionTitle("班级成绩对比")}
+        ${dataTable(
+          ["班级", "考试人次", "平均分", "及格率"],
+          classCompareRows.length
+            ? classCompareRows.map((item) => `
+              <tr>
+                <td>${escapeHtml(item.className)}</td>
+                <td>${item.count}</td>
+                <td>${item.avgScore}</td>
+                <td>${item.passRate}</td>
+              </tr>`).join("")
+            : null,
+          "暂无班级成绩数据"
+        )}
+      ` : ""}
+      ${activeTab === "question-quality" ? `
+        ${sectionTitle("试题质量分析")}
+        ${dataTable(
+          ["题目", "答题人数", "正确率", "平均得分"],
+          questionQualityRows.length
+            ? questionQualityRows.map((item) => `
+              <tr>
+                <td>${escapeHtml(item.title)}</td>
+                <td>${item.count}</td>
+                <td>${item.correctRate}</td>
+                <td>${item.avgScore}</td>
+              </tr>`).join("")
+            : null,
+          "暂无试题质量数据"
+        )}
+      ` : ""}
+    </div>
+  `);
 }
 
 function renderStudentOverview() {
@@ -1076,16 +1166,16 @@ function renderStudentOverview() {
       <article class="stat-card"><span>平均分</span><strong>${avg}</strong></article>
     </section>
     <section class="three-column">
-      <article class="panel">
-        <div class="section-title"><h3>近期考试</h3></div>
+      ${panel(`
+        ${sectionTitle("近期考试")}
         ${exams.length ? renderMiniExamList(exams.slice(0, 5)) : renderEmptyState("暂无考试")}
-      </article>
-      <article class="panel">
-        <div class="section-title"><h3>最近成绩</h3></div>
+      `)}
+      ${panel(`
+        ${sectionTitle("最近成绩")}
         ${latest.length ? renderMiniSubmissionList(latest) : renderEmptyState("暂无成绩记录")}
-      </article>
-      <article class="panel">
-        <div class="section-title"><h3>成绩趋势</h3></div>
+      `)}
+      ${panel(`
+        ${sectionTitle("成绩趋势")}
         ${
           scoreTrend.length
             ? `
@@ -1095,7 +1185,7 @@ function renderStudentOverview() {
                     (item) => `
                   <div class="pair-row">
                     <div class="action-row" style="justify-content:space-between;">
-                      <span>${item.label}</span>
+                      <span>${escapeHtml(item.label)}</span>
                       <strong>${item.score}</strong>
                     </div>
                     <div class="chart-bar"><span style="width:${Math.min(100, item.score)}%;"></span></div>
@@ -1106,15 +1196,10 @@ function renderStudentOverview() {
             `
             : renderEmptyState("暂无成绩趋势")
         }
-      </article>
+      `)}
     </section>
-    <section class="panel">
-      <div class="section-title">
-        <div>
-          <h3>知识点掌握</h3>
-          <p class="section-subtitle">基于已完成答卷统计各科正确率。</p>
-        </div>
-      </div>
+    ${panel(`
+      ${sectionTitle("知识点掌握", "基于已完成答卷统计各科正确率。")}
       ${
         subjectStats.length
           ? `
@@ -1123,7 +1208,7 @@ function renderStudentOverview() {
                 .map(
                   (item) => `
                 <div class="mini-item">
-                  <h4>${item.subject}</h4>
+                  <h4>${escapeHtml(item.subject)}</h4>
                   <p>正确 ${item.correct} / 总计 ${item.total}</p>
                   <div class="chart-bar"><span style="width:${item.rate}%;"></span></div>
                   <p style="margin-top:8px;">正确率 ${item.rate}%</p>
@@ -1134,7 +1219,7 @@ function renderStudentOverview() {
           `
           : renderEmptyState("提交答卷后会显示知识点掌握情况")
       }
-    </section>
+    `)}
   `;
 }
 
@@ -1144,36 +1229,29 @@ function renderStudentExams() {
     .sort((a, b) => new Date(b.startTime) - new Date(a.startTime))
     .filter((item) => filter === "all" || item.statusText === filter);
 
-  return `
-    <section class="panel">
-      <div class="section-title">
-        <div>
-          <h3>在线考试</h3>
-          <p class="section-subtitle">按状态筛选考试，进入后支持自动保存与防切屏。</p>
-        </div>
+  return panel(`
+    ${sectionTitle("在线考试", "按状态筛选考试，进入后支持自动保存与防切屏。")}
+    <div class="filter-bar">
+      <div class="toolbar-form">
+        <label>
+          <span>考试状态</span>
+          <select data-filter-key="student_exam_status">
+            <option value="all" ${filter === "all" ? "selected" : ""}>全部</option>
+            <option value="未开始" ${filter === "未开始" ? "selected" : ""}>未开始</option>
+            <option value="进行中" ${filter === "进行中" ? "selected" : ""}>进行中</option>
+            <option value="已结束" ${filter === "已结束" ? "selected" : ""}>已结束</option>
+          </select>
+        </label>
       </div>
-      <div class="filter-bar">
-        <div class="toolbar-form">
-          <label>
-            <span>考试状态</span>
-            <select data-filter-key="student_exam_status">
-              <option value="all" ${filter === "all" ? "selected" : ""}>全部</option>
-              <option value="未开始" ${filter === "未开始" ? "selected" : ""}>未开始</option>
-              <option value="进行中" ${filter === "进行中" ? "selected" : ""}>进行中</option>
-              <option value="已结束" ${filter === "已结束" ? "selected" : ""}>已结束</option>
-            </select>
-          </label>
-        </div>
-      </div>
-      <div class="card-grid">
-        ${
-          rows.length
-            ? rows.map((exam) => renderStudentExamCard(exam)).join("")
-            : renderEmptyState("暂无匹配考试")
-        }
-      </div>
-    </section>
-  `;
+    </div>
+    <div class="card-grid">
+      ${
+        rows.length
+          ? rows.map((exam) => renderStudentExamCard(exam)).join("")
+          : renderEmptyState("暂无匹配考试")
+      }
+    </div>
+  `);
 }
 
 function renderStudentExamCard(exam) {
@@ -1193,9 +1271,9 @@ function renderStudentExamCard(exam) {
 
   return `
     <article class="stat-card">
-      <span class="tag">${exam.statusText}</span>
-      <h4>${exam.name}</h4>
-      <p class="muted">试卷：${exam.paperName}</p>
+      <span class="tag">${escapeHtml(exam.statusText)}</span>
+      <h4>${escapeHtml(exam.name)}</h4>
+      <p class="muted">试卷：${escapeHtml(exam.paperName)}</p>
       <p class="muted">时长：${exam.durationMinutes} 分钟</p>
       <p class="muted">时间：${formatDate(exam.startTime)} - ${formatDate(exam.endTime)}</p>
       <p class="muted">我的状态：${submission?.status || "未作答"}</p>
@@ -1216,107 +1294,110 @@ function renderRecords() {
     );
   const summary = buildStudentRecordSummary(rows);
 
-  return `
-    <section class="panel">
-      <div class="section-title">
-        <div>
-          <h3>考试记录</h3>
-          <p class="section-subtitle">查看成绩、异常提示和答卷详情。</p>
-        </div>
+  // Pagination
+  const pageSize = state.STUDENT_PAGE_SIZE;
+  const totalPages = Math.max(1, Math.ceil(rows.length / pageSize));
+  if (state.recordPage > totalPages) state.recordPage = totalPages;
+  if (state.recordPage < 1) state.recordPage = 1;
+  const pageStart = (state.recordPage - 1) * pageSize;
+  const pageRows = rows.slice(pageStart, pageStart + pageSize);
+
+  const recordPaginationHtml = rows.length > pageSize ? `
+    <div class="pagination-bar">
+      <button class="ghost-btn" type="button" data-record-page="first" ${state.recordPage <= 1 ? "disabled" : ""}>首页</button>
+      <button class="ghost-btn" type="button" data-record-page="prev" ${state.recordPage <= 1 ? "disabled" : ""}>上一页</button>
+      <span class="pagination-info">第 <strong>${state.recordPage}</strong> / ${totalPages} 页（共 ${rows.length} 条）</span>
+      <button class="ghost-btn" type="button" data-record-page="next" ${state.recordPage >= totalPages ? "disabled" : ""}>下一页</button>
+      <button class="ghost-btn" type="button" data-record-page="last" ${state.recordPage >= totalPages ? "disabled" : ""}>末页</button>
+    </div>
+  ` : "";
+
+  return panel(`
+    ${sectionTitle("考试记录", "查看成绩、异常提示和答卷详情。")}
+    <div class="filter-bar">
+      <div class="toolbar-form">
+        <label>
+          <span>答卷状态</span>
+          <select data-filter-key="record_status">
+            <option value="all" ${filter === "all" ? "selected" : ""}>全部</option>
+            <option value="进行中" ${filter === "进行中" ? "selected" : ""}>进行中</option>
+            <option value="待阅卷" ${filter === "待阅卷" ? "selected" : ""}>待阅卷</option>
+            <option value="已完成" ${filter === "已完成" ? "selected" : ""}>已完成</option>
+          </select>
+        </label>
       </div>
-      <div class="filter-bar">
-        <div class="toolbar-form">
-          <label>
-            <span>答卷状态</span>
-            <select data-filter-key="record_status">
-              <option value="all" ${filter === "all" ? "selected" : ""}>全部</option>
-              <option value="进行中" ${filter === "进行中" ? "selected" : ""}>进行中</option>
-              <option value="待阅卷" ${filter === "待阅卷" ? "selected" : ""}>待阅卷</option>
-              <option value="已完成" ${filter === "已完成" ? "selected" : ""}>已完成</option>
-            </select>
-          </label>
-        </div>
-      </div>
-      <section class="record-highlight-grid">
-        <article class="stat-card compact-card">
-          <span>平均成绩</span>
-          <strong>${summary.averageScoreText}</strong>
-          <p class="muted">${summary.averageScoreMeta}</p>
-        </article>
-        <article class="stat-card compact-card">
-          <span>最高分</span>
-          <strong>${summary.bestScoreText}</strong>
-          <p class="muted">${summary.bestScoreMeta}</p>
-        </article>
-        <article class="stat-card compact-card">
-          <span>通过率</span>
-          <strong>${summary.passRate}</strong>
-          <p class="muted">${summary.passRateMeta}</p>
-        </article>
-      </section>
-      <section class="stats-grid compact-stats">
-        <article class="stat-card compact-card">
-          <span>已完成场次</span>
-          <strong>${summary.finishedCount}</strong>
-          <p class="muted">当前筛选结果中的已完成答卷</p>
-        </article>
-        <article class="stat-card compact-card">
-          <span>及格场次</span>
-          <strong>${summary.passCount}</strong>
-          <p class="muted">${summary.finishedCount ? `通过率 ${summary.passRate}` : "暂无已完成成绩"}</p>
-        </article>
-        <article class="stat-card compact-card">
-          <span>最佳排名</span>
-          <strong>${summary.bestRankText}</strong>
-          <p class="muted">${summary.bestRankMeta}</p>
-        </article>
-        <article class="stat-card compact-card">
-          <span>平均用时</span>
-          <strong>${summary.averageDurationText}</strong>
-          <p class="muted">${summary.averageDurationMeta}</p>
-        </article>
-      </section>
-      <div class="table-wrap">
-        <table>
-          <thead><tr><th>考试</th><th>分数</th><th>及格状态</th><th>排名</th><th>用时</th><th>状态</th><th>异常</th><th>提交时间</th><th>操作</th></tr></thead>
-          <tbody>
-            ${
-              rows.length
-                ? rows
-                    .map(
-                      (item) => `
-                <tr>
-                  <td>${exams[item.examId]?.name || item.examName || item.examId}</td>
-                  <td>
-                    <div class="cell-main">${item.finalScore ?? item.autoScore ?? "-"}</div>
-                    <div class="cell-sub">${item.totalScore ? `总分 ${item.totalScore} · 得分率 ${formatPercent(item.scoreRate)}` : `及格线 ${item.passScore ?? 0} 分`}</div>
-                  </td>
-                  <td>
-                    <div class="cell-main ${item.passStatus === "已及格" ? "ok" : item.passStatus === "未及格" ? "danger" : "warn"}">${item.passStatus || "待定"}</div>
-                    <div class="cell-sub">${renderPassStatusMeta(item)}</div>
-                  </td>
-                  <td>
-                    <div class="cell-main">${item.rank ? `${item.rank} / ${item.finishedCount || item.rank}` : "-"}</div>
-                    <div class="cell-sub">${renderRankMeta(item)}</div>
-                  </td>
-                  <td>
-                    <div class="cell-main">${item.usedTimeText || (item.usedMinutes ? `${item.usedMinutes} 分钟` : "-")}</div>
-                    <div class="cell-sub">${renderDurationMeta(item)}</div>
-                  </td>
-                  <td>${item.status}</td>
-                  <td class="${item.suspicious ? "danger" : "ok"}">${item.suspicious ? (item.suspiciousReasons?.join("、") || "疑似异常") : "正常"}</td>
-                  <td>${item.submittedAt ? formatDate(item.submittedAt) : "-"}</td>
-                  <td>${item.answerDetail?.length ? `<button class="ghost-btn" type="button" data-view-submission="${item.id}">查看详情</button>` : "-"}</td>
-                </tr>`
-                    )
-                    .join("")
-                : `<tr><td colspan="9">暂无记录</td></tr>`
-            }
-          </tbody>
-        </table>
-      </div>
+    </div>
+    <section class="record-highlight-grid">
+      <article class="stat-card compact-card">
+        <span>平均成绩</span>
+        <strong>${summary.averageScoreText}</strong>
+        <p class="muted">${summary.averageScoreMeta}</p>
+      </article>
+      <article class="stat-card compact-card">
+        <span>最高分</span>
+        <strong>${summary.bestScoreText}</strong>
+        <p class="muted">${summary.bestScoreMeta}</p>
+      </article>
+      <article class="stat-card compact-card">
+        <span>通过率</span>
+        <strong>${summary.passRate}</strong>
+        <p class="muted">${summary.passRateMeta}</p>
+      </article>
     </section>
-  `;
+    <section class="stats-grid compact-stats">
+      <article class="stat-card compact-card">
+        <span>已完成场次</span>
+        <strong>${summary.finishedCount}</strong>
+        <p class="muted">当前筛选结果中的已完成答卷</p>
+      </article>
+      <article class="stat-card compact-card">
+        <span>及格场次</span>
+        <strong>${summary.passCount}</strong>
+        <p class="muted">${summary.finishedCount ? `通过率 ${summary.passRate}` : "暂无已完成成绩"}</p>
+      </article>
+      <article class="stat-card compact-card">
+        <span>最佳排名</span>
+        <strong>${summary.bestRankText}</strong>
+        <p class="muted">${summary.bestRankMeta}</p>
+      </article>
+      <article class="stat-card compact-card">
+        <span>平均用时</span>
+        <strong>${summary.averageDurationText}</strong>
+        <p class="muted">${summary.averageDurationMeta}</p>
+      </article>
+    </section>
+    ${dataTable(
+      ["考试", "分数", "及格状态", "排名", "用时", "状态", "异常", "提交时间", "操作"],
+      pageRows.length
+        ? pageRows.map((item) => `
+          <tr>
+            <td>${escapeHtml(exams[item.examId]?.name || item.examName || item.examId)}</td>
+            <td>
+              <div class="cell-main">${item.finalScore ?? item.autoScore ?? "-"}</div>
+              <div class="cell-sub">${item.totalScore ? `总分 ${item.totalScore} · 得分率 ${formatPercent(item.scoreRate)}` : `及格线 ${item.passScore ?? 0} 分`}</div>
+            </td>
+            <td>
+              <div class="cell-main ${item.passStatus === "已及格" ? "ok" : item.passStatus === "未及格" ? "danger" : "warn"}">${item.passStatus || "待定"}</div>
+              <div class="cell-sub">${renderPassStatusMeta(item)}</div>
+            </td>
+            <td>
+              <div class="cell-main">${item.rank ? `${item.rank} / ${item.finishedCount || item.rank}` : "-"}</div>
+              <div class="cell-sub">${renderRankMeta(item)}</div>
+            </td>
+            <td>
+              <div class="cell-main">${item.usedTimeText || (item.usedMinutes ? `${item.usedMinutes} 分钟` : "-")}</div>
+              <div class="cell-sub">${renderDurationMeta(item)}</div>
+            </td>
+            <td>${escapeHtml(item.status)}</td>
+            <td class="${item.suspicious ? "danger" : "ok"}">${item.suspicious ? escapeHtml(item.suspiciousReasons?.join("、") || "疑似异常") : "正常"}</td>
+            <td>${item.submittedAt ? formatDate(item.submittedAt) : "-"}</td>
+            <td>${item.answerDetail?.length ? `<button class="ghost-btn" type="button" data-view-submission="${item.id}">查看详情</button>` : "-"}</td>
+          </tr>`).join("")
+        : null,
+      "暂无记录"
+    )}
+    ${recordPaginationHtml}
+  `);
 }
 
 function renderWrongBook() {
@@ -1327,87 +1408,90 @@ function renderWrongBook() {
   const masteredCount = allRows.filter((item) => item.removable).length;
   const retryCount = allRows.reduce((sum, item) => sum + Number(item.retryCount || 0), 0);
 
-  return `
-    <section class="panel">
-      <div class="section-title">
-        <div>
-          <h3>错题本</h3>
-          <p class="section-subtitle">按科目复盘错题，重做正确后可移出错题本。</p>
-        </div>
-      </div>
-      <section class="stats-grid compact-stats">
-        <article class="stat-card compact-card">
-          <span>错题总数</span>
-          <strong>${allRows.length}</strong>
-          <p class="muted">当前仍保留在错题本中的题目</p>
-        </article>
-        <article class="stat-card compact-card">
-          <span>涉及科目</span>
-          <strong>${subjects.length}</strong>
-          <p class="muted">${filter === "all" ? "正在查看全部科目" : `正在查看 ${escapeHtml(filter)}`}</p>
-        </article>
-        <article class="stat-card compact-card">
-          <span>已掌握</span>
-          <strong>${masteredCount}</strong>
-          <p class="muted">重做正确后可移出</p>
-        </article>
-        <article class="stat-card compact-card">
-          <span>重做次数</span>
-          <strong>${retryCount}</strong>
-          <p class="muted">累计重做练习次数</p>
-        </article>
-      </section>
-      <div class="filter-bar">
-        <div class="toolbar-form">
-          <label>
-            <span>科目</span>
-            <select data-filter-key="wrong_subject">
-              <option value="all" ${filter === "all" ? "selected" : ""}>全部</option>
-              ${subjects.map((item) => `<option value="${escapeAttr(item)}" ${filter === item ? "selected" : ""}>${escapeHtml(item)}</option>`).join("")}
-            </select>
-          </label>
-        </div>
-      </div>
-      <div class="table-wrap">
-        <table>
-          <thead><tr><th>科目</th><th>题型</th><th>题目</th><th>最近答案</th><th>参考答案</th><th>状态</th><th>操作</th></tr></thead>
-          <tbody>
-            ${
-              rows.length
-                ? rows
-                    .map(
-                      (item) => {
-                        const statusText = item.statusText || (item.removable ? "已重做通过" : "待重做");
-                        const lastWrongText = item.lastWrongAt ? `最近出错 ${formatDate(item.lastWrongAt)}` : "暂无出错时间";
-                        return `
-                <tr>
-                  <td>${escapeHtml(item.subject || "-")}</td>
-                  <td>${escapeHtml(typeLabel(item.type))}</td>
-                  <td><span class="cell-main">${escapeHtml(item.title)}</span><span class="cell-sub">${escapeHtml(item.knowledgePoint || "-")}</span></td>
-                  <td>${formatAnswerList(item.latestAnswer)}</td>
-                  <td>${formatAnswerList(item.expectedAnswer)}</td>
-                  <td>
-                    <span class="${item.removable ? "ok" : "warn"}">${escapeHtml(statusText)}</span>
-                    <span class="cell-sub">错误 ${item.wrongCount || 1} 次 · 重做 ${item.retryCount || 0} 次</span>
-                    <span class="cell-sub">${escapeHtml(lastWrongText)}</span>
-                  </td>
-                  <td>
-                    <div class="action-row">
-                      <button class="ghost-btn" type="button" data-retry-wrong-question="${escapeAttr(item.id)}">重做</button>
-                      <button class="accent-btn" type="button" data-remove-wrong-question="${escapeAttr(item.id)}" ${item.removable ? "" : "disabled"}>移出</button>
-                    </div>
-                  </td>
-                </tr>`;
-                      }
-                    )
-                    .join("")
-                : `<tr><td colspan="7">暂无错题记录</td></tr>`
-            }
-          </tbody>
-        </table>
-      </div>
+  // Pagination
+  const pageSize = state.STUDENT_PAGE_SIZE;
+  const totalPages = Math.max(1, Math.ceil(rows.length / pageSize));
+  if (state.wrongBookPage > totalPages) state.wrongBookPage = totalPages;
+  if (state.wrongBookPage < 1) state.wrongBookPage = 1;
+  const pageStart = (state.wrongBookPage - 1) * pageSize;
+  const pageRows = rows.slice(pageStart, pageStart + pageSize);
+
+  const wrongBookPaginationHtml = rows.length > pageSize ? `
+    <div class="pagination-bar">
+      <button class="ghost-btn" type="button" data-wrongbook-page="first" ${state.wrongBookPage <= 1 ? "disabled" : ""}>首页</button>
+      <button class="ghost-btn" type="button" data-wrongbook-page="prev" ${state.wrongBookPage <= 1 ? "disabled" : ""}>上一页</button>
+      <span class="pagination-info">第 <strong>${state.wrongBookPage}</strong> / ${totalPages} 页（共 ${rows.length} 条）</span>
+      <button class="ghost-btn" type="button" data-wrongbook-page="next" ${state.wrongBookPage >= totalPages ? "disabled" : ""}>下一页</button>
+      <button class="ghost-btn" type="button" data-wrongbook-page="last" ${state.wrongBookPage >= totalPages ? "disabled" : ""}>末页</button>
+    </div>
+  ` : "";
+
+  return panel(`
+    ${sectionTitle("错题本", "按科目复盘错题，重做正确后可移出错题本。")}
+    <section class="stats-grid compact-stats">
+      <article class="stat-card compact-card">
+        <span>错题总数</span>
+        <strong>${allRows.length}</strong>
+        <p class="muted">当前仍保留在错题本中的题目</p>
+      </article>
+      <article class="stat-card compact-card">
+        <span>涉及科目</span>
+        <strong>${subjects.length}</strong>
+        <p class="muted">${filter === "all" ? "正在查看全部科目" : `正在查看 ${escapeHtml(filter)}`}</p>
+      </article>
+      <article class="stat-card compact-card">
+        <span>已掌握</span>
+        <strong>${masteredCount}</strong>
+        <p class="muted">重做正确后可移出</p>
+      </article>
+      <article class="stat-card compact-card">
+        <span>重做次数</span>
+        <strong>${retryCount}</strong>
+        <p class="muted">累计重做练习次数</p>
+      </article>
     </section>
-  `;
+    <div class="filter-bar">
+      <div class="toolbar-form">
+        <label>
+          <span>科目</span>
+          <select data-filter-key="wrong_subject">
+            <option value="all" ${filter === "all" ? "selected" : ""}>全部</option>
+            ${subjects.map((item) => `<option value="${escapeAttr(item)}" ${filter === item ? "selected" : ""}>${escapeHtml(item)}</option>`).join("")}
+          </select>
+        </label>
+      </div>
+    </div>
+    ${dataTable(
+      ["科目", "题型", "题目", "最近答案", "参考答案", "状态", "操作"],
+      pageRows.length
+        ? pageRows.map((item) => {
+            const statusText = item.statusText || (item.removable ? "已重做通过" : "待重做");
+            const lastWrongText = item.lastWrongAt ? `最近出错 ${formatDate(item.lastWrongAt)}` : "暂无出错时间";
+            return `
+          <tr>
+            <td>${escapeHtml(item.subject || "-")}</td>
+            <td>${escapeHtml(typeLabel(item.type))}</td>
+            <td><span class="cell-main">${escapeHtml(item.title)}</span><span class="cell-sub">${escapeHtml(item.knowledgePoint || "-")}</span></td>
+            <td>${formatAnswerList(item.latestAnswer)}</td>
+            <td>${formatAnswerList(item.expectedAnswer)}</td>
+            <td>
+              <span class="${item.removable ? "ok" : "warn"}">${escapeHtml(statusText)}</span>
+              <span class="cell-sub">错误 ${item.wrongCount || 1} 次 · 重做 ${item.retryCount || 0} 次</span>
+              <span class="cell-sub">${escapeHtml(lastWrongText)}</span>
+            </td>
+            <td>
+              <div class="action-row">
+                <button class="ghost-btn" type="button" data-retry-wrong-question="${escapeAttr(item.id)}">重做</button>
+                <button class="accent-btn" type="button" data-remove-wrong-question="${escapeAttr(item.id)}" ${item.removable ? "" : "disabled"}>移出</button>
+              </div>
+            </td>
+          </tr>`;
+          }).join("")
+        : null,
+      "暂无错题记录"
+    )}
+    ${wrongBookPaginationHtml}
+  `);
 }
 
 function renderProfile() {
@@ -1415,125 +1499,364 @@ function renderProfile() {
   const userDepartment = state.bootstrap.departments.find((item) => item.id === state.currentUser.departmentId);
   return `
     <section class="two-column">
-      <article class="panel">
-        <div class="section-title"><h3>基础信息</h3></div>
+      ${panel(`
+        ${sectionTitle("基础信息")}
         <div class="mini-list">
-          <div class="mini-item"><h4>姓名</h4><p>${state.currentUser.name}</p></div>
-          <div class="mini-item"><h4>账号</h4><p>${state.currentUser.username}</p></div>
+          <div class="mini-item"><h4>姓名</h4><p>${escapeHtml(state.currentUser.name)}</p></div>
+          <div class="mini-item"><h4>账号</h4><p>${escapeHtml(state.currentUser.username)}</p></div>
           <div class="mini-item"><h4>身份</h4><p>${roleLabel(state.currentUser.role)}</p></div>
-          <div class="mini-item"><h4>班级 / 院系</h4><p>${userClass?.name || userDepartment?.name || "-"}</p></div>
+          <div class="mini-item"><h4>班级 / 院系</h4><p>${escapeHtml(userClass?.name || userDepartment?.name || "-")}</p></div>
         </div>
-      </article>
-      <article class="panel">
-        <div class="section-title"><h3>修改密码</h3></div>
+      `)}
+      ${panel(`
+        ${sectionTitle("修改密码")}
         <form id="passwordForm" class="form-grid">
           <label><span>原密码</span><input name="oldPassword" type="password" required /></label>
           <label><span>新密码</span><input name="newPassword" type="password" minlength="6" required /></label>
           <button class="primary-btn" type="submit">提交修改</button>
         </form>
         <p id="passwordMessage" class="message"></p>
-      </article>
+      `)}
     </section>
   `;
 }
 
-function bindContentEvents() {
-  dashboardView.querySelectorAll("[data-menu-jump]").forEach((button) => {
-    button.addEventListener("click", () => {
-      state.activeMenu = button.dataset.menuJump;
-      renderDashboard();
+function renderStudentUnifiedPanel() {
+  const tabs = [
+    { key: "overview", label: "学习概览" },
+    { key: "student-exams", label: "在线考试" },
+    { key: "records", label: "考试记录" },
+    { key: "wrongbook", label: "错题本" },
+    { key: "profile", label: "个人信息" },
+  ];
+  const activeTab = state.studentTab || "overview";
+
+  let content = "";
+  if (activeTab === "overview") content = renderStudentOverview();
+  else if (activeTab === "student-exams") content = renderStudentExams();
+  else if (activeTab === "records") content = renderRecords();
+  else if (activeTab === "wrongbook") content = renderWrongBook();
+  else if (activeTab === "profile") content = renderProfile();
+
+  return `
+    <div class="panel">
+      <div class="teacher-workspace-tabs">
+        ${tabs.map((tab) => `
+          <button class="teacher-tab-btn ${activeTab === tab.key ? "active" : ""}" type="button" data-student-tab="${tab.key}">${tab.label}</button>
+        `).join("")}
+      </div>
+      <div class="teacher-workspace-content">
+        ${content}
+      </div>
+    </div>
+  `;
+}
+
+function switchStudentTab(tabKey) {
+  state.studentTab = tabKey;
+  state.activeMenu = tabKey;
+  if (tabKey === "records") state.recordPage = 1;
+  if (tabKey === "wrongbook") state.wrongBookPage = 1;
+
+  // Update tab buttons
+  const tabContainer = dashboardView.querySelector(".teacher-workspace-tabs");
+  if (tabContainer) {
+    tabContainer.querySelectorAll(".teacher-tab-btn").forEach((btn) => {
+      btn.classList.toggle("active", btn.dataset.studentTab === tabKey);
     });
+  }
+
+  // Re-render only content area
+  const contentArea = dashboardView.querySelector(".teacher-workspace-content");
+  if (!contentArea) { renderDashboard(); return; }
+
+  let content = "";
+  if (tabKey === "overview") content = renderStudentOverview();
+  else if (tabKey === "student-exams") content = renderStudentExams();
+  else if (tabKey === "records") content = renderRecords();
+  else if (tabKey === "wrongbook") content = renderWrongBook();
+  else if (tabKey === "profile") content = renderProfile();
+  contentArea.innerHTML = content;
+
+  // Bind password form if profile tab is active
+  const passwordForm = document.getElementById("passwordForm");
+  if (passwordForm) passwordForm.onsubmit = updatePassword;
+
+  // Update sidebar
+  dashboardView.querySelectorAll(".menu-btn").forEach((btn) => {
+    btn.classList.toggle("active", btn.dataset.menu === tabKey);
   });
-  dashboardView.querySelectorAll("[data-open-form]").forEach((button) => {
-    button.addEventListener("click", () => openCreateForm(button.dataset.openForm));
-  });
-  dashboardView.querySelectorAll("[data-delete]").forEach((button) => {
-    button.addEventListener("click", () => handleDelete(button.dataset.delete));
-  });
-  dashboardView.querySelectorAll("[data-edit-user]").forEach((button) => {
-    button.addEventListener("click", () => openEditUser(button.dataset.editUser));
-  });
-  dashboardView.querySelectorAll("[data-edit-entity]").forEach((button) => {
-    button.addEventListener("click", () => openEditEntity(button.dataset.editEntity));
-  });
-  dashboardView.querySelectorAll("[data-edit-question]").forEach((button) => {
-    button.addEventListener("click", () => openEditQuestion(button.dataset.editQuestion));
-  });
-  dashboardView.querySelectorAll("[data-select-question]").forEach((input) => {
-    input.addEventListener("change", () => toggleQuestionSelection(input.dataset.selectQuestion, input.checked));
-  });
-  dashboardView.querySelectorAll("[data-select-all-questions]").forEach((input) => {
-    input.addEventListener("change", () => toggleAllQuestionSelection(input.checked));
-  });
-  dashboardView.querySelectorAll("[data-import-questions]").forEach((button) => {
-    button.addEventListener("click", openBatchQuestionImport);
-  });
-  dashboardView.querySelectorAll("[data-import-users]").forEach((button) => {
-    button.addEventListener("click", () => openBatchUserImport(button.dataset.importUsers || "student"));
-  });
-  dashboardView.querySelectorAll("[data-import-students]").forEach((button) => {
-    button.addEventListener("click", () => openBatchUserImport("student"));
-  });
-  dashboardView.querySelectorAll("[data-delete-selected-questions]").forEach((button) => {
-    button.addEventListener("click", deleteSelectedQuestions);
-  });
-  dashboardView.querySelectorAll("[data-clear-selected-questions]").forEach((button) => {
-    button.addEventListener("click", clearSelectedQuestions);
-  });
-  dashboardView.querySelectorAll("[data-edit-paper]").forEach((button) => {
-    button.addEventListener("click", () => openEditPaper(button.dataset.editPaper));
-  });
-  dashboardView.querySelectorAll("[data-edit-exam]").forEach((button) => {
-    button.addEventListener("click", () => openEditExam(button.dataset.editExam));
-  });
-  dashboardView.querySelectorAll("[data-reset-password]").forEach((button) => {
-    button.addEventListener("click", () => openResetPassword(button.dataset.resetPassword));
-  });
-  dashboardView.querySelectorAll("[data-preview-paper]").forEach((button) => {
-    button.addEventListener("click", () => openPaperPreview(button.dataset.previewPaper));
-  });
-  dashboardView.querySelectorAll("[data-auto-paper]").forEach((button) => {
-    button.addEventListener("click", openAutoPaperForm);
-  });
-  dashboardView.querySelectorAll("[data-monitor-exam]").forEach((button) => {
-    button.addEventListener("click", () => openExamMonitor(button.dataset.monitorExam));
-  });
-  dashboardView.querySelectorAll("[data-grade]").forEach((button) => {
-    button.addEventListener("click", () => openGrading(button.dataset.grade));
-  });
-  dashboardView.querySelectorAll("[data-view-submission]").forEach((button) => {
-    button.addEventListener("click", () => openSubmissionReview(button.dataset.viewSubmission));
-  });
-  dashboardView.querySelectorAll("[data-start-exam]").forEach((button) => {
-    button.addEventListener("click", () => startExam(button.dataset.startExam));
-  });
-  dashboardView.querySelectorAll("[data-retry-wrong-question]").forEach((button) => {
-    button.addEventListener("click", () => openWrongBookRetrySafe(button.dataset.retryWrongQuestion));
-  });
-  dashboardView.querySelectorAll("[data-remove-wrong-question]").forEach((button) => {
-    button.addEventListener("click", () => removeWrongBookEntry(button.dataset.removeWrongQuestion));
-  });
-  dashboardView.querySelectorAll("[data-filter-key]").forEach((input) => {
-    input.addEventListener("input", handleFilterChange);
-    input.addEventListener("change", handleFilterChange);
-  });
-  dashboardView.querySelectorAll("[data-export-users]").forEach((button) => {
-    button.addEventListener("click", exportUsersCsv);
-  });
-  dashboardView.querySelectorAll("[data-export-scores]").forEach((button) => {
-    button.addEventListener("click", exportTeacherScores);
+}
+
+function setupDelegatedEvents() {
+  if (state._delegatedEventsSetup) return;
+  state._delegatedEventsSetup = true;
+
+  // Single delegated click handler for the entire dashboard
+  dashboardView.addEventListener("click", function (e) {
+    const target = e.target;
+    let el;
+
+    // Teacher tab switching
+    if ((el = target.closest("[data-teacher-tab]"))) {
+      switchTeacherTab(el.dataset.teacherTab);
+      return;
+    }
+    // Question pagination
+    if ((el = target.closest("[data-question-page]"))) {
+      const action = el.dataset.questionPage;
+      const data = state.questionPageData;
+      const totalPages = data ? Math.max(1, Math.ceil(data.total / data.pageSize)) : 1;
+      if (action === "first") state.questionPage = 1;
+      else if (action === "prev") state.questionPage = Math.max(1, state.questionPage - 1);
+      else if (action === "next") state.questionPage = Math.min(totalPages, state.questionPage + 1);
+      else if (action === "last") state.questionPage = totalPages;
+      state._questionPageCacheKey = "";
+      refreshQuestionBankView();
+      return;
+    }
+    // Student tab switching
+    if ((el = target.closest("[data-student-tab]"))) {
+      switchStudentTab(el.dataset.studentTab);
+      return;
+    }
+    // Record pagination
+    if ((el = target.closest("[data-record-page]"))) {
+      const action = el.dataset.recordPage;
+      const filter = state.filters.record_status;
+      const total = state.bootstrap.submissions.filter((item) => filter === "all" || item.status === filter).length;
+      const totalPages = Math.max(1, Math.ceil(total / state.STUDENT_PAGE_SIZE));
+      if (action === "first") state.recordPage = 1;
+      else if (action === "prev") state.recordPage = Math.max(1, state.recordPage - 1);
+      else if (action === "next") state.recordPage = Math.min(totalPages, state.recordPage + 1);
+      else if (action === "last") state.recordPage = totalPages;
+      switchStudentTab("records");
+      return;
+    }
+    // Wrong book pagination
+    if ((el = target.closest("[data-wrongbook-page]"))) {
+      const action = el.dataset.wrongbookPage;
+      const filter = state.filters.wrong_subject;
+      const total = (state.bootstrap.wrongBookEntries || []).filter((item) => filter === "all" || item.subject === filter).length;
+      const totalPages = Math.max(1, Math.ceil(total / state.STUDENT_PAGE_SIZE));
+      if (action === "first") state.wrongBookPage = 1;
+      else if (action === "prev") state.wrongBookPage = Math.max(1, state.wrongBookPage - 1);
+      else if (action === "next") state.wrongBookPage = Math.min(totalPages, state.wrongBookPage + 1);
+      else if (action === "last") state.wrongBookPage = totalPages;
+      switchStudentTab("wrongbook");
+      return;
+    }
+    // Menu navigation
+    if ((el = target.closest("[data-menu-jump]"))) {
+      state.activeMenu = el.dataset.menuJump;
+      renderDashboard();
+      return;
+    }
+    if ((el = target.closest("[data-open-form]"))) {
+      openCreateForm(el.dataset.openForm);
+      return;
+    }
+    if ((el = target.closest("[data-delete]"))) {
+      handleDelete(el.dataset.delete);
+      return;
+    }
+    if ((el = target.closest("[data-edit-user]"))) {
+      openEditUser(el.dataset.editUser);
+      return;
+    }
+    if ((el = target.closest("[data-edit-entity]"))) {
+      openEditEntity(el.dataset.editEntity);
+      return;
+    }
+    if ((el = target.closest("[data-edit-question]"))) {
+      openEditQuestion(el.dataset.editQuestion);
+      return;
+    }
+    if ((el = target.closest("[data-import-questions]"))) {
+      openBatchQuestionImport();
+      return;
+    }
+    if ((el = target.closest("[data-import-users]"))) {
+      openBatchUserImport(el.dataset.importUsers || "student");
+      return;
+    }
+    if ((el = target.closest("[data-delete-selected-questions]"))) {
+      deleteSelectedQuestions();
+      return;
+    }
+    if ((el = target.closest("[data-clear-selected-questions]"))) {
+      clearSelectedQuestions();
+      return;
+    }
+    if ((el = target.closest("[data-edit-paper]"))) {
+      openEditPaper(el.dataset.editPaper);
+      return;
+    }
+    if ((el = target.closest("[data-edit-exam]"))) {
+      openEditExam(el.dataset.editExam);
+      return;
+    }
+    if ((el = target.closest("[data-reset-password]"))) {
+      openResetPassword(el.dataset.resetPassword);
+      return;
+    }
+    if ((el = target.closest("[data-preview-paper]"))) {
+      openPaperPreview(el.dataset.previewPaper);
+      return;
+    }
+    if ((el = target.closest("[data-auto-paper]"))) {
+      openAutoPaperForm();
+      return;
+    }
+    if ((el = target.closest("[data-monitor-exam]"))) {
+      openExamMonitor(el.dataset.monitorExam);
+      return;
+    }
+    if ((el = target.closest("[data-grade]"))) {
+      openGrading(el.dataset.grade);
+      return;
+    }
+    if ((el = target.closest("[data-view-submission]"))) {
+      openSubmissionReview(el.dataset.viewSubmission);
+      return;
+    }
+    if ((el = target.closest("[data-start-exam]"))) {
+      startExam(el.dataset.startExam);
+      return;
+    }
+    if ((el = target.closest("[data-retry-wrong-question]"))) {
+      openWrongBookRetrySafe(el.dataset.retryWrongQuestion);
+      return;
+    }
+    if ((el = target.closest("[data-remove-wrong-question]"))) {
+      removeWrongBookEntry(el.dataset.removeWrongQuestion);
+      return;
+    }
+    if ((el = target.closest("[data-export-users]"))) {
+      exportUsersCsv();
+      return;
+    }
+    if ((el = target.closest("[data-export-scores]"))) {
+      exportTeacherScores();
+      return;
+    }
+    if ((el = target.closest("[data-analysis-tab]"))) {
+      state.analysisTab = el.dataset.analysisTab;
+      renderDashboard();
+      return;
+    }
   });
 
-  const passwordForm = document.getElementById("passwordForm");
-  if (passwordForm) {
-    passwordForm.addEventListener("submit", updatePassword);
-  }
+  // Delegated input/change handler for filters
+  dashboardView.addEventListener("input", function (e) {
+    const el = e.target.closest("[data-filter-key]");
+    if (el) handleFilterChange(e);
+  });
+  dashboardView.addEventListener("change", function (e) {
+    const el = e.target.closest("[data-filter-key]");
+    if (el) handleFilterChange(e);
+    // Question checkbox selection
+    let sel;
+    if ((sel = e.target.closest("[data-select-question]"))) {
+      toggleQuestionSelection(sel.dataset.selectQuestion, sel.checked);
+    }
+    if ((sel = e.target.closest("[data-select-all-questions]"))) {
+      toggleAllQuestionSelection(sel.checked);
+    }
+  });
 }
+
+function bindPermanentEvents() {
+  // These elements are part of the sidebar which is only rendered once per full renderDashboard()
+  const refreshBtn = document.getElementById("refreshBtn");
+  if (refreshBtn) refreshBtn.onclick = loadBootstrap;
+  const logoutBtn = document.getElementById("logoutBtn");
+  if (logoutBtn) logoutBtn.onclick = logout;
+  const collapseBtn = document.getElementById("sidebarCollapseBtn");
+  if (collapseBtn) collapseBtn.onclick = collapseSidebar;
+  const expandBtn = document.getElementById("sidebarExpandBtn");
+  if (expandBtn) expandBtn.onclick = expandSidebar;
+  const mobileMenuBtn = document.getElementById("mobileMenuBtn");
+  if (mobileMenuBtn) mobileMenuBtn.onclick = openMobileSidebar;
+  const overlay = document.getElementById("sidebarOverlay");
+  if (overlay) overlay.onclick = closeMobileSidebar;
+
+  // Menu buttons - use onclick to avoid accumulating listeners
+  dashboardView.querySelectorAll("[data-menu]").forEach((button) => {
+    button.onclick = () => {
+      state.activeMenu = button.dataset.menu;
+      dashboardView.classList.remove("sidebar-open");
+      renderDashboard();
+    };
+  });
+}
+
+// Kept as no-op for backward compatibility; events are now delegated
+function bindContentEvents() {}
 
 function handleFilterChange(event) {
-  state.filters[event.target.dataset.filterKey] = event.target.value;
+  const key = event.target.dataset.filterKey;
+  state.filters[key] = event.target.value;
+  // Reset question page when question filters change
+  if (key.startsWith("question_")) {
+    state.questionPage = 1;
+    state._questionPageCacheKey = "";
+    if (state.teacherTab === "questions") {
+      debouncedRefreshQuestionBank();
+      return;
+    }
+  }
+  // Student exam filter → partial refresh
+  if (key === "student_exam_status") {
+    if (state.studentTab === "student-exams") {
+      debouncedRefreshStudentContent();
+      return;
+    }
+  }
+  // Student record filter → partial refresh
+  if (key === "record_status") {
+    state.recordPage = 1;
+    if (state.studentTab === "records") {
+      debouncedRefreshStudentContent();
+      return;
+    }
+  }
+  // Student wrong book filter → partial refresh
+  if (key === "wrong_subject") {
+    state.wrongBookPage = 1;
+    if (state.studentTab === "wrongbook") {
+      debouncedRefreshStudentContent();
+      return;
+    }
+  }
   debouncedRenderDashboard();
 }
+
+const debouncedRefreshQuestionList = debounce(() => {
+  const contentArea = dashboardView.querySelector(".teacher-workspace-content");
+  if (contentArea && state.teacherTab === "questions") {
+    contentArea.innerHTML = renderQuestions();
+  } else {
+    renderDashboard();
+  }
+}, 200);
+
+const debouncedRefreshStudentContent = debounce(() => {
+  const contentArea = dashboardView.querySelector(".teacher-workspace-content");
+  if (contentArea && state.studentTab) {
+    let content = "";
+    if (state.studentTab === "overview") content = renderStudentOverview();
+    else if (state.studentTab === "student-exams") content = renderStudentExams();
+    else if (state.studentTab === "records") content = renderRecords();
+    else if (state.studentTab === "wrongbook") content = renderWrongBook();
+    else if (state.studentTab === "profile") content = renderProfile();
+    contentArea.innerHTML = content;
+    const pf = document.getElementById("passwordForm");
+    if (pf) pf.onsubmit = updatePassword;
+  } else {
+    renderDashboard();
+  }
+}, 200);
 
 function getReservedQuestionIds(excludePaperId = "") {
   return new Set(
@@ -1553,7 +1876,7 @@ function getSelectablePaperQuestions(excludePaperId = "") {
 function renderPaperQuestionOptions(questions, selectedIds = []) {
   const selectedSet = new Set(selectedIds);
   return questions
-    .map((item) => `<option value="${item.id}" ${selectedSet.has(item.id) ? "selected" : ""}>${typeLabel(item.type)} · ${item.title}</option>`)
+    .map((item) => `<option value="${escapeAttr(item.id)}" ${selectedSet.has(item.id) ? "selected" : ""}>${escapeHtml(typeLabel(item.type))} · ${escapeHtml(item.title)}</option>`)
     .join("");
 }
 
@@ -1575,9 +1898,9 @@ function openCreateForm(type) {
         <label><span>默认密码</span><input name="password" value="123456" required /></label>
         ${
           type === "student"
-            ? `<label><span>班级</span><select name="classId">${classes.map((item) => `<option value="${item.id}">${item.name}</option>`).join("")}</select></label>
+            ? `<label><span>班级</span><select name="classId">${classes.map((item) => `<option value="${escapeAttr(item.id)}">${escapeHtml(item.name)}</option>`).join("")}</select></label>
                <label><span>专业</span><input name="major" required /></label>`
-            : `<label><span>院系</span><select name="departmentId">${departments.map((item) => `<option value="${item.id}">${item.name}</option>`).join("")}</select></label>`
+            : `<label><span>院系</span><select name="departmentId">${departments.map((item) => `<option value="${escapeAttr(item.id)}">${escapeHtml(item.name)}</option>`).join("")}</select></label>`
         }
         <button class="primary-btn" type="submit">保存</button>
       </form>
@@ -1598,7 +1921,7 @@ function openCreateForm(type) {
         <input type="hidden" name="entity" value="classes" />
         <label><span>班级名称</span><input name="name" required /></label>
         <label><span>专业</span><input name="major" required /></label>
-        <label><span>院系</span><select name="departmentId">${departments.map((item) => `<option value="${item.id}">${item.name}</option>`).join("")}</select></label>
+        <label><span>院系</span><select name="departmentId">${departments.map((item) => `<option value="${escapeAttr(item.id)}">${escapeHtml(item.name)}</option>`).join("")}</select></label>
         <button class="primary-btn" type="submit">保存</button>
       </form>
     `;
@@ -1644,24 +1967,130 @@ function openCreateForm(type) {
       </form>
     `;
   } else if (type === "exam") {
-    const papers = state.bootstrap.papers;
+    const availableQuestions = getSelectablePaperQuestions();
+    const subjects = [...new Set(availableQuestions.map((item) => item.subject))];
     content = `
       <h3>发布考试</h3>
       <form id="entityForm" class="form-grid">
         <input type="hidden" name="entity" value="exams" />
-        <label><span>考试名称</span><input name="name" required /></label>
-        <label><span>试卷</span><select name="paperId">${papers.map((item) => `<option value="${item.id}">${item.name}</option>`).join("")}</select></label>
-        <label><span>班级</span><select name="targetClassIds">${classes.map((item) => `<option value="${item.id}">${item.name}</option>`).join("")}</select></label>
-        <label><span>开始时间</span><input name="startTime" type="datetime-local" required /></label>
-        <label><span>结束时间</span><input name="endTime" type="datetime-local" required /></label>
+        <label><span>考试名称</span><input name="name" required placeholder="例如：2025年春季期末考试" /></label>
+
+        <fieldset style="border:none;padding:0;margin:0;">
+          <legend style="font-size:13px;font-weight:600;color:var(--muted);margin-bottom:8px;">组卷设置</legend>
+          <p class="toolbar-note" style="margin-bottom:8px;">系统将自动从题库中随机抽取未使用的题目组卷。当前可用题目：${availableQuestions.length} 道。</p>
+          <div class="two-column" style="gap:10px;">
+            <label>
+              <span>限定科目</span>
+              <select name="subject">
+                <option value="all">全部科目</option>
+                ${subjects.map((item) => `<option value="${escapeAttr(item)}">${escapeHtml(item)}</option>`).join("")}
+              </select>
+            </label>
+            <label>
+              <span>考试时长（分钟）</span>
+              <input name="durationMinutes" type="number" min="1" value="60" required />
+            </label>
+            <label>
+              <span>单选题数量</span>
+              <input name="singleCount" type="number" min="0" value="5" />
+            </label>
+            <label>
+              <span>多选题数量</span>
+              <input name="multipleCount" type="number" min="0" value="5" />
+            </label>
+            <label>
+              <span>判断题数量</span>
+              <input name="judgeCount" type="number" min="0" value="5" />
+            </label>
+            <label>
+              <span>填空题数量</span>
+              <input name="fillCount" type="number" min="0" value="5" />
+            </label>
+            <label>
+              <span>简答题数量</span>
+              <input name="shortCount" type="number" min="0" value="2" />
+            </label>
+            <label>
+              <span>编程题数量</span>
+              <input name="codingCount" type="number" min="0" value="1" />
+            </label>
+          </div>
+          <div class="two-column" style="gap:10px;margin-top:8px;">
+            <label>
+              <span>及格线</span>
+              <input name="passScore" type="number" min="0" max="100" value="60" required />
+            </label>
+          </div>
+        </fieldset>
+
+        <label><span>开始时间</span><input name="startTime" type="datetime-local" required id="examStartTime" /></label>
+
+        <label><span>目标班级</span>
+          <div class="class-multi-select">
+            <div class="class-multi-select-header">
+              <label><input type="checkbox" id="classSelectAll" /> 全选</label>
+              <span class="class-selected-count" id="classSelectedCount">已选 0 个班级</span>
+            </div>
+            <div class="class-multi-select-list">
+              ${classes.map((item) => `
+                <label class="class-multi-select-item">
+                  <input type="checkbox" name="targetClassId" value="${escapeAttr(item.id)}" />
+                  <span>${escapeHtml(item.name)}</span>
+                </label>
+              `).join("")}
+            </div>
+          </div>
+        </label>
+
         <label><span>切屏上限</span><input name="antiCheatLimit" type="number" min="0" value="3" required /></label>
-        <button class="primary-btn" type="submit">保存</button>
+        <button class="primary-btn" type="submit">发布考试</button>
       </form>
     `;
   }
 
   openModal(content);
   document.getElementById("entityForm")?.addEventListener("submit", submitEntityForm);
+
+  // Exam form: class multi-select + auto end time
+  if (type === "exam") {
+    const selectAll = document.getElementById("classSelectAll");
+    const classCheckboxes = modalContent.querySelectorAll('input[name="targetClassId"]');
+    const countDisplay = document.getElementById("classSelectedCount");
+
+    function updateClassCount() {
+      const checked = modalContent.querySelectorAll('input[name="targetClassId"]:checked').length;
+      if (countDisplay) countDisplay.textContent = `已选 ${checked} 个班级`;
+      if (selectAll) selectAll.checked = checked === classCheckboxes.length && classCheckboxes.length > 0;
+    }
+
+    if (selectAll) {
+      selectAll.addEventListener("change", () => {
+        classCheckboxes.forEach((cb) => { cb.checked = selectAll.checked; });
+        updateClassCount();
+      });
+    }
+    classCheckboxes.forEach((cb) => cb.addEventListener("change", updateClassCount));
+
+    // Auto-calculate end time from start time + duration
+    const startTimeInput = document.getElementById("examStartTime");
+    const durationInput = modalContent.querySelector('[name="durationMinutes"]');
+    function updateEndTime() {
+      if (startTimeInput?.value && durationInput?.value) {
+        const start = new Date(startTimeInput.value);
+        const end = new Date(start.getTime() + Number(durationInput.value) * 60000);
+        const year = end.getFullYear();
+        const month = String(end.getMonth() + 1).padStart(2, "0");
+        const day = String(end.getDate()).padStart(2, "0");
+        const hours = String(end.getHours()).padStart(2, "0");
+        const mins = String(end.getMinutes()).padStart(2, "0");
+        const endTimeStr = `${year}-${month}-${day}T${hours}:${mins}`;
+        // Store the calculated end time for form submission
+        if (startTimeInput) startTimeInput.dataset.calculatedEndTime = endTimeStr;
+      }
+    }
+    if (startTimeInput) startTimeInput.addEventListener("change", updateEndTime);
+    if (durationInput) durationInput.addEventListener("change", updateEndTime);
+  }
 }
 
 function openEditUser(userId) {
@@ -1672,14 +2101,14 @@ function openEditUser(userId) {
   openModal(`
     <h3>编辑用户</h3>
     <form id="editUserForm" class="form-grid">
-      <input type="hidden" name="id" value="${user.id}" />
-      <label><span>账号</span><input name="username" value="${user.username}" required /></label>
-      <label><span>姓名</span><input name="name" value="${user.name}" required /></label>
+      <input type="hidden" name="id" value="${escapeAttr(user.id)}" />
+      <label><span>账号</span><input name="username" value="${escapeAttr(user.username)}" required /></label>
+      <label><span>姓名</span><input name="name" value="${escapeAttr(user.name)}" required /></label>
       ${
         user.role === "student"
-          ? `<label><span>班级</span><select name="classId">${classes.map((item) => `<option value="${item.id}" ${item.id === user.classId ? "selected" : ""}>${item.name}</option>`).join("")}</select></label>
-             <label><span>专业</span><input name="major" value="${user.major || ""}" required /></label>`
-          : `<label><span>院系</span><select name="departmentId">${departments.map((item) => `<option value="${item.id}" ${item.id === user.departmentId ? "selected" : ""}>${item.name}</option>`).join("")}</select></label>`
+          ? `<label><span>班级</span><select name="classId">${classes.map((item) => `<option value="${escapeAttr(item.id)}" ${item.id === user.classId ? "selected" : ""}>${escapeHtml(item.name)}</option>`).join("")}</select></label>
+             <label><span>专业</span><input name="major" value="${escapeAttr(user.major || "")}" required /></label>`
+          : `<label><span>院系</span><select name="departmentId">${departments.map((item) => `<option value="${escapeAttr(item.id)}" ${item.id === user.departmentId ? "selected" : ""}>${escapeHtml(item.name)}</option>`).join("")}</select></label>`
       }
       <button class="primary-btn" type="submit">更新</button>
     </form>
@@ -1704,8 +2133,8 @@ function openEditEntity(value) {
     openModal(`
       <h3>编辑院系</h3>
       <form id="editEntityForm" class="form-grid">
-        <input type="hidden" name="id" value="${record.id}" />
-        <label><span>院系名称</span><input name="name" value="${record.name}" required /></label>
+        <input type="hidden" name="id" value="${escapeAttr(record.id)}" />
+        <label><span>院系名称</span><input name="name" value="${escapeAttr(record.name)}" required /></label>
         <button class="primary-btn" type="submit">更新</button>
       </form>
     `);
@@ -1715,10 +2144,10 @@ function openEditEntity(value) {
     openModal(`
       <h3>编辑班级</h3>
       <form id="editEntityForm" class="form-grid">
-        <input type="hidden" name="id" value="${record.id}" />
-        <label><span>班级名称</span><input name="name" value="${record.name}" required /></label>
-        <label><span>专业</span><input name="major" value="${record.major}" required /></label>
-        <label><span>院系</span><select name="departmentId">${state.bootstrap.departments.map((item) => `<option value="${item.id}" ${item.id === record.departmentId ? "selected" : ""}>${item.name}</option>`).join("")}</select></label>
+        <input type="hidden" name="id" value="${escapeAttr(record.id)}" />
+        <label><span>班级名称</span><input name="name" value="${escapeAttr(record.name)}" required /></label>
+        <label><span>专业</span><input name="major" value="${escapeAttr(record.major)}" required /></label>
+        <label><span>院系</span><select name="departmentId">${state.bootstrap.departments.map((item) => `<option value="${escapeAttr(item.id)}" ${item.id === record.departmentId ? "selected" : ""}>${escapeHtml(item.name)}</option>`).join("")}</select></label>
         <button class="primary-btn" type="submit">更新</button>
       </form>
     `);
@@ -1742,7 +2171,7 @@ function openEditQuestion(questionId) {
   openModal(`
     <h3>编辑题目</h3>
     <form id="editQuestionForm" class="form-grid">
-      <input type="hidden" name="id" value="${question.id}" />
+      <input type="hidden" name="id" value="${escapeAttr(question.id)}" />
       <label><span>题型</span>
         <select name="type">
           <option value="single" ${question.type === "single" ? "selected" : ""}>单选</option>
@@ -1753,9 +2182,9 @@ function openEditQuestion(questionId) {
           <option value="coding" ${question.type === "coding" ? "selected" : ""}>编程</option>
         </select>
       </label>
-      <label><span>题目</span><textarea name="title" required>${question.title}</textarea></label>
-      <label><span>科目</span><input name="subject" value="${question.subject}" required /></label>
-      <label><span>知识点</span><input name="knowledgePoint" value="${question.knowledgePoint}" required /></label>
+      <label><span>题目</span><textarea name="title" required>${escapeHtml(question.title)}</textarea></label>
+      <label><span>科目</span><input name="subject" value="${escapeAttr(question.subject)}" required /></label>
+      <label><span>知识点</span><input name="knowledgePoint" value="${escapeAttr(question.knowledgePoint)}" required /></label>
       <label><span>难度</span>
         <select name="difficulty">
           <option ${question.difficulty === "易" ? "selected" : ""}>易</option>
@@ -1763,8 +2192,8 @@ function openEditQuestion(questionId) {
           <option ${question.difficulty === "难" ? "selected" : ""}>难</option>
         </select>
       </label>
-      <label><span>选项（选择题使用 | 分隔）</span><input name="options" value="${(question.options || []).join(" | ")}" /></label>
-      <label><span>答案（多值用 | 分隔）</span><textarea name="answer" required>${(question.answer || []).join(" | ")}</textarea></label>
+      <label><span>选项（选择题使用 | 分隔）</span><input name="options" value="${escapeAttr((question.options || []).join(" | "))}" /></label>
+      <label><span>答案（多值用 | 分隔）</span><textarea name="answer" required>${escapeHtml((question.answer || []).join(" | "))}</textarea></label>
       <label><span>分值</span><input name="score" type="number" min="1" value="${question.score}" required /></label>
       <button class="primary-btn" type="submit">保存修改</button>
     </form>
@@ -2006,65 +2435,6 @@ function openBatchUserImport(role) {
   });
 }
 
-function openBatchStudentImport() {
-  const classOptions = state.bootstrap.classes
-    .map((item) => `<option value="${item.id}">${item.name} / ${item.major}</option>`)
-    .join("");
-
-  openModal(`
-    <h3>批量导入学生</h3>
-    <p class="muted">每行一名学生，格式：学号|姓名|班级ID或班级名|专业|密码</p>
-    <div class="modal-toolbar">
-      <button class="ghost-btn" type="button" id="downloadStudentTemplateBtn">下载模板</button>
-    </div>
-    <form id="batchStudentForm" class="form-grid">
-      <label><span>班级参考</span><select>${classOptions}</select></label>
-      <label><span>批量学生文本</span><textarea name="payload" placeholder="2023003|王五|class-1|软件工程|123456&#10;2023004|赵六|2310|软件工程|123456" required></textarea></label>
-      <div id="studentImportPreview" class="import-preview"></div>
-      <button class="primary-btn" type="submit">开始导入</button>
-    </form>
-  `);
-
-  const form = document.getElementById("batchStudentForm");
-  const payloadInput = form.querySelector('[name="payload"]');
-  const preview = document.getElementById("studentImportPreview");
-  const refreshPreview = () => {
-    preview.innerHTML = renderStudentImportPreview(parseStudentImportPayload(payloadInput.value));
-  };
-
-  document.getElementById("downloadStudentTemplateBtn").addEventListener("click", downloadStudentImportTemplate);
-  payloadInput.addEventListener("input", refreshPreview);
-  refreshPreview();
-
-  form.addEventListener("submit", async (event) => {
-    event.preventDefault();
-    try {
-      const parsed = parseStudentImportPayload(payloadInput.value);
-      if (!parsed.records.length) {
-        alert(parsed.errors.length ? parsed.errors.map((item) => `第 ${item.lineNumber} 行：${item.message}`).join("\n") : "没有可导入的学生");
-        return;
-      }
-      const result = await api("/api/users/batch-import", {
-        method: "POST",
-        body: JSON.stringify({ records: parsed.records }),
-      });
-      closeModal({ preserveExamSession: true });
-      await loadBootstrap();
-      const messages = [`已导入 ${result.importedCount} 名学生`];
-      const errorLines = [
-        ...parsed.errors.map((item) => `第 ${item.lineNumber} 行：${item.message}`),
-        ...(result.errors || []).map((item) => `${item.title || "学生"}：${item.message}`),
-      ];
-      if (errorLines.length) {
-        messages.push(`未导入 ${errorLines.length} 条：\n${errorLines.slice(0, 8).join("\n")}${errorLines.length > 8 ? "\n..." : ""}`);
-      }
-      alert(messages.join("\n\n"));
-    } catch (error) {
-      alert(getFriendlyErrorMessage(error) || "批量导入失败");
-    }
-  });
-}
-
 function openEditPaper(paperId) {
   const paper = state.bootstrap.papers.find((item) => item.id === paperId);
   if (!paper) return;
@@ -2072,8 +2442,8 @@ function openEditPaper(paperId) {
   openModal(`
     <h3>编辑试卷</h3>
     <form id="editPaperForm" class="form-grid">
-      <input type="hidden" name="id" value="${paper.id}" />
-      <label><span>试卷名称</span><input name="name" value="${paper.name}" required /></label>
+      <input type="hidden" name="id" value="${escapeAttr(paper.id)}" />
+      <label><span>试卷名称</span><input name="name" value="${escapeAttr(paper.name)}" required /></label>
       <label><span>考试时长（分钟）</span><input name="durationMinutes" type="number" min="1" value="${paper.durationMinutes}" required /></label>
       <label><span>及格线</span><input name="passScore" type="number" min="0" value="${paper.passScore}" required /></label>
       <p class="toolbar-note">可选题目已自动排除其他试卷已占用题目；当前可选 ${availableQuestions.length} 道。</p>
@@ -2118,36 +2488,62 @@ function openEditExam(examId) {
   openModal(`
     <h3>编辑考试</h3>
     <form id="editExamForm" class="form-grid">
-      <input type="hidden" name="id" value="${exam.id}" />
-      <label><span>考试名称</span><input name="name" value="${exam.name}" required /></label>
-      <label><span>试卷</span>
-        <select name="paperId">
-          ${state.bootstrap.papers
-            .map((item) => `<option value="${item.id}" ${item.id === exam.paperId ? "selected" : ""}>${item.name}</option>`)
-            .join("")}
-        </select>
-      </label>
-      <label><span>班级</span>
-        <select name="targetClassIds">
-          ${state.bootstrap.classes
-            .map(
-              (item) =>
-                `<option value="${item.id}" ${exam.targetClassIds.includes(item.id) ? "selected" : ""}>${item.name}</option>`
-            )
-            .join("")}
-        </select>
-      </label>
+      <input type="hidden" name="id" value="${escapeAttr(exam.id)}" />
+      <label><span>考试名称</span><input name="name" value="${escapeAttr(exam.name)}" required /></label>
       <label><span>开始时间</span><input name="startTime" type="datetime-local" value="${toDateTimeLocalValue(exam.startTime)}" required /></label>
       <label><span>结束时间</span><input name="endTime" type="datetime-local" value="${toDateTimeLocalValue(exam.endTime)}" required /></label>
+      <label><span>目标班级</span>
+        <div class="class-multi-select">
+          <div class="class-multi-select-header">
+            <label><input type="checkbox" id="editClassSelectAll" /> 全选</label>
+            <span class="class-selected-count" id="editClassSelectedCount">已选 ${exam.targetClassIds.length} 个班级</span>
+          </div>
+          <div class="class-multi-select-list">
+            ${state.bootstrap.classes
+              .map(
+                (item) =>
+                  `<label class="class-multi-select-item">
+                    <input type="checkbox" name="targetClassId" value="${escapeAttr(item.id)}" ${exam.targetClassIds.includes(item.id) ? "checked" : ""} />
+                    <span>${escapeHtml(item.name)}</span>
+                  </label>`
+              )
+              .join("")}
+          </div>
+        </div>
+      </label>
       <label><span>切屏上限</span><input name="antiCheatLimit" type="number" min="0" value="${exam.antiCheatLimit}" required /></label>
       <button class="primary-btn" type="submit">保存修改</button>
     </form>
   `);
 
+  // Multi-select events
+  const selectAll = document.getElementById("editClassSelectAll");
+  const classCheckboxes = modalContent.querySelectorAll('input[name="targetClassId"]');
+  const countDisplay = document.getElementById("editClassSelectedCount");
+
+  function updateEditClassCount() {
+    const checked = modalContent.querySelectorAll('input[name="targetClassId"]:checked').length;
+    if (countDisplay) countDisplay.textContent = `已选 ${checked} 个班级`;
+    if (selectAll) selectAll.checked = checked === classCheckboxes.length && classCheckboxes.length > 0;
+  }
+
+  if (selectAll) {
+    selectAll.addEventListener("change", () => {
+      classCheckboxes.forEach((cb) => { cb.checked = selectAll.checked; });
+      updateEditClassCount();
+    });
+  }
+  classCheckboxes.forEach((cb) => cb.addEventListener("change", updateEditClassCount));
+
   document.getElementById("editExamForm").addEventListener("submit", (event) => {
     event.preventDefault();
     const body = Object.fromEntries(new FormData(event.target).entries());
-    body.targetClassIds = [body.targetClassIds];
+    const selectedClassIds = [...modalContent.querySelectorAll('input[name="targetClassId"]:checked')].map((cb) => cb.value);
+    if (!selectedClassIds.length) {
+      alert("请至少选择一个目标班级");
+      return;
+    }
+    body.targetClassIds = selectedClassIds;
     body.antiCheatLimit = Number(body.antiCheatLimit);
     body.startTime = new Date(body.startTime).toISOString();
     body.endTime = new Date(body.endTime).toISOString();
@@ -2167,8 +2563,8 @@ function openResetPassword(userId) {
   openModal(`
     <h3>重置密码</h3>
     <form id="resetPasswordForm" class="form-grid">
-      <input type="hidden" name="userId" value="${user.id}" />
-      <p>用户：${user.name}（${user.username}）</p>
+      <input type="hidden" name="userId" value="${escapeAttr(user.id)}" />
+      <p>用户：${escapeHtml(user.name)}（${escapeHtml(user.username)}）</p>
       <label><span>新密码</span><input name="newPassword" value="123456" minlength="6" required /></label>
       <button class="primary-btn" type="submit">确认重置</button>
     </form>
@@ -2193,15 +2589,15 @@ function openPaperPreview(paperId) {
     .map((id) => state.bootstrap.questions.find((item) => item.id === id))
     .filter(Boolean);
   openModal(`
-    <h3>${paper.name}</h3>
+    <h3>${escapeHtml(paper.name)}</h3>
     <p class="muted">题量 ${paper.questionIds.length} · 总分 ${paper.totalScore} · 时长 ${paper.durationMinutes} 分钟</p>
     <div class="mini-list">
       ${questions
         .map(
           (item, index) => `
         <div class="mini-item">
-          <h4>${index + 1}. ${item.title}</h4>
-          <p>${typeLabel(item.type)} · ${item.subject} / ${item.knowledgePoint} · ${item.score} 分</p>
+          <h4>${index + 1}. ${escapeHtml(item.title)}</h4>
+          <p>${escapeHtml(typeLabel(item.type))} · ${escapeHtml(item.subject)} / ${escapeHtml(item.knowledgePoint)} · ${item.score} 分</p>
         </div>`
         )
         .join("")}
@@ -2220,7 +2616,7 @@ function openAutoPaperForm() {
         <span>限定科目</span>
         <select name="subject">
           <option value="all">全部科目</option>
-          ${subjects.map((item) => `<option value="${item}">${item}</option>`).join("")}
+          ${subjects.map((item) => `<option value="${escapeAttr(item)}">${escapeHtml(item)}</option>`).join("")}
         </select>
       </label>
       <label><span>考试时长（分钟）</span><input name="durationMinutes" type="number" min="1" value="30" required /></label>
@@ -2341,44 +2737,6 @@ function openWrongBookRetrySafe(entryId) {
   });
 }
 
-function openWrongBookRetry(entryId) {
-  const entry = (state.bootstrap.wrongBookEntries || []).find((item) => item.id === entryId);
-  if (!entry || !entry.question) return;
-  const existing = entry.lastRetryAnswer?.length ? entry.lastRetryAnswer : entry.latestAnswer || [];
-  openModal(`
-    <div class="panel">
-      <div class="section-title">
-        <div>
-          <h3>错题重做</h3>
-          <p class="section-subtitle">${entry.subject || "-"} / ${entry.knowledgePoint || "-"} / ${typeLabel(entry.type)}</p>
-        </div>
-      </div>
-      <span class="tag">${typeLabel(entry.type)}</span>
-      <h3 style="margin-top: 12px;">${entry.title}</h3>
-      <div style="margin-top: 16px;">${renderQuestionInput(entry.question, existing)}</div>
-      <div class="action-row" style="margin-top: 16px;">
-        <button class="primary-btn" id="submitWrongBookRetryBtn" type="button">提交重做</button>
-      </div>
-      <p class="toolbar-note">参考答案：${(entry.expectedAnswer || []).join("、") || "-"}</p>
-    </div>
-  `);
-
-  document.getElementById("submitWrongBookRetryBtn").addEventListener("click", async () => {
-    try {
-      const answer = collectQuestionAnswer(entry.question);
-      const result = await api(`/api/wrongbook/${entryId}/retry`, {
-        method: "POST",
-        body: JSON.stringify({ answer }),
-      });
-      alert(result.entry?.removable ? "重做正确，可自行移出错题本。" : "本次重做未完全正确，已保留在错题本中。");
-      closeModal({ preserveExamSession: true });
-      await loadBootstrap();
-    } catch (error) {
-      alert(getFriendlyErrorMessage(error));
-    }
-  });
-}
-
 async function removeWrongBookEntry(entryId) {
   const confirmed = await openConfirmDialog("确认将这道题移出错题本吗？", "移出确认");
   if (!confirmed) {
@@ -2408,7 +2766,7 @@ function openExamMonitor(examId) {
   const suspiciousCount = rows.filter((item) => item.submission?.suspicious).length;
 
   openModal(`
-    <h3>考试监控：${exam.name}</h3>
+    <h3>考试监控：${escapeHtml(exam.name)}</h3>
     <div class="stats-grid">
       <article class="stat-card"><span>目标考生</span><strong>${rows.length}</strong></article>
       <article class="stat-card"><span>已有答卷</span><strong>${submittedCount}</strong></article>
@@ -2423,12 +2781,12 @@ function openExamMonitor(examId) {
               const studentClass = state.bootstrap.classes.find((row) => row.id === item.student.classId);
               return `
                 <tr>
-                  <td>${item.student.name} (${item.student.username})</td>
-                  <td>${studentClass?.name || "-"}</td>
-                  <td>${item.status}</td>
+                  <td>${escapeHtml(item.student.name)} (${escapeHtml(item.student.username)})</td>
+                  <td>${escapeHtml(studentClass?.name || "-")}</td>
+                  <td>${escapeHtml(item.status)}</td>
                   <td>${item.submission ? item.submission.finalScore ?? item.submission.autoScore ?? "-" : "-"}</td>
                   <td>${item.submission?.switchCount ?? 0}</td>
-                  <td class="${item.submission?.suspicious ? "danger" : "ok"}">${item.submission?.suspicious ? (item.submission.suspiciousReasons?.join("、") || "疑似异常") : "正常"}</td>
+                  <td class="${item.submission?.suspicious ? "danger" : "ok"}">${item.submission?.suspicious ? escapeHtml(item.submission.suspiciousReasons?.join("、") || "疑似异常") : "正常"}</td>
                   <td>${item.submission?.submittedAt ? formatDate(item.submission.submittedAt) : "-"}</td>
                   <td>${item.submission?.status === "进行中" ? `<button class="ghost-btn" type="button" data-extend-student="${exam.id}:${item.student.id}">延时</button>` : "-"}</td>
                 </tr>
@@ -2468,8 +2826,8 @@ function openSubmissionReview(submissionId) {
   const rankText = submission.rank ? `${submission.rank} / ${submission.finishedCount || submission.rank}` : "待排名";
   const durationText = submission.usedTimeText || (submission.usedMinutes ? `${submission.usedMinutes} 分钟` : "-");
   openModal(`
-    <h3>${submission.examName || "答卷详情"}</h3>
-    <p class="muted">考生：${submission.studentName || state.currentUser.name} · 状态：${submission.status}</p>
+    <h3>${escapeHtml(submission.examName || "答卷详情")}</h3>
+    <p class="muted">考生：${escapeHtml(submission.studentName || state.currentUser.name)} · 状态：${escapeHtml(submission.status)}</p>
     <section class="stats-grid compact-stats" style="margin-top:16px;">
       <article class="stat-card compact-card">
         <span>成绩</span>
@@ -2500,10 +2858,10 @@ function openSubmissionReview(submissionId) {
             .map(
               (item) => `
             <tr>
-              <td>${typeLabel(item.type)}</td>
-              <td>${item.title}</td>
-              <td>${(item.answer || []).join("、") || "-"}</td>
-              <td>${(item.expectedAnswer || []).join("、") || "-"}</td>
+              <td>${escapeHtml(typeLabel(item.type))}</td>
+              <td>${escapeHtml(item.title)}</td>
+              <td>${formatAnswerList(item.answer)}</td>
+              <td>${formatAnswerList(item.expectedAnswer)}</td>
               <td>${item.score ?? 0} / ${item.fullScore ?? 0}</td>
             </tr>`
             )
@@ -2517,37 +2875,200 @@ function openSubmissionReview(submissionId) {
 function openGrading(submissionId) {
   const submission = state.bootstrap.submissions.find((item) => item.id === submissionId);
   if (!submission) return;
-  const subjective = (submission.answerDetail || []).filter((item) => ["short", "coding"].includes(item.type));
+  const allQuestions = submission.answerDetail || [];
+  const exams = indexBy(state.bootstrap.exams);
+  const examName = exams[submission.examId]?.name || submission.examName || "考试";
+  const studentName = submission.studentName || "未知学生";
+  const scoreText = submission.finalScore ?? submission.autoScore ?? "-";
+  const totalScore = submission.totalScore || "-";
+  const state_grading = {
+    submissionId,
+    currentQuestionIndex: 0,
+    scores: {},
+  };
+
+  // Pre-fill scores from existing data
+  allQuestions.forEach((item, index) => {
+    state_grading.scores[index] = item.score ?? 0;
+  });
+
+  state.gradingSession = state_grading;
+  renderGradingModal();
+}
+
+function renderGradingModal() {
+  const { submissionId, currentQuestionIndex, scores } = state.gradingSession;
+  const submission = state.bootstrap.submissions.find((item) => item.id === submissionId);
+  if (!submission) return;
+  const allQuestions = submission.answerDetail || [];
+  const exams = indexBy(state.bootstrap.exams);
+  const examName = exams[submission.examId]?.name || submission.examName || "考试";
+  const studentName = submission.studentName || "未知学生";
+  const totalQuestions = allQuestions.length;
+  const scoredCount = Object.keys(scores).filter((k) => scores[k] !== undefined && scores[k] !== null).length;
+  const progressPercent = totalQuestions ? Math.round((scoredCount / totalQuestions) * 100) : 0;
+  const isFirst = currentQuestionIndex === 0;
+  const isLast = currentQuestionIndex === totalQuestions - 1;
+  const current = allQuestions[currentQuestionIndex];
+  const isSubjective = ["short", "coding", "fill"].includes(current.type);
+  const currentScore = scores[currentQuestionIndex] ?? 0;
+
   openModal(`
-    <h3>手动阅卷</h3>
-    <form id="gradingForm" class="form-grid">
-      ${subjective
-        .map(
-          (item) => `
-        <section class="panel">
-          <p><strong>${item.title}</strong></p>
-          <p class="muted">学生答案：${(item.answer || []).join("、") || "-"}</p>
-          <p class="muted">参考答案：${(item.expectedAnswer || []).join("、") || "-"}</p>
-          <label><span>得分（满分 ${item.fullScore}）</span><input type="number" min="0" max="${item.fullScore}" name="${item.questionId}" value="${item.score || 0}" required /></label>
-        </section>`
-        )
-        .join("")}
-      <button class="primary-btn" type="submit">提交评分</button>
-    </form>
+    <div class="grading-shell">
+      <aside class="grading-sidebar">
+        <h3 class="grading-sidebar-title">阅卷评分</h3>
+        <p class="grading-sidebar-meta">${escapeHtml(examName)}</p>
+        <div class="grading-info-block">
+          <div class="grading-info-row">
+            <span>考生</span>
+            <strong>${escapeHtml(studentName)}</strong>
+          </div>
+          <div class="grading-info-row">
+            <span>当前得分</span>
+            <strong>${Object.values(scores).reduce((sum, v) => sum + Number(v || 0), 0)}${submission.totalScore ? " / " + submission.totalScore : ""}</strong>
+          </div>
+          <div class="grading-info-row">
+            <span>状态</span>
+            <strong>${escapeHtml(submission.status)}</strong>
+          </div>
+        </div>
+        <div class="grading-progress">
+          <div class="grading-progress-label">
+            <span>评分进度</span>
+            <span>${scoredCount} / ${totalQuestions}</span>
+          </div>
+          <div class="grading-progress-bar">
+            <div class="grading-progress-fill" style="width:${progressPercent}%"></div>
+          </div>
+        </div>
+        <div class="grading-nav">
+          ${allQuestions.map((item, index) => {
+            const isScored = scores[index] !== undefined;
+            const isAuto = !["short", "coding", "fill"].includes(item.type);
+            return `<button class="${isScored ? (isAuto ? "auto-scored" : "scored") : ""} ${index === currentQuestionIndex ? "current" : ""}" type="button" data-grading-jump="${index}">${index + 1}</button>`;
+          }).join("")}
+        </div>
+        <div class="grading-sidebar-actions">
+          <button class="primary-btn" id="submitGradingBtn" type="button">提交评分</button>
+          <button class="ghost-btn" id="closeGradingBtn" type="button">关闭</button>
+        </div>
+        <p id="gradingMessage" class="message"></p>
+      </aside>
+      <div class="grading-question-area">
+        <div class="grading-question-header">
+          <span class="grading-question-number">第 ${currentQuestionIndex + 1} 题</span>
+          <span class="grading-question-type">${escapeHtml(typeLabel(current.type))}</span>
+          ${!isSubjective ? '<span class="grading-auto-badge">自动评分</span>' : ""}
+          <span class="grading-question-title">${escapeHtml(current.title)}</span>
+        </div>
+        <div class="grading-question-body">
+          <div class="grading-answer-section">
+            <div class="grading-answer-label">学生答案</div>
+            <div class="grading-answer-box student-answer">
+              ${current.answer?.length ? formatAnswerList(current.answer) : '<span class="no-answer">未作答</span>'}
+            </div>
+          </div>
+          <div class="grading-answer-section">
+            <div class="grading-answer-label">参考答案</div>
+            <div class="grading-answer-box reference-answer">
+              ${formatAnswerList(current.expectedAnswer)}
+            </div>
+          </div>
+          <div class="grading-score-section">
+            <div class="grading-score-row">
+              <label>得分</label>
+              <input class="grading-score-input" type="number" min="0" max="${current.fullScore}" value="${currentScore}" id="gradingScoreInput" ${!isSubjective ? "readonly" : ""} />
+              <span class="grading-score-max">/ ${current.fullScore} 分</span>
+              ${!isSubjective ? '<span class="grading-auto-badge">客观题自动评分</span>' : ""}
+            </div>
+          </div>
+        </div>
+        <div class="grading-nav-footer">
+          <button class="grading-nav-btn prev" type="button" id="gradingPrevBtn" ${isFirst ? "disabled" : ""}>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg>
+            上一题
+          </button>
+          <span class="grading-nav-indicator">${currentQuestionIndex + 1} / ${totalQuestions}</span>
+          <button class="grading-nav-btn next" type="button" id="gradingNextBtn" ${isLast ? "disabled" : ""}>
+            下一题
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg>
+          </button>
+        </div>
+      </div>
+    </div>
   `);
-  document.getElementById("gradingForm").addEventListener("submit", (event) => {
-    event.preventDefault();
-    const scores = Object.fromEntries(new FormData(event.target).entries());
+
+  // Score input change
+  const scoreInput = document.getElementById("gradingScoreInput");
+  if (scoreInput && isSubjective) {
+    scoreInput.addEventListener("input", () => {
+      state.gradingSession.scores[currentQuestionIndex] = Number(scoreInput.value) || 0;
+    });
+    scoreInput.addEventListener("change", () => {
+      const val = Math.min(Math.max(Number(scoreInput.value) || 0, 0), current.fullScore);
+      scoreInput.value = val;
+      state.gradingSession.scores[currentQuestionIndex] = val;
+    });
+  }
+
+  // Question grid navigation
+  modalContent.querySelectorAll("[data-grading-jump]").forEach((button) => {
+    button.addEventListener("click", () => {
+      persistGradingScore();
+      state.gradingSession.currentQuestionIndex = Number(button.dataset.gradingJump);
+      renderGradingModal();
+    });
+  });
+
+  // Prev / Next
+  document.getElementById("gradingPrevBtn")?.addEventListener("click", () => {
+    if (state.gradingSession.currentQuestionIndex > 0) {
+      persistGradingScore();
+      state.gradingSession.currentQuestionIndex -= 1;
+      renderGradingModal();
+    }
+  });
+  document.getElementById("gradingNextBtn")?.addEventListener("click", () => {
+    if (state.gradingSession.currentQuestionIndex < totalQuestions - 1) {
+      persistGradingScore();
+      state.gradingSession.currentQuestionIndex += 1;
+      renderGradingModal();
+    }
+  });
+
+  // Submit
+  document.getElementById("submitGradingBtn").addEventListener("click", () => {
+    persistGradingScore();
+    const allScores = state.bootstrap.submissions.find((item) => item.id === submissionId)?.answerDetail || [];
+    const scoreMap = {};
+    allQuestions.forEach((item, index) => {
+      scoreMap[item.questionId] = state.gradingSession.scores[index] ?? item.score ?? 0;
+    });
     api("/api/submissions/manual-grade", {
       method: "POST",
-      body: JSON.stringify({ submissionId, scores }),
+      body: JSON.stringify({ submissionId, scores: scoreMap }),
     })
       .then(() => {
+        state.gradingSession = null;
         closeModal({ preserveExamSession: true });
         return loadBootstrap();
       })
       .catch((error) => alert(getFriendlyErrorMessage(error)));
   });
+
+  // Close
+  document.getElementById("closeGradingBtn").addEventListener("click", () => {
+    state.gradingSession = null;
+    closeModal({ preserveExamSession: true });
+  });
+}
+
+function persistGradingScore() {
+  if (!state.gradingSession) return;
+  const scoreInput = document.getElementById("gradingScoreInput");
+  if (scoreInput) {
+    state.gradingSession.scores[state.gradingSession.currentQuestionIndex] = Number(scoreInput.value) || 0;
+  }
 }
 
 function submitEntityForm(event) {
@@ -2580,12 +3101,115 @@ function submitEntityForm(event) {
     record.totalScore = totalScore;
   }
   if (entity === "exams") {
-    record.teacherId = state.currentUser.id;
-    record.targetClassIds = [record.targetClassIds];
-    record.antiCheatLimit = Number(record.antiCheatLimit);
-    record.startTime = new Date(record.startTime).toISOString();
-    record.endTime = new Date(record.endTime).toISOString();
-    record.published = true;
+    // Collect multi-class IDs
+    const classCheckboxes = event.target.querySelectorAll('input[name="targetClassId"]:checked');
+    const targetClassIds = [...classCheckboxes].map((cb) => cb.value);
+    if (!targetClassIds.length) {
+      alert("请至少选择一个目标班级");
+      return;
+    }
+
+    // Get form values
+    const durationMinutes = Number(record.durationMinutes);
+    const passScore = Number(record.passScore);
+    const subject = record.subject;
+    delete record.subject;
+    delete record.targetClassId;
+    delete record.singleCount;
+    delete record.multipleCount;
+    delete record.judgeCount;
+    delete record.fillCount;
+    delete record.shortCount;
+    delete record.codingCount;
+
+    // Auto-generate paper
+    const availableQuestions = getSelectablePaperQuestions();
+    const pool = availableQuestions.filter((item) => subject === "all" || item.subject === subject);
+    const typeMap = {
+      single: Number(event.target.querySelector('[name="singleCount"]')?.value || 0),
+      multiple: Number(event.target.querySelector('[name="multipleCount"]')?.value || 0),
+      judge: Number(event.target.querySelector('[name="judgeCount"]')?.value || 0),
+      fill: Number(event.target.querySelector('[name="fillCount"]')?.value || 0),
+      short: Number(event.target.querySelector('[name="shortCount"]')?.value || 0),
+      coding: Number(event.target.querySelector('[name="codingCount"]')?.value || 0),
+    };
+
+    const selectedIds = [];
+    for (const [qType, count] of Object.entries(typeMap)) {
+      if (count <= 0) continue;
+      const candidates = shuffle(pool.filter((item) => item.type === qType));
+      if (candidates.length < count) {
+        alert(`${typeLabel(qType)}题数量不足，当前只有 ${candidates.length} 道可用`);
+        return;
+      }
+      selectedIds.push(...candidates.slice(0, count).map((item) => item.id));
+    }
+
+    if (!selectedIds.length) {
+      alert("至少需要选择一种题型数量");
+      return;
+    }
+
+    // Check for duplicates
+    const uniqueIds = new Set(selectedIds);
+    if (uniqueIds.size !== selectedIds.length) {
+      alert("题目存在重复，请调整组卷设置");
+      return;
+    }
+
+    const selectedQuestions = selectedIds
+      .map((id) => state.bootstrap.questions.find((item) => item.id === id))
+      .filter(Boolean);
+    const totalScore = selectedQuestions.reduce((sum, item) => sum + Number(item.score || 0), 0);
+
+    // Create paper first
+    const paperRecord = {
+      name: `${record.name} - 自动组卷`,
+      teacherId: state.currentUser.id,
+      durationMinutes,
+      passScore,
+      questionIds: selectedIds,
+      totalScore,
+    };
+
+    api("/api/entities", {
+      method: "POST",
+      body: JSON.stringify({ entity: "papers", record: paperRecord }),
+    })
+      .then((data) => {
+        const paperId = data.paper?.id || data.record?.id;
+        if (!paperId) {
+          alert("组卷失败：无法获取试卷ID");
+          return;
+        }
+
+        // Calculate end time
+        const startTime = new Date(record.startTime);
+        const endTime = new Date(startTime.getTime() + durationMinutes * 60000);
+
+        // Create exam
+        const examRecord = {
+          name: record.name,
+          paperId,
+          teacherId: state.currentUser.id,
+          targetClassIds,
+          startTime: startTime.toISOString(),
+          endTime: endTime.toISOString(),
+          antiCheatLimit: Number(record.antiCheatLimit),
+          published: true,
+        };
+
+        return api("/api/entities", {
+          method: "POST",
+          body: JSON.stringify({ entity: "exams", record: examRecord }),
+        });
+      })
+      .then(() => {
+        closeModal({ preserveExamSession: true });
+        return loadBootstrap();
+      })
+      .catch((error) => alert(getFriendlyErrorMessage(error)));
+    return; // Early return since we handled it asynchronously
   }
 
   api("/api/entities", { method: "POST", body: JSON.stringify({ entity, record }) })
@@ -2637,34 +3261,78 @@ function renderExamModal() {
   const { exam, currentQuestionIndex, answers, switchCount } = state.examSession;
   const current = exam.questions[currentQuestionIndex];
   const existing = answers.find((item) => item.questionId === current.id)?.answer || [];
+  const totalQuestions = exam.questions.length;
+  const answeredCount = answers.filter((item) => item.answer?.length > 0).length;
+  const progressPercent = totalQuestions ? Math.round((answeredCount / totalQuestions) * 100) : 0;
+  const isFirst = currentQuestionIndex === 0;
+  const isLast = currentQuestionIndex === totalQuestions - 1;
+  const remaining = Math.max(0, new Date(state.examSession.deadlineAt).getTime() - Date.now());
+  const isUrgent = remaining > 0 && remaining < 5 * 60 * 1000;
+
   openModal(`
     <div class="exam-shell">
-      <aside class="panel">
-        <h3>${exam.name}</h3>
-        <p class="muted">试卷：${exam.paper.name}</p>
-        <p>倒计时：<strong id="countdownText"></strong></p>
-        <p>切屏次数：<span class="${switchCount > exam.antiCheatLimit ? "danger" : "warn"}">${switchCount}</span> / ${exam.antiCheatLimit}</p>
+      <aside class="exam-sidebar">
+        <h3 class="exam-sidebar-title">${escapeHtml(exam.name)}</h3>
+        <p class="exam-sidebar-meta">${escapeHtml(exam.paper.name)}</p>
+        <div class="exam-info-block">
+          <div class="exam-info-row">
+            <span>倒计时</span>
+            <strong id="countdownText" class="exam-countdown${isUrgent ? " urgent" : ""}"></strong>
+          </div>
+          <div class="exam-info-row">
+            <span>切屏</span>
+            <strong class="${switchCount > exam.antiCheatLimit ? "exam-switch-danger" : switchCount > 0 ? "exam-switch-warn" : ""}">${switchCount} / ${exam.antiCheatLimit}</strong>
+          </div>
+        </div>
+        <div class="exam-progress">
+          <div class="exam-progress-label">
+            <span>答题进度</span>
+            <span>${answeredCount} / ${totalQuestions}</span>
+          </div>
+          <div class="exam-progress-bar">
+            <div class="exam-progress-fill" style="width:${progressPercent}%"></div>
+          </div>
+        </div>
         <div class="question-nav">
           ${exam.questions
             .map((item, index) => {
               const answered = answers.find((entry) => entry.questionId === item.id);
-              return `<button class="${answered ? "answered" : ""} ${index === currentQuestionIndex ? "current" : ""}" type="button" data-jump-question="${index}">${index + 1}</button>`;
+              const hasAnswer = answered?.answer?.length > 0;
+              return `<button class="${hasAnswer ? "answered" : ""} ${index === currentQuestionIndex ? "current" : ""}" type="button" data-jump-question="${index}">${index + 1}</button>`;
             })
             .join("")}
         </div>
-        <div class="action-row">
-          <button class="ghost-btn" id="saveExamBtn" type="button">保存</button>
+        <div class="exam-sidebar-actions">
+          <button class="ghost-btn" id="saveExamBtn" type="button">保存草稿</button>
           <button class="primary-btn" id="submitExamBtn" type="button">交卷</button>
         </div>
         <p id="examMessage" class="message"></p>
       </aside>
-      <section class="panel question-card">
-        <span class="tag">${typeLabel(current.type)}</span>
-        <h3>${current.order}. ${current.title}</h3>
-        ${renderQuestionInput(current, existing)}
-      </section>
+      <div class="exam-question-area">
+        <div class="exam-question-header">
+          <span class="exam-question-number">第 ${currentQuestionIndex + 1} 题</span>
+          <span class="exam-question-type">${escapeHtml(typeLabel(current.type))}</span>
+          <span class="exam-question-title">${escapeHtml(current.title)}</span>
+        </div>
+        <div class="exam-question-body">
+          ${renderQuestionInput(current, existing)}
+        </div>
+        <div class="exam-nav-footer">
+          <button class="exam-nav-btn prev" type="button" id="examPrevBtn" ${isFirst ? "disabled" : ""}>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg>
+            上一题
+          </button>
+          <span class="exam-nav-indicator">${currentQuestionIndex + 1} / ${totalQuestions}</span>
+          <button class="exam-nav-btn next" type="button" id="examNextBtn" ${isLast ? "disabled" : ""}>
+            下一题
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg>
+          </button>
+        </div>
+      </div>
     </div>
   `);
+
+  // Question grid navigation
   modalContent.querySelectorAll("[data-jump-question]").forEach((button) => {
     button.addEventListener("click", () => {
       persistCurrentAnswer();
@@ -2672,19 +3340,47 @@ function renderExamModal() {
       renderExamModal();
     });
   });
+
+  // Prev / Next buttons
+  const prevBtn = document.getElementById("examPrevBtn");
+  const nextBtn = document.getElementById("examNextBtn");
+  if (prevBtn) {
+    prevBtn.addEventListener("click", () => {
+      if (state.examSession.currentQuestionIndex > 0) {
+        persistCurrentAnswer();
+        state.examSession.currentQuestionIndex -= 1;
+        renderExamModal();
+      }
+    });
+  }
+  if (nextBtn) {
+    nextBtn.addEventListener("click", () => {
+      if (state.examSession.currentQuestionIndex < totalQuestions - 1) {
+        persistCurrentAnswer();
+        state.examSession.currentQuestionIndex += 1;
+        renderExamModal();
+      }
+    });
+  }
+
+  // Save & Submit
   document.getElementById("saveExamBtn").addEventListener("click", () => saveExamDraft({ silent: false }));
   document.getElementById("submitExamBtn").addEventListener("click", submitExamPaper);
+
   updateCountdown();
 }
 
 function renderQuestionInput(question, existing) {
+  const letters = ["A", "B", "C", "D", "E", "F", "G", "H"];
+
   if (question.type === "single" || question.type === "judge") {
     return `<div class="option-list">${question.options
       .map(
-        (option) => `
+        (option, i) => `
       <label class="option-item">
         <input type="radio" name="answer" value="${escapeAttr(option)}" ${existing.includes(option) ? "checked" : ""}/>
-        <span>${escapeHtml(option)}</span>
+        <span class="option-letter">${letters[i] || (i + 1)}</span>
+        <span class="option-text">${escapeHtml(option)}</span>
       </label>`
       )
       .join("")}</div>`;
@@ -2692,15 +3388,16 @@ function renderQuestionInput(question, existing) {
   if (question.type === "multiple") {
     return `<div class="option-list">${question.options
       .map(
-        (option) => `
+        (option, i) => `
       <label class="option-item">
         <input type="checkbox" name="answer" value="${escapeAttr(option)}" ${existing.includes(option) ? "checked" : ""}/>
-        <span>${escapeHtml(option)}</span>
+        <span class="option-letter">${letters[i] || (i + 1)}</span>
+        <span class="option-text">${escapeHtml(option)}</span>
       </label>`
       )
       .join("")}</div>`;
   }
-  return `<textarea id="textAnswer" placeholder="请输入答案">${escapeHtml(existing[0] || "")}</textarea>`;
+  return `<textarea id="textAnswer" class="exam-textarea" placeholder="请输入答案">${escapeHtml(existing[0] || "")}</textarea>`;
 }
 
 function collectQuestionAnswer(question) {
@@ -2808,6 +3505,11 @@ function updateCountdown() {
   if (!state.examSession || !target) return;
   const diff = Math.max(0, new Date(state.examSession.deadlineAt).getTime() - Date.now());
   target.textContent = formatDuration(diff);
+  if (diff > 0 && diff < 5 * 60 * 1000) {
+    target.classList.add("urgent");
+  } else {
+    target.classList.remove("urgent");
+  }
   if (diff === 0) {
     submitExamPaper();
   }
@@ -2931,8 +3633,8 @@ function renderMiniExamList(exams) {
         .map(
           (item) => `
         <div class="mini-item">
-          <h4>${item.name}</h4>
-          <p>${item.paperName || ""} · ${item.statusText} · ${formatDate(item.startTime)}</p>
+          <h4>${escapeHtml(item.name)}</h4>
+          <p>${escapeHtml(item.paperName || "")} · ${escapeHtml(item.statusText)} · ${formatDate(item.startTime)}</p>
         </div>`
         )
         .join("")}
@@ -2948,8 +3650,8 @@ function renderMiniLogList(logs) {
         .map(
           (item) => `
         <div class="mini-item">
-          <h4>${item.action}</h4>
-          <p>${users[item.actorId]?.name || item.actorId} · ${formatDate(item.time)}</p>
+          <h4>${escapeHtml(item.action)}</h4>
+          <p>${escapeHtml(users[item.actorId]?.name || item.actorId)} · ${formatDate(item.time)}</p>
         </div>`
         )
         .join("")}
@@ -2965,8 +3667,8 @@ function renderMiniSubmissionList(rows) {
         .map(
           (item) => `
         <div class="mini-item">
-          <h4>${exams[item.examId]?.name || item.examName || item.examId}</h4>
-          <p>${item.studentName || state.currentUser.name} · ${item.status} · ${item.finalScore ?? item.autoScore ?? "-"}</p>
+          <h4>${escapeHtml(exams[item.examId]?.name || item.examName || item.examId)}</h4>
+          <p>${escapeHtml(item.studentName || state.currentUser.name)} · ${escapeHtml(item.status)} · ${item.finalScore ?? item.autoScore ?? "-"}</p>
           <p>${renderMiniSubmissionMeta(item)}</p>
         </div>`
         )
@@ -2986,6 +3688,60 @@ function getVisibleQuestionRows() {
     return passKeyword && passType && passSubject;
   });
 }
+
+function buildQuestionPageCacheKey() {
+  return `${state.questionPage}|${state.QUESTION_PAGE_SIZE}|${state.filters.question_keyword}|${state.filters.question_type}|${state.filters.question_subject}`;
+}
+
+function fetchQuestionPage() {
+  const cacheKey = buildQuestionPageCacheKey();
+  if (cacheKey === state._questionPageCacheKey && state.questionPageData) {
+    return Promise.resolve(state.questionPageData);
+  }
+  const params = new URLSearchParams({
+    page: state.questionPage,
+    pageSize: state.QUESTION_PAGE_SIZE,
+    keyword: state.filters.question_keyword,
+    type: state.filters.question_type,
+    subject: state.filters.question_subject,
+  });
+  return api(`/api/questions/page?${params}`).then((data) => {
+    state.questionPageData = data;
+    state._questionPageCacheKey = cacheKey;
+    return data;
+  });
+}
+
+function invalidateQuestionCache() {
+  state._questionPageCacheKey = "";
+  state.questionPageData = null;
+  state.questionSubjects = null;
+  state._cachedQuestionSubjects = null;
+}
+
+function fetchQuestionSubjects() {
+  if (state.questionSubjects) return Promise.resolve(state.questionSubjects);
+  return api("/api/questions/subjects").then((data) => {
+    state.questionSubjects = data.subjects || [];
+    return state.questionSubjects;
+  });
+}
+
+function refreshQuestionBankView() {
+  const contentArea = dashboardView.querySelector(".teacher-workspace-content");
+  if (!contentArea || state.teacherTab !== "questions") return;
+  contentArea.innerHTML = `<div class="empty-state">加载中…</div>`;
+  const needsSubjects = !state.questionSubjects;
+  const fetches = [fetchQuestionPage()];
+  if (needsSubjects) fetches.push(fetchQuestionSubjects());
+  Promise.all(fetches).then(() => {
+    contentArea.innerHTML = renderQuestionsFromServer();
+  }).catch((err) => {
+    contentArea.innerHTML = `<div class="empty-state">${escapeHtml(getFriendlyErrorMessage(err))}</div>`;
+  });
+}
+
+const debouncedRefreshQuestionBank = debounce(refreshQuestionBankView, 250);
 
 function renderQuestionImportPreview(parsed) {
   if (!parsed.records.length && !parsed.errors.length) {

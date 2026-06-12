@@ -1,9 +1,9 @@
 <template>
   <div class="modal-backdrop" @click.self="$emit('close')">
     <div class="modal-card">
+      <button class="close-btn" type="button" @click="$emit('close')">&times;</button>
       <div class="modal-header">
         <slot name="header" />
-        <button class="icon-btn" type="button" @click="$emit('close')">关闭</button>
       </div>
       <div class="modal-body">
         <slot />

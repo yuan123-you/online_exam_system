@@ -11,7 +11,7 @@ async function request<T>(url: string, options: RequestInit = {}): Promise<T> {
   const headers = new Headers(options.headers || {});
   headers.set("Content-Type", "application/json");
   if (currentAuthToken) {
-    headers.set("Authorization", `Bearer ${currentAuthToken}`);
+    headers.set("X-User-Id", currentAuthToken);
   }
   const response = await fetch(url, { ...options, headers });
   const raw = await response.text();
@@ -128,4 +128,131 @@ export function batchImportUsers(records: Array<Record<string, unknown>>) {
     method: "POST",
     body: JSON.stringify({ records }),
   });
+}
+
+export interface MonitorStudent {
+  studentId: string;
+  studentName: string;
+  className: string;
+  status: string;
+  score: number | null;
+  switchCount: number;
+  suspicious: boolean;
+  suspiciousReasons?: string[];
+  startedAt?: string;
+  submittedAt?: string;
+  usedTimeText?: string | null;
+}
+
+export interface MonitorResult {
+  students: MonitorStudent[];
+  totalCount: number;
+  notStartedCount: number;
+  runningCount: number;
+  submittedCount: number;
+  maxScore: number | null;
+  minScore: number | null;
+  avgScore: number | null;
+}
+
+export function monitorExam(examId: string) {
+  return request<MonitorResult>(`/api/exams/${examId}/monitor`);
+}
+
+export interface ExportScoreRow {
+  username: string;
+  studentName: string;
+  className: string;
+  status: string;
+  score: number | null;
+  totalScore: number;
+  passScore: number;
+  rank: number | null;
+}
+
+export interface ExportScoresResult {
+  examName: string;
+  rows: ExportScoreRow[];
+}
+
+export function exportScores(examId: string) {
+  return request<ExportScoresResult>(`/api/exams/${examId}/export-scores`);
+}
+
+export interface QuestionAnalysisItem {
+  questionId: string;
+  title: string;
+  type: string;
+  subject: string;
+  knowledgePoint: string;
+  totalAttempts: number;
+  correctCount: number;
+  correctRate: number;
+}
+
+export interface KnowledgePointAnalysis {
+  knowledgePoint: string;
+  totalAttempts: number;
+  correctCount: number;
+  correctRate: number;
+}
+
+export interface QuestionAnalysisResult {
+  questions: QuestionAnalysisItem[];
+  knowledgePointAnalysis: KnowledgePointAnalysis[];
+}
+
+export function questionAnalysis(examId: string) {
+  return request<QuestionAnalysisResult>(`/api/exams/${examId}/question-analysis`);
+}
+
+export interface AutoGenerateRule {
+  type: string;
+  count: number;
+  subject?: string;
+  knowledgePoint?: string;
+  difficulty?: string;
+}
+
+export function autoGeneratePaper(payload: {
+  name: string;
+  durationMinutes: number;
+  passScore: number;
+  rules: AutoGenerateRule[];
+}) {
+  return request<{ record: Record<string, unknown> }>("/api/papers/auto-generate", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export interface ScoreTrendItem {
+  examName: string;
+  score: number;
+  totalScore: number;
+  passScore: number;
+  submittedAt: string;
+}
+
+export function scoreTrend() {
+  return request<{ trend: ScoreTrendItem[] }>("/api/student/score-trend");
+}
+
+export interface SubjectMastery {
+  subject: string;
+  totalQuestions: number;
+  correctQuestions: number;
+  mastery: number;
+}
+
+export interface KnowledgePointMastery {
+  subject: string;
+  knowledgePoint: string;
+  totalQuestions: number;
+  correctQuestions: number;
+  mastery: number;
+}
+
+export function knowledgeRadar() {
+  return request<{ subjectMastery: SubjectMastery[]; knowledgePointMastery: KnowledgePointMastery[] }>("/api/student/knowledge-radar");
 }

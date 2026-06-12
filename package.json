@@ -3,9 +3,9 @@
   "version": "1.0.0",
   "main": "backend/src/main/java/com/onlineexam/OnlineExamApplication.java",
   "scripts": {
-    "start": "mvn -s .mvn/settings.xml -f backend/pom.xml spring-boot:run",
-    "dev": "mvn -s .mvn/settings.xml -f backend/pom.xml spring-boot:run",
-    "backend:build": "mvn -s .mvn/settings.xml -f backend/pom.xml -DskipTests package",
+    "start": "mvn -s .mvn/settings.xml -f backend/pom.xml -DskipTests compile -q && mvn -s .mvn/settings.xml -f backend/pom.xml dependency:build-classpath -Dmdep.outputFile=target/cp.txt -q && node scripts/run-backend.js",
+    "dev": "mvn -s .mvn/settings.xml -f backend/pom.xml -DskipTests compile -q && mvn -s .mvn/settings.xml -f backend/pom.xml dependency:build-classpath -Dmdep.outputFile=target/cp.txt -q && node scripts/run-backend.js",
+    "backend:build": "mvn -s .mvn/settings.xml -f backend/pom.xml -DskipTests compile && mvn -s .mvn/settings.xml -f backend/pom.xml dependency:build-classpath -Dmdep.outputFile=target/cp.txt",
     "migrate:mysql": "node scripts/generate-mysql-migration.js",
     "dev:web": "vite --host",
     "build:web": "vite build",
@@ -20,6 +20,7 @@
   "dependencies": {
     "echarts": "^6.0.0",
     "pdfjs-dist": "^5.6.205",
+    "tslib": "^2.8.1",
     "vue": "^3.5.22"
   },
   "devDependencies": {

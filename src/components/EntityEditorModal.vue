@@ -3,24 +3,15 @@
     <template #header>
       <div>
         <h3>{{ dialogTitle }}</h3>
-        <p class="muted">{{ isEdit ? "更新现有数据记录。" : "新增一条业务记录。" }}</p>
+        <p class="muted" style="font-size:13px;margin-top:4px;">{{ isEdit ? "更新现有数据记录" : "新增一条业务记录" }}</p>
       </div>
     </template>
 
     <form class="form-grid" @submit.prevent="submitForm">
       <template v-if="kind === 'student' || kind === 'teacher'">
-        <label>
-          <span>账号</span>
-          <input v-model.trim="form.username" required />
-        </label>
-        <label>
-          <span>姓名</span>
-          <input v-model.trim="form.name" required />
-        </label>
-        <label>
-          <span>密码</span>
-          <input v-model.trim="form.password" required />
-        </label>
+        <label><span>账号</span><input v-model.trim="form.username" required placeholder="请输入账号" /></label>
+        <label><span>姓名</span><input v-model.trim="form.name" required placeholder="请输入姓名" /></label>
+        <label><span>密码</span><input v-model.trim="form.password" required placeholder="初始密码" /></label>
         <label v-if="kind === 'student'">
           <span>班级</span>
           <select v-model="form.classId" required>
@@ -29,7 +20,7 @@
         </label>
         <label v-if="kind === 'student'">
           <span>专业</span>
-          <input v-model.trim="form.major" required />
+          <input v-model.trim="form.major" required placeholder="请输入专业" />
         </label>
         <label v-else>
           <span>学院</span>
@@ -40,21 +31,12 @@
       </template>
 
       <template v-else-if="kind === 'department'">
-        <label>
-          <span>学院名称</span>
-          <input v-model.trim="form.name" required />
-        </label>
+        <label><span>学院名称</span><input v-model.trim="form.name" required placeholder="请输入学院名称" /></label>
       </template>
 
       <template v-else-if="kind === 'class'">
-        <label>
-          <span>班级名称</span>
-          <input v-model.trim="form.name" required />
-        </label>
-        <label>
-          <span>专业</span>
-          <input v-model.trim="form.major" required />
-        </label>
+        <label><span>班级名称</span><input v-model.trim="form.name" required placeholder="请输入班级名称" /></label>
+        <label><span>专业</span><input v-model.trim="form.major" required placeholder="请输入专业" /></label>
         <label>
           <span>学院</span>
           <select v-model="form.departmentId" required>
@@ -75,43 +57,22 @@
             <option value="coding">编程题</option>
           </select>
         </label>
-        <label>
-          <span>科目</span>
-          <input v-model.trim="form.subject" required />
-        </label>
-        <label>
-          <span>知识点</span>
-          <input v-model.trim="form.knowledgePoint" required />
-        </label>
+        <label><span>科目</span><input v-model.trim="form.subject" required placeholder="如：高等数学" /></label>
+        <label><span>知识点</span><input v-model.trim="form.knowledgePoint" required placeholder="如：微积分" /></label>
         <label>
           <span>难度</span>
           <select v-model="form.difficulty" required>
             <option v-for="item in difficultyOptions()" :key="item" :value="item">{{ item }}</option>
           </select>
         </label>
-        <label class="span-2">
-          <span>题目</span>
-          <textarea v-model.trim="form.title" required />
-        </label>
-        <label class="span-2">
-          <span>选项（使用 | 分隔）</span>
-          <input v-model.trim="form.optionsText" :disabled="!requiresOptions" />
-        </label>
-        <label class="span-2">
-          <span>答案（使用 | 分隔）</span>
-          <textarea v-model.trim="form.answerText" required />
-        </label>
-        <label>
-          <span>分值</span>
-          <input v-model.number="form.score" type="number" min="1" required />
-        </label>
+        <label class="span-2"><span>题目</span><textarea v-model.trim="form.title" required placeholder="请输入题目内容"></textarea></label>
+        <label class="span-2"><span>选项（使用 | 分隔）</span><input v-model.trim="form.optionsText" :disabled="!requiresOptions" placeholder="选项A | 选项B | 选项C" /></label>
+        <label class="span-2"><span>答案（使用 | 分隔）</span><textarea v-model.trim="form.answerText" required placeholder="请输入正确答案"></textarea></label>
+        <label><span>分值</span><input v-model.number="form.score" type="number" min="1" required /></label>
       </template>
 
       <template v-else-if="kind === 'exam'">
-        <label>
-          <span>考试名称</span>
-          <input v-model.trim="form.name" required />
-        </label>
+        <label><span>考试名称</span><input v-model.trim="form.name" required placeholder="请输入考试名称" /></label>
         <label>
           <span>试卷</span>
           <select v-model="form.paperId" required>
@@ -124,21 +85,12 @@
             <option v-for="item in bootstrap.classes" :key="item.id" :value="item.id">{{ item.name }}</option>
           </select>
         </label>
-        <label>
-          <span>开始时间</span>
-          <input v-model="form.startTime" type="datetime-local" required />
-        </label>
-        <label>
-          <span>结束时间</span>
-          <input v-model="form.endTime" type="datetime-local" required />
-        </label>
-        <label>
-          <span>切屏上限</span>
-          <input v-model.number="form.antiCheatLimit" type="number" min="0" required />
-        </label>
+        <label><span>开始时间</span><input v-model="form.startTime" type="datetime-local" required /></label>
+        <label><span>结束时间</span><input v-model="form.endTime" type="datetime-local" required /></label>
+        <label><span>切屏上限</span><input v-model.number="form.antiCheatLimit" type="number" min="0" required /></label>
       </template>
 
-      <div class="action-row">
+      <div class="action-row" style="justify-content:flex-end;margin-top:8px;">
         <button class="ghost-btn" type="button" @click="$emit('close')">取消</button>
         <button class="primary-btn" type="submit">保存</button>
       </div>

@@ -2,7 +2,9 @@ package com.onlineexam;
 
 import com.onlineexam.StoreService.Store;
 import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
@@ -14,6 +16,7 @@ import java.util.Optional;
 import java.util.Set;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -22,6 +25,7 @@ import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 @RestController
@@ -36,9 +40,25 @@ public class ApiController {
   private static final Set<String> OBJECTIVE_TYPES = Set.of("single", "multiple", "judge", "fill");
 
   private final StoreService storeService;
+  private final BCryptPasswordEncoder passwordEncoder = new BCryptPasswordEncoder();
 
   public ApiController(StoreService storeService) {
     this.storeService = storeService;
+  }
+
+  private boolean matchesPassword(String rawPassword, String storedPassword) {
+    if (storedPassword != null && storedPassword.startsWith("$2a$") || storedPassword != null && storedPassword.startsWith("$2b$")) {
+      return passwordEncoder.matches(rawPassword, storedPassword);
+    }
+    return Objects.equals(rawPassword, storedPassword);
+  }
+
+  private String hashPassword(String rawPassword) {
+    return passwordEncoder.encode(rawPassword);
+  }
+
+  private boolean needsPasswordUpgrade(String storedPassword) {
+    return storedPassword != null && !storedPassword.startsWith("$2a$") && !storedPassword.startsWith("$2b$");
   }
 
   @GetMapping("/health")
@@ -49,14 +69,21 @@ public class ApiController {
   @PostMapping("/login")
   public ResponseEntity<?> login(@RequestBody Map<String, Object> body) {
     Store store = storeService.readStore();
+    String inputUsername = str(body, "username");
+    String inputPassword = str(body, "password");
     Optional<Map<String, Object>> found = store.users.stream()
-      .filter(user -> Objects.equals(str(user, "username"), str(body, "username")) && Objects.equals(str(user, "password"), str(body, "password")))
+      .filter(user -> Objects.equals(str(user, "username"), inputUsername))
       .findFirst();
-    if (found.isEmpty()) {
+    if (found.isEmpty() || !matchesPassword(inputPassword, str(found.get(), "password"))) {
       return error(HttpStatus.UNAUTHORIZED, "Username or password is incorrect.");
     }
-    log(found.get(), "login", str(found.get(), "role") + ":" + str(found.get(), "name"));
-    return ResponseEntity.ok(mapOf("user", sanitizeUser(found.get())));
+    Map<String, Object> matchedUser = found.get();
+    if (needsPasswordUpgrade(str(matchedUser, "password"))) {
+      matchedUser.put("password", hashPassword(inputPassword));
+      storeService.saveRecord("users", matchedUser);
+    }
+    log(matchedUser, "login", str(matchedUser, "role") + ":" + str(matchedUser, "name"));
+    return ResponseEntity.ok(mapOf("user", sanitizeUser(matchedUser)));
   }
 
   @GetMapping("/bootstrap")
@@ -92,6 +119,11 @@ public class ApiController {
     if (record.isEmpty()) return error(HttpStatus.BAD_REQUEST, "Record is required.");
     record = new LinkedHashMap<>(record);
     record.putIfAbsent("id", createId(entity.endsWith("s") ? entity.substring(0, entity.length() - 1) : entity));
+    // Hash password when creating user records
+    if ("users".equals(entity) && record.containsKey("password")) {
+      String rawPw = str(record, "password");
+      record.put("password", hashPassword(rawPw.isBlank() ? "123456" : rawPw));
+    }
     if (isRole(user, "teacher") && Set.of("questions", "papers", "exams").contains(entity)) {
       record.put("teacherId", userId);
     }
@@ -109,11 +141,27 @@ public class ApiController {
     if (!canManage(user, entity)) return error(HttpStatus.FORBIDDEN, "Forbidden.");
     List<Map<String, Object>> records = store.entity(entity);
     if (records == null) return error(HttpStatus.BAD_REQUEST, "Unknown entity.");
-    Map<String, Object> existing = find(records, str(body, "id"));
+    Map<String, Object> record = body.containsKey("record") ? asMap(body.get("record")) : body;
+    Map<String, Object> existing = find(records, str(record, "id"));
     if (existing == null) return error(HttpStatus.NOT_FOUND, "Record not found.");
     if (isRole(user, "teacher") && !Objects.equals(str(existing, "teacherId"), userId)) return error(HttpStatus.FORBIDDEN, "Forbidden.");
     Map<String, Object> next = new LinkedHashMap<>(existing);
-    next.putAll(body);
+    next.putAll(record);
+    // Hash password when updating user records
+    if ("users".equals(entity)) {
+      if (record.containsKey("password")) {
+        String rawPw = str(record, "password");
+        if (!rawPw.isBlank()) next.put("password", hashPassword(rawPw));
+        else next.put("password", str(existing, "password")); // keep existing if blank
+      }
+      // If password was stripped by sanitizeUser, preserve the DB value
+      if (!next.containsKey("password") || str(next, "password").isBlank()) {
+        Map<String, Object> dbRecord = find(storeService.readStore().users, str(record, "id"));
+        if (dbRecord != null && dbRecord.containsKey("password")) {
+          next.put("password", str(dbRecord, "password"));
+        }
+      }
+    }
     String validation = validate(store, entity, next, str(existing, "id"));
     if (!validation.isBlank()) return error(HttpStatus.BAD_REQUEST, validation);
     storeService.saveRecord(entity, next);
@@ -128,6 +176,10 @@ public class ApiController {
     if (!canManage(user, entity)) return error(HttpStatus.FORBIDDEN, "Forbidden.");
     List<Map<String, Object>> records = store.entity(entity);
     if (records == null || find(records, id) == null) return error(HttpStatus.NOT_FOUND, "Record not found.");
+    // Auto-clean exam targetClassIds when deleting a class
+    if ("classes".equals(entity)) {
+      clearExamClassReferences(store, id);
+    }
     String block = deleteBlocker(store, entity, id);
     if (!block.isBlank()) return error(HttpStatus.BAD_REQUEST, block);
     storeService.deleteRecord(entity, id);
@@ -186,6 +238,27 @@ public class ApiController {
     return ResponseEntity.ok(mapOf("deletedCount", deleted.size(), "failedCount", errors.size(), "deletedIds", deleted, "errors", errors));
   }
 
+  @GetMapping("/questions/page")
+  public ResponseEntity<?> questionsPage(
+      @RequestHeader(value = "X-User-Id", required = false) String userId,
+      @RequestParam(defaultValue = "1") int page,
+      @RequestParam(defaultValue = "20") int pageSize,
+      @RequestParam(defaultValue = "") String keyword,
+      @RequestParam(defaultValue = "all") String type,
+      @RequestParam(defaultValue = "all") String subject) {
+    Map<String, Object> user = find(storeService.readStore().users, userId);
+    if (!isRole(user, "teacher") && !isRole(user, "admin")) return error(HttpStatus.FORBIDDEN, "Forbidden.");
+    String teacherId = isRole(user, "admin") ? null : userId;
+    return ResponseEntity.ok(storeService.queryQuestionsPage(teacherId, page, pageSize, keyword, type, subject));
+  }
+
+  @GetMapping("/questions/subjects")
+  public ResponseEntity<?> questionSubjects(@RequestHeader(value = "X-User-Id", required = false) String userId) {
+    Map<String, Object> user = find(storeService.readStore().users, userId);
+    if (!isRole(user, "teacher") && !isRole(user, "admin")) return error(HttpStatus.FORBIDDEN, "Forbidden.");
+    return ResponseEntity.ok(mapOf("subjects", storeService.queryQuestionSubjects(userId)));
+  }
+
   @PostMapping("/users/batch-import")
   public ResponseEntity<?> importUsers(@RequestHeader(value = "X-User-Id", required = false) String userId, @RequestBody Map<String, Object> body) {
     Store store = storeService.readStore();
@@ -196,6 +269,9 @@ public class ApiController {
     for (int i = 0; i < asList(body.get("records")).size(); i++) {
       Map<String, Object> record = new LinkedHashMap<>(asMap(asList(body.get("records")).get(i)));
       record.put("id", createId(str(record, "role").isBlank() ? "user" : str(record, "role")));
+      // Hash password for batch-imported users
+      String rawPw = str(record, "password").isBlank() ? "123456" : str(record, "password");
+      record.put("password", hashPassword(rawPw));
       String validation = validate(store, "users", record, null);
       if (!validation.isBlank()) {
         errors.add(mapOf("index", i, "title", str(record, "username"), "message", validation));
@@ -219,13 +295,16 @@ public class ApiController {
     if (exam == null) return error(HttpStatus.NOT_FOUND, "Exam not found.");
     if (isRole(user, "teacher")) {
       if (!Objects.equals(str(exam, "teacherId"), userId)) return error(HttpStatus.FORBIDDEN, "Forbidden.");
-      return ResponseEntity.ok(buildExamSnapshot(store, exam, false));
+      return ResponseEntity.ok(buildExamSnapshot(store, exam, false, null, null));
     }
     if (!canStudentAccess(user, exam)) return error(HttpStatus.FORBIDDEN, "Forbidden.");
     Map<String, Object> submission = ensureStudentSession(store, exam, user);
     if (submission.containsKey("error")) return error(HttpStatus.BAD_REQUEST, str(submission, "error"));
     storeService.saveRecord("submissions", submission);
-    Map<String, Object> snapshot = buildExamSnapshot(store, exam, true);
+    // Use student-specific shuffled question order
+    List<String> questionOrder = asList(submission.get("questionOrder")).stream().map(String::valueOf).toList();
+    Map<String, Object> optionOrder = submission.get("optionOrder") instanceof Map ? asMap(submission.get("optionOrder")) : Map.of();
+    Map<String, Object> snapshot = buildExamSnapshot(store, exam, true, questionOrder, optionOrder);
     snapshot.put("session", mapOf(
       "submissionId", str(submission, "id"), "startedAt", submission.get("startedAt"), "deadlineAt", submission.get("deadlineAt"),
       "switchCount", asInt(submission.get("switchCount")), "answers", asList(submission.get("answers")), "remainingMs", remainingMs(submission)
@@ -268,6 +347,16 @@ public class ApiController {
     submission.put("switchCount", asInt(body.get("switchCount")));
     List<String> reasons = new ArrayList<>();
     if (asInt(submission.get("switchCount")) > asInt(exam.get("antiCheatLimit"))) reasons.add("\u5207\u5c4f\u6b21\u6570\u8d85\u9650");
+    // Time anomaly detection
+    Instant submitStartedAt = parseInstant(str(submission, "startedAt")).orElse(null);
+    Instant submitDeadline = parseInstant(str(submission, "deadlineAt")).orElse(null);
+    if (submitStartedAt != null && submitDeadline != null) {
+      long allowedMs = submitDeadline.toEpochMilli() - submitStartedAt.toEpochMilli();
+      long usedMs = System.currentTimeMillis() - submitStartedAt.toEpochMilli();
+      if (allowedMs > 60000 && usedMs < allowedMs / 10) {
+        reasons.add("\u7b54\u9898\u65f6\u95f4\u5f02\u5e38\uff08\u4ec5\u7528\u65f6" + formatUsedMs(usedMs) + "\uff0c\u5141\u8bb8" + formatUsedMs(allowedMs) + "\uff09");
+      }
+    }
     submission.put("suspicious", !reasons.isEmpty());
     submission.put("suspiciousReasons", reasons);
     gradeSubmission(store, submission);
@@ -372,14 +461,249 @@ public class ApiController {
     return ResponseEntity.ok(mapOf("success", true));
   }
 
+  @GetMapping("/exams/{examId}/monitor")
+  public ResponseEntity<?> monitorExam(@RequestHeader(value = "X-User-Id", required = false) String userId, @PathVariable String examId) {
+    Store store = storeService.readStore();
+    Map<String, Object> user = find(store.users, userId);
+    if (!isRole(user, "teacher")) return error(HttpStatus.FORBIDDEN, "Forbidden.");
+    Map<String, Object> exam = find(store.exams, examId);
+    if (exam == null || !Objects.equals(str(exam, "teacherId"), userId)) return error(HttpStatus.FORBIDDEN, "Forbidden.");
+    Set<String> targetClassIds = new HashSet<>(asList(exam.get("targetClassIds")).stream().map(String::valueOf).toList());
+    List<Map<String, Object>> targetStudents = store.users.stream()
+      .filter(u -> isRole(u, "student") && targetClassIds.contains(str(u, "classId"))).toList();
+    List<Map<String, Object>> examSubmissions = store.submissions.stream()
+      .filter(s -> Objects.equals(str(s, "examId"), examId)).toList();
+    List<Map<String, Object>> students = new ArrayList<>();
+    for (Map<String, Object> student : targetStudents) {
+      Map<String, Object> submission = examSubmissions.stream()
+        .filter(s -> Objects.equals(str(s, "studentId"), str(student, "id"))).findFirst().orElse(null);
+      Map<String, Object> item = new LinkedHashMap<>();
+      item.put("studentId", str(student, "id"));
+      item.put("studentName", str(student, "name"));
+      item.put("className", str(find(store.classes, str(student, "classId")), "name"));
+      if (submission == null) {
+        item.put("status", "未开始");
+        item.put("score", null);
+        item.put("switchCount", 0);
+        item.put("suspicious", false);
+      } else {
+        item.put("status", str(submission, "status"));
+        item.put("score", submission.get("finalScore"));
+        item.put("switchCount", asInt(submission.get("switchCount")));
+        item.put("suspicious", asBool(submission.get("suspicious")));
+        item.put("suspiciousReasons", asList(submission.get("suspiciousReasons")));
+        item.put("startedAt", submission.get("startedAt"));
+        item.put("submittedAt", submission.get("submittedAt"));
+        item.put("usedTimeText", buildUsedTimeText(submission));
+      }
+      students.add(item);
+    }
+    long notStarted = students.stream().filter(s -> "未开始".equals(str(s, "status"))).count();
+    long running = students.stream().filter(s -> RUNNING.equals(str(s, "status"))).count();
+    long submitted = students.stream().filter(s -> PENDING.equals(str(s, "status")) || COMPLETED.equals(str(s, "status"))).count();
+    List<Integer> scores = students.stream()
+      .filter(s -> s.get("score") != null).map(s -> asInt(s.get("score"))).toList();
+    return ResponseEntity.ok(mapOf(
+      "students", students, "totalCount", targetStudents.size(),
+      "notStartedCount", notStarted, "runningCount", running, "submittedCount", submitted,
+      "maxScore", scores.isEmpty() ? null : Collections.max(scores),
+      "minScore", scores.isEmpty() ? null : Collections.min(scores),
+      "avgScore", scores.isEmpty() ? null : Math.round(scores.stream().mapToInt(Integer::intValue).average().orElse(0) * 10.0) / 10.0
+    ));
+  }
+
+  @GetMapping("/exams/{examId}/export-scores")
+  public ResponseEntity<?> exportScores(@RequestHeader(value = "X-User-Id", required = false) String userId, @PathVariable String examId) {
+    Store store = storeService.readStore();
+    Map<String, Object> user = find(store.users, userId);
+    if (!isRole(user, "teacher")) return error(HttpStatus.FORBIDDEN, "Forbidden.");
+    Map<String, Object> exam = find(store.exams, examId);
+    if (exam == null || !Objects.equals(str(exam, "teacherId"), userId)) return error(HttpStatus.FORBIDDEN, "Forbidden.");
+    Map<String, Object> paper = find(store.papers, str(exam, "paperId"));
+    Set<String> targetClassIds = new HashSet<>(asList(exam.get("targetClassIds")).stream().map(String::valueOf).toList());
+    List<Map<String, Object>> targetStudents = store.users.stream()
+      .filter(u -> isRole(u, "student") && targetClassIds.contains(str(u, "classId"))).toList();
+    List<Map<String, Object>> examSubmissions = store.submissions.stream()
+      .filter(s -> Objects.equals(str(s, "examId"), examId)).toList();
+    List<Map<String, Object>> rows = new ArrayList<>();
+    for (Map<String, Object> student : targetStudents) {
+      Map<String, Object> submission = examSubmissions.stream()
+        .filter(s -> Objects.equals(str(s, "studentId"), str(student, "id"))).findFirst().orElse(null);
+      Map<String, Object> row = new LinkedHashMap<>();
+      row.put("username", str(student, "username"));
+      row.put("studentName", str(student, "name"));
+      row.put("className", str(find(store.classes, str(student, "classId")), "name"));
+      row.put("status", submission == null ? "未开始" : str(submission, "status"));
+      row.put("score", submission == null ? null : asInt(submission.get("finalScore")));
+      row.put("totalScore", asInt(paper == null ? 0 : paper.get("totalScore")));
+      row.put("passScore", asInt(paper == null ? 0 : paper.get("passScore")));
+      row.put("rank", null);
+      rows.add(row);
+    }
+    List<Map<String, Object>> sorted = rows.stream()
+      .filter(r -> r.get("score") != null)
+      .sorted(Comparator.comparingInt((Map<String, Object> r) -> asInt(r.get("score"))).reversed()).toList();
+    for (int i = 0; i < sorted.size(); i++) sorted.get(i).put("rank", i + 1);
+    log(user, "export scores", examId);
+    return ResponseEntity.ok(mapOf("examName", str(exam, "name"), "rows", rows));
+  }
+
+  @GetMapping("/exams/{examId}/question-analysis")
+  public ResponseEntity<?> questionAnalysis(@RequestHeader(value = "X-User-Id", required = false) String userId, @PathVariable String examId) {
+    Store store = storeService.readStore();
+    Map<String, Object> user = find(store.users, userId);
+    if (!isRole(user, "teacher")) return error(HttpStatus.FORBIDDEN, "Forbidden.");
+    Map<String, Object> exam = find(store.exams, examId);
+    if (exam == null || !Objects.equals(str(exam, "teacherId"), userId)) return error(HttpStatus.FORBIDDEN, "Forbidden.");
+    Map<String, Object> paper = find(store.papers, str(exam, "paperId"));
+    List<Map<String, Object>> examSubmissions = store.submissions.stream()
+      .filter(s -> Objects.equals(str(s, "examId"), examId) && COMPLETED.equals(str(s, "status"))).toList();
+    List<Map<String, Object>> results = new ArrayList<>();
+    for (Object rawId : asList(paper == null ? null : paper.get("questionIds"))) {
+      Map<String, Object> q = find(store.questions, String.valueOf(rawId));
+      if (q == null) continue;
+      int totalAttempts = 0;
+      int correctCount = 0;
+      for (Map<String, Object> submission : examSubmissions) {
+        for (Object detailRaw : asList(submission.get("answerDetail"))) {
+          Map<String, Object> detail = asMap(detailRaw);
+          if (Objects.equals(str(detail, "questionId"), str(q, "id"))) {
+            totalAttempts++;
+            if (Boolean.TRUE.equals(detail.get("correct"))) correctCount++;
+          }
+        }
+      }
+      double correctRate = totalAttempts > 0 ? Math.round(correctCount * 1000.0 / totalAttempts) / 10.0 : 0;
+      results.add(mapOf("questionId", str(q, "id"), "title", str(q, "title"), "type", str(q, "type"),
+        "subject", str(q, "subject"), "knowledgePoint", str(q, "knowledgePoint"),
+        "totalAttempts", totalAttempts, "correctCount", correctCount, "correctRate", correctRate));
+    }
+    Map<String, int[]> kpStats = new LinkedHashMap<>();
+    for (Map<String, Object> r : results) {
+      String kp = str(r, "knowledgePoint");
+      kpStats.computeIfAbsent(kp, k -> new int[2]);
+      kpStats.get(kp)[0] += asInt(r.get("totalAttempts"));
+      kpStats.get(kp)[1] += asInt(r.get("correctCount"));
+    }
+    List<Map<String, Object>> kpAnalysis = new ArrayList<>();
+    kpStats.forEach((kp, counts) -> kpAnalysis.add(mapOf("knowledgePoint", kp, "totalAttempts", counts[0],
+      "correctCount", counts[1], "correctRate", counts[0] > 0 ? Math.round(counts[1] * 1000.0 / counts[0]) / 10.0 : 0)));
+    kpAnalysis.sort(Comparator.comparingDouble(a -> (double) asInt(a.get("correctRate"))));
+    return ResponseEntity.ok(mapOf("questions", results, "knowledgePointAnalysis", kpAnalysis));
+  }
+
+  @PostMapping("/papers/auto-generate")
+  public ResponseEntity<?> autoGeneratePaper(@RequestHeader(value = "X-User-Id", required = false) String userId, @RequestBody Map<String, Object> body) {
+    Store store = storeService.readStore();
+    Map<String, Object> user = find(store.users, userId);
+    if (!isRole(user, "teacher")) return error(HttpStatus.FORBIDDEN, "Forbidden.");
+    String name = str(body, "name");
+    int durationMinutes = asInt(body.get("durationMinutes"));
+    int passScore = asInt(body.get("passScore"));
+    List<Object> rules = asList(body.get("rules"));
+    List<Map<String, Object>> available = store.questions.stream()
+      .filter(q -> Objects.equals(str(q, "teacherId"), userId)).toList();
+    Set<String> occupiedIds = new HashSet<>();
+    for (Map<String, Object> p : store.papers) occupiedIds.addAll(asList(p.get("questionIds")).stream().map(String::valueOf).toList());
+    List<String> selectedIds = new ArrayList<>();
+    for (Object ruleRaw : rules) {
+      Map<String, Object> rule = asMap(ruleRaw);
+      String type = str(rule, "type");
+      int count = asInt(rule.get("count"));
+      String subjectFilter = str(rule, "subject");
+      String kpFilter = str(rule, "knowledgePoint");
+      String diffFilter = str(rule, "difficulty");
+      List<Map<String, Object>> pool = new ArrayList<>(available.stream()
+        .filter(q -> Objects.equals(str(q, "type"), type) && !occupiedIds.contains(str(q, "id"))
+          && (subjectFilter.isEmpty() || Objects.equals(str(q, "subject"), subjectFilter))
+          && (kpFilter.isEmpty() || Objects.equals(str(q, "knowledgePoint"), kpFilter))
+          && (diffFilter.isEmpty() || Objects.equals(str(q, "difficulty"), diffFilter)))
+        .toList());
+      Collections.shuffle(pool);
+      for (int i = 0; i < Math.min(count, pool.size()); i++) {
+        selectedIds.add(str(pool.get(i), "id"));
+        occupiedIds.add(str(pool.get(i), "id"));
+      }
+    }
+    int totalScore = selectedIds.stream().mapToInt(id -> asInt(Optional.ofNullable(find(store.questions, id)).map(q -> q.get("score")).orElse(0))).sum();
+    Map<String, Object> paper = new LinkedHashMap<>();
+    paper.put("id", createId("paper"));
+    paper.put("teacherId", userId);
+    paper.put("name", name);
+    paper.put("durationMinutes", durationMinutes > 0 ? durationMinutes : 60);
+    paper.put("passScore", passScore);
+    paper.put("totalScore", totalScore);
+    paper.put("questionIds", selectedIds);
+    paper.put("paperType", "auto");
+    String validation = validate(store, "papers", paper, null);
+    if (!validation.isBlank()) return error(HttpStatus.BAD_REQUEST, validation);
+    storeService.saveRecord("papers", paper);
+    log(user, "auto generate paper", str(paper, "id"));
+    return ResponseEntity.ok(mapOf("record", paper));
+  }
+
+  @GetMapping("/student/score-trend")
+  public ResponseEntity<?> scoreTrend(@RequestHeader(value = "X-User-Id", required = false) String userId) {
+    Store store = storeService.readStore();
+    Map<String, Object> user = find(store.users, userId);
+    if (!isRole(user, "student")) return error(HttpStatus.FORBIDDEN, "Forbidden.");
+    List<Map<String, Object>> mySubmissions = store.submissions.stream()
+      .filter(s -> Objects.equals(str(s, "studentId"), userId) && COMPLETED.equals(str(s, "status")))
+      .sorted(Comparator.comparing(s -> str(s, "submittedAt"))).toList();
+    List<Map<String, Object>> trend = new ArrayList<>();
+    for (Map<String, Object> s : mySubmissions) {
+      Map<String, Object> exam = find(store.exams, str(s, "examId"));
+      Map<String, Object> paper = exam == null ? null : find(store.papers, str(exam, "paperId"));
+      trend.add(mapOf("examName", exam == null ? "-" : str(exam, "name"),
+        "score", asInt(s.get("finalScore")), "totalScore", asInt(paper == null ? 0 : paper.get("totalScore")),
+        "passScore", asInt(paper == null ? 0 : paper.get("passScore")), "submittedAt", s.get("submittedAt")));
+    }
+    return ResponseEntity.ok(mapOf("trend", trend));
+  }
+
+  @GetMapping("/student/knowledge-radar")
+  public ResponseEntity<?> knowledgeRadar(@RequestHeader(value = "X-User-Id", required = false) String userId) {
+    Store store = storeService.readStore();
+    Map<String, Object> user = find(store.users, userId);
+    if (!isRole(user, "student")) return error(HttpStatus.FORBIDDEN, "Forbidden.");
+    List<Map<String, Object>> mySubmissions = store.submissions.stream()
+      .filter(s -> Objects.equals(str(s, "studentId"), userId) && COMPLETED.equals(str(s, "status"))).toList();
+    Map<String, int[]> subjectStats = new LinkedHashMap<>();
+    Map<String, Map<String, int[]>> kpBySubject = new LinkedHashMap<>();
+    for (Map<String, Object> s : mySubmissions) {
+      for (Object detailRaw : asList(s.get("answerDetail"))) {
+        Map<String, Object> detail = asMap(detailRaw);
+        String subject = str(detail, "subject");
+        String kp = str(detail, "knowledgePoint");
+        subjectStats.computeIfAbsent(subject, k -> new int[2]);
+        subjectStats.get(subject)[0]++;
+        if (Boolean.TRUE.equals(detail.get("correct"))) subjectStats.get(subject)[1]++;
+        kpBySubject.computeIfAbsent(subject, k -> new LinkedHashMap<>()).computeIfAbsent(kp, k -> new int[2]);
+        kpBySubject.get(subject).get(kp)[0]++;
+        if (Boolean.TRUE.equals(detail.get("correct"))) kpBySubject.get(subject).get(kp)[1]++;
+      }
+    }
+    List<Map<String, Object>> subjectMastery = new ArrayList<>();
+    subjectStats.forEach((subject, counts) -> subjectMastery.add(mapOf("subject", subject,
+      "totalQuestions", counts[0], "correctQuestions", counts[1],
+      "mastery", counts[0] > 0 ? Math.round(counts[1] * 100.0 / counts[0]) : 0)));
+    List<Map<String, Object>> kpMastery = new ArrayList<>();
+    kpBySubject.forEach((subject, kps) -> kps.forEach((kp, counts) -> kpMastery.add(mapOf("subject", subject,
+      "knowledgePoint", kp, "totalQuestions", counts[0], "correctQuestions", counts[1],
+      "mastery", counts[0] > 0 ? Math.round(counts[1] * 100.0 / counts[0]) : 0))));
+    return ResponseEntity.ok(mapOf("subjectMastery", subjectMastery, "knowledgePointMastery", kpMastery));
+  }
+
   @PostMapping("/user/password")
   public ResponseEntity<?> changePassword(@RequestHeader(value = "X-User-Id", required = false) String userId, @RequestBody Map<String, Object> body) {
     Store store = storeService.readStore();
     Map<String, Object> user = find(store.users, userId);
     if (user == null) return error(HttpStatus.UNAUTHORIZED, "Not logged in.");
-    if (!Objects.equals(str(user, "password"), str(body, "oldPassword"))) return error(HttpStatus.BAD_REQUEST, "Old password is incorrect.");
-    if (str(body, "newPassword").length() < 6) return error(HttpStatus.BAD_REQUEST, "Password must be at least 6 characters.");
-    user.put("password", str(body, "newPassword"));
+    if (!matchesPassword(str(body, "oldPassword"), str(user, "password"))) return error(HttpStatus.BAD_REQUEST, "Old password is incorrect.");
+    String newPassword = str(body, "newPassword");
+    if (newPassword.length() < 6) return error(HttpStatus.BAD_REQUEST, "Password must be at least 6 characters.");
+    if (newPassword.length() > 100) return error(HttpStatus.BAD_REQUEST, "Password must be at most 100 characters.");
+    user.put("password", hashPassword(newPassword));
     storeService.saveRecord("users", user);
     log(user, "change password", str(user, "username"));
     return ResponseEntity.ok(mapOf("success", true));
@@ -394,7 +718,8 @@ public class ApiController {
     if (target == null) return error(HttpStatus.NOT_FOUND, "User not found.");
     String password = str(body, "newPassword").isBlank() ? "123456" : str(body, "newPassword");
     if (password.length() < 6) return error(HttpStatus.BAD_REQUEST, "Password must be at least 6 characters.");
-    target.put("password", password);
+    if (password.length() > 100) return error(HttpStatus.BAD_REQUEST, "Password must be at most 100 characters.");
+    target.put("password", hashPassword(password));
     storeService.saveRecord("users", target);
     log(user, "reset password", str(target, "username"));
     return ResponseEntity.ok(mapOf("success", true));
@@ -425,15 +750,35 @@ public class ApiController {
       "logs", List.of());
   }
 
-  private Map<String, Object> buildExamSnapshot(Store store, Map<String, Object> exam, boolean hideAnswers) {
+  private Map<String, Object> buildExamSnapshot(Store store, Map<String, Object> exam, boolean hideAnswers, List<String> questionOrder, Map<String, Object> optionOrder) {
     Map<String, Object> paper = find(store.papers, str(exam, "paperId"));
-    List<Object> questionIds = asList(paper == null ? null : paper.get("questionIds"));
+    List<Object> questionIds = questionOrder != null
+      ? new ArrayList<>(questionOrder)
+      : asList(paper == null ? null : paper.get("questionIds"));
     List<Map<String, Object>> questions = new ArrayList<>();
     int order = 1;
     for (Object id : questionIds) {
       Map<String, Object> q = find(store.questions, String.valueOf(id));
       if (q != null) {
         Map<String, Object> next = hideAnswers ? sanitizeQuestion(q) : new LinkedHashMap<>(q);
+        // Apply per-student option shuffle for anti-cheat
+        if (optionOrder != null && !optionOrder.isEmpty()) {
+          List<Object> options = asList(q.get("options"));
+          if (!options.isEmpty()) {
+            Object rawIndices = optionOrder.get(String.valueOf(id));
+            if (rawIndices instanceof List<?> rawList) {
+              List<Integer> indices = new ArrayList<>();
+              for (Object o : rawList) {
+                if (o instanceof Number n) indices.add(n.intValue());
+              }
+              if (indices.size() == options.size()) {
+                List<Object> shuffled = new ArrayList<>();
+                for (int idx : indices) shuffled.add(options.get(idx));
+                next.put("options", shuffled);
+              }
+            }
+          }
+        }
         next.put("order", order++);
         questions.add(next);
       }
@@ -461,6 +806,29 @@ public class ApiController {
     session.put("studentName", str(user, "name"));
     session.putIfAbsent("answers", List.of());
     session.putIfAbsent("switchCount", 0);
+    // Question shuffle for anti-cheat: store a consistent per-student shuffled order
+    if (!session.containsKey("questionOrder")) {
+      List<String> questionIds = new ArrayList<>(asList(paper.get("questionIds")).stream().map(String::valueOf).toList());
+      Collections.shuffle(questionIds);
+      session.put("questionOrder", questionIds);
+    }
+    // Option shuffle for anti-cheat: store per-question shuffled option indices
+    if (!session.containsKey("optionOrder")) {
+      Map<String, Object> optionOrder = new LinkedHashMap<>();
+      for (Object qIdObj : asList(paper.get("questionIds"))) {
+        Map<String, Object> q = find(store.questions, String.valueOf(qIdObj));
+        if (q != null) {
+          List<Object> options = asList(q.get("options"));
+          if (options.size() > 1) {
+            List<Integer> indices = new ArrayList<>();
+            for (int i = 0; i < options.size(); i++) indices.add(i);
+            Collections.shuffle(indices);
+            optionOrder.put(String.valueOf(qIdObj), indices);
+          }
+        }
+      }
+      session.put("optionOrder", optionOrder);
+    }
     session.put("status", RUNNING);
     session.putIfAbsent("startedAt", now());
     session.put("deadlineAt", computeDeadline(exam, paper, str(session, "startedAt")));
@@ -525,6 +893,14 @@ public class ApiController {
     review.put("finishedCount", finished.size());
     review.put("participantCount", store.submissions.stream().filter(s -> Objects.equals(str(s, "examId"), str(submission, "examId"))).count());
     review.put("targetStudentCount", exam == null ? 0 : store.users.stream().filter(u -> isRole(u, "student") && asList(exam.get("targetClassIds")).contains(str(u, "classId"))).count());
+    review.put("usedTimeText", buildUsedTimeText(submission));
+    Instant startedAt = parseInstant(str(submission, "startedAt")).orElse(null);
+    Instant submittedAt = parseInstant(str(submission, "submittedAt")).orElse(null);
+    if (startedAt != null && submittedAt != null) {
+      long usedMs = submittedAt.toEpochMilli() - startedAt.toEpochMilli();
+      int durationMin = asInt(paper == null ? 0 : paper.get("durationMinutes"));
+      if (durationMin > 0) review.put("timeUsageRate", Math.round(usedMs / 1000.0 / (durationMin * 60.0) * 100));
+    }
     return review;
   }
 
@@ -619,12 +995,35 @@ public class ApiController {
   }
 
   private String deleteBlocker(Store store, String entity, String id) {
-    if ("departments".equals(entity) && (store.classes.stream().anyMatch(c -> Objects.equals(str(c, "departmentId"), id)) || store.users.stream().anyMatch(u -> Objects.equals(str(u, "departmentId"), id)))) return "Department is in use.";
-    if ("classes".equals(entity) && (store.users.stream().anyMatch(u -> Objects.equals(str(u, "classId"), id)) || store.exams.stream().anyMatch(e -> asList(e.get("targetClassIds")).contains(id)))) return "Class is in use.";
-    if ("questions".equals(entity) && store.papers.stream().anyMatch(p -> asList(p.get("questionIds")).contains(id))) return "Question is in use.";
-    if ("papers".equals(entity) && store.exams.stream().anyMatch(e -> Objects.equals(str(e, "paperId"), id))) return "Paper is in use.";
-    if ("exams".equals(entity) && store.submissions.stream().anyMatch(s -> Objects.equals(str(s, "examId"), id))) return "Exam has submissions.";
+    if ("departments".equals(entity)) {
+      long classCount = store.classes.stream().filter(c -> Objects.equals(str(c, "departmentId"), id)).count();
+      long userCount = store.users.stream().filter(u -> Objects.equals(str(u, "departmentId"), id)).count();
+      if (classCount > 0 || userCount > 0) {
+        return "该学院下还有 " + classCount + " 个班级和 " + userCount + " 名师生，请先移除相关数据后再删除。";
+      }
+    }
+    if ("classes".equals(entity)) {
+      long studentCount = store.users.stream().filter(u -> Objects.equals(str(u, "classId"), id)).count();
+      if (studentCount > 0) {
+        return "该班级下还有 " + studentCount + " 名学生，请先移除或转移学生后再删除。";
+      }
+    }
+    if ("questions".equals(entity) && store.papers.stream().anyMatch(p -> asList(p.get("questionIds")).contains(id))) return "该题目已被试卷引用，无法删除。";
+    if ("papers".equals(entity) && store.exams.stream().anyMatch(e -> Objects.equals(str(e, "paperId"), id))) return "该试卷已被考试引用，无法删除。";
+    if ("exams".equals(entity) && store.submissions.stream().anyMatch(s -> Objects.equals(str(s, "examId"), id))) return "该考试已有提交记录，无法删除。";
     return "";
+  }
+
+  private void clearExamClassReferences(Store store, String classId) {
+    for (Map<String, Object> exam : store.exams) {
+      List<Object> targetClassIds = asList(exam.get("targetClassIds"));
+      if (targetClassIds.contains(classId)) {
+        List<Object> filtered = new ArrayList<>(targetClassIds);
+        filtered.remove(classId);
+        exam.put("targetClassIds", filtered);
+        storeService.saveRecord("exams", exam);
+      }
+    }
   }
 
   private Map<String, Object> decorateExam(Store store, Map<String, Object> exam) {
@@ -736,6 +1135,12 @@ public class ApiController {
     return value == null ? "" : value.trim().replaceAll("\\s+", " ").toLowerCase();
   }
 
+  private boolean asBool(Object value) {
+    if (value instanceof Boolean b) return b;
+    if (value instanceof Number n) return n.intValue() != 0;
+    return value != null && Boolean.parseBoolean(String.valueOf(value));
+  }
+
   private int asInt(Object value) {
     if (value instanceof Number n) return n.intValue();
     if (value == null || String.valueOf(value).isBlank()) return 0;
@@ -765,6 +1170,24 @@ public class ApiController {
 
   private String now() {
     return Instant.now().toString();
+  }
+
+  private String buildUsedTimeText(Map<String, Object> submission) {
+    Instant startedAt = parseInstant(str(submission, "startedAt")).orElse(null);
+    Instant submittedAt = parseInstant(str(submission, "submittedAt")).orElse(null);
+    if (startedAt == null || submittedAt == null) return null;
+    long usedMs = submittedAt.toEpochMilli() - startedAt.toEpochMilli();
+    return formatUsedMs(usedMs);
+  }
+
+  private String formatUsedMs(long ms) {
+    long totalSeconds = ms / 1000;
+    long hours = totalSeconds / 3600;
+    long minutes = (totalSeconds % 3600) / 60;
+    long seconds = totalSeconds % 60;
+    if (hours > 0) return hours + "\u5c0f\u65f6" + minutes + "\u5206" + seconds + "\u79d2";
+    if (minutes > 0) return minutes + "\u5206" + seconds + "\u79d2";
+    return seconds + "\u79d2";
   }
 
   private String createId(String prefix) {

@@ -86,6 +86,8 @@ CREATE TABLE IF NOT EXISTS submission (
   updated_at DATETIME(3),
   manual_extended_minutes INT DEFAULT 0,
   graded_by VARCHAR(50),
+  question_order_json JSON,
+  option_order_json JSON,
   UNIQUE KEY uk_submission_exam_student (exam_id, student_id),
   INDEX idx_submission_exam (exam_id),
   INDEX idx_submission_student (student_id),
@@ -128,3 +130,6 @@ CREATE TABLE IF NOT EXISTS system_log (
   time DATETIME(3) NOT NULL,
   INDEX idx_log_time (time)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Migration: add question_order_json to submission table
+-- ALTER TABLE submission ADD COLUMN question_order_json JSON;

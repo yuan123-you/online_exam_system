@@ -3,16 +3,37 @@
     <template #header>
       <div>
         <h3>{{ exam.name }}</h3>
-        <p class="muted">{{ exam.paper.name }} · 剩余时间 {{ countdown }}</p>
+        <p class="muted" style="font-size:13px;margin-top:4px;">{{ exam.paper.name }} · 剩余时间 {{ countdown }}</p>
       </div>
     </template>
 
     <div class="exam-shell">
       <aside class="exam-sidebar">
-        <div class="detail-list">
-          <div class="detail-item"><span>切屏次数</span><strong :class="{ danger: switchCount > exam.antiCheatLimit }">{{ switchCount }} / {{ exam.antiCheatLimit }}</strong></div>
-          <div class="detail-item"><span>题量</span><strong>{{ exam.questions.length }}</strong></div>
+        <div class="exam-info-block">
+          <div class="exam-info-row">
+            <span>切屏次数</span>
+            <strong :class="{ 'exam-switch-danger': switchCount > exam.antiCheatLimit }">{{ switchCount }} / {{ exam.antiCheatLimit }}</strong>
+          </div>
+          <div class="exam-info-row">
+            <span>题量</span>
+            <strong>{{ exam.questions.length }}</strong>
+          </div>
+          <div class="exam-info-row">
+            <span>倒计时</span>
+            <strong class="exam-countdown" :class="{ urgent: isUrgent }">{{ countdown }}</strong>
+          </div>
         </div>
+
+        <div class="exam-progress">
+          <div class="exam-progress-label">
+            <span>答题进度</span>
+            <span>{{ answeredCount }}/{{ exam.questions.length }}</span>
+          </div>
+          <div class="exam-progress-bar">
+            <div class="exam-progress-fill" :style="{ width: progressPercent + '%' }"></div>
+          </div>
+        </div>
+
         <div class="question-nav">
           <button
             v-for="(item, index) in exam.questions"
@@ -25,32 +46,55 @@
             {{ index + 1 }}
           </button>
         </div>
-        <div class="action-row">
+
+        <div class="exam-sidebar-actions">
           <button class="ghost-btn" type="button" @click="saveDraft(false)">保存答卷</button>
           <button class="primary-btn" type="button" @click="submitPaper">提交试卷</button>
         </div>
-        <p class="message">{{ message }}</p>
+        <p class="message" style="color:#60a5fa;">{{ message }}</p>
       </aside>
 
-      <section class="panel exam-question">
-        <span class="tag">{{ typeLabel(currentQuestion.type) }}</span>
-        <h3>{{ currentQuestion.order }}. {{ currentQuestion.title }}</h3>
-
-        <div v-if="currentQuestion.type === 'single' || currentQuestion.type === 'judge'" class="option-list">
-          <label v-for="option in currentQuestion.options" :key="option" class="option-item">
-            <input v-model="singleAnswer" :value="option" name="singleAnswer" type="radio" />
-            <span>{{ option }}</span>
-          </label>
+      <section class="exam-question-area">
+        <div class="exam-question-header">
+          <span class="exam-question-number">第 {{ currentIndex + 1 }} 题</span>
+          <span class="exam-question-type">{{ typeLabel(currentQuestion.type) }}</span>
+          <span style="flex:1;"></span>
+          <span style="font-size:13px;color:var(--muted);">{{ currentQuestion.score }} 分</span>
         </div>
 
-        <div v-else-if="currentQuestion.type === 'multiple'" class="option-list">
-          <label v-for="option in currentQuestion.options" :key="option" class="option-item">
-            <input v-model="multipleAnswer" :value="option" type="checkbox" />
-            <span>{{ option }}</span>
-          </label>
+        <div class="exam-question-body">
+          <h3 style="display:none;"></h3>
+          <p style="font-size:15px;line-height:1.7;margin:0 0 20px;color:var(--ink);">{{ currentQuestion.title }}</p>
+
+          <div v-if="currentQuestion.type === 'single' || currentQuestion.type === 'judge'" class="option-list">
+            <label v-for="(option, oi) in currentQuestion.options" :key="option" class="option-item">
+              <input v-model="singleAnswer" :value="option" name="singleAnswer" type="radio" />
+              <span class="option-letter">{{ String.fromCharCode(65 + oi) }}</span>
+              <span class="option-text">{{ option }}</span>
+            </label>
+          </div>
+
+          <div v-else-if="currentQuestion.type === 'multiple'" class="option-list">
+            <label v-for="(option, oi) in currentQuestion.options" :key="option" class="option-item">
+              <input v-model="multipleAnswer" :value="option" type="checkbox" />
+              <span class="option-letter">{{ String.fromCharCode(65 + oi) }}</span>
+              <span class="option-text">{{ option }}</span>
+            </label>
+          </div>
+
+          <textarea v-else v-model="textAnswer" class="exam-textarea" placeholder="请输入你的答案"></textarea>
         </div>
 
-        <textarea v-else v-model="textAnswer" class="exam-textarea" placeholder="请输入你的答案"></textarea>
+        <div class="exam-nav-footer">
+          <button class="exam-nav-btn" type="button" :disabled="currentIndex === 0" @click="jumpTo(currentIndex - 1)">上一题</button>
+          <span class="exam-nav-indicator">{{ currentIndex + 1 }} / {{ exam.questions.length }}</span>
+          <button
+            class="exam-nav-btn next"
+            type="button"
+            :disabled="currentIndex === exam.questions.length - 1"
+            @click="jumpTo(currentIndex + 1)"
+          >下一题</button>
+        </div>
       </section>
     </div>
   </BaseModal>
@@ -87,6 +131,12 @@ const textAnswer = ref("");
 
 const currentQuestion = computed(() => props.exam.questions[currentIndex.value]);
 const countdown = computed(() => formatDuration(Math.max(0, new Date(deadlineAt.value).getTime() - Date.now())));
+const answeredCount = computed(() => Object.values(answerMap.value).filter((a) => a.length > 0).length);
+const progressPercent = computed(() => Math.round((answeredCount.value / props.exam.questions.length) * 100));
+const isUrgent = computed(() => {
+  const remaining = new Date(deadlineAt.value).getTime() - Date.now();
+  return remaining > 0 && remaining < 5 * 60 * 1000;
+});
 
 let timer: number | undefined;
 let autoSaveTimer: number | undefined;

@@ -11,6 +11,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -64,7 +65,9 @@ public class StoreService {
       "finalScore", asInt(row.get("final_score")), "status", normalizeStatus(str(row.get("status"))),
       "startedAt", asIso(row.get("started_at")), "deadlineAt", asIso(row.get("deadline_at")),
       "submittedAt", asIso(row.get("submitted_at")), "updatedAt", asIso(row.get("updated_at")),
-      "manualExtendedMinutes", asInt(row.get("manual_extended_minutes")), "gradedBy", row.get("graded_by")
+      "manualExtendedMinutes", asInt(row.get("manual_extended_minutes")), "gradedBy", row.get("graded_by"),
+      "questionOrder", readList(row.get("question_order_json")),
+      "optionOrder", readMap(row.get("option_order_json"))
     ))).toList();
     store.wrongBookEntries = jdbc.queryForList("select * from wrong_book_entry order by last_wrong_at desc,id").stream().map(row -> compact(mapOf(
       "id", row.get("id"), "studentId", row.get("student_id"), "studentName", row.get("student_name"),
@@ -173,18 +176,19 @@ public class StoreService {
   private void upsertSubmission(Map<String, Object> r) {
     jdbc.update("""
       insert into submission(id,exam_id,student_id,student_name,answers_json,answer_detail_json,switch_count,suspicious,
-      suspicious_reasons_json,auto_score,final_score,status,started_at,deadline_at,submitted_at,updated_at,manual_extended_minutes,graded_by)
-      values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+      suspicious_reasons_json,auto_score,final_score,status,started_at,deadline_at,submitted_at,updated_at,manual_extended_minutes,graded_by,question_order_json,option_order_json)
+      values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
       on duplicate key update student_name=values(student_name),answers_json=values(answers_json),
       answer_detail_json=values(answer_detail_json),switch_count=values(switch_count),suspicious=values(suspicious),
       suspicious_reasons_json=values(suspicious_reasons_json),auto_score=values(auto_score),final_score=values(final_score),
       status=values(status),started_at=values(started_at),deadline_at=values(deadline_at),submitted_at=values(submitted_at),
-      updated_at=values(updated_at),manual_extended_minutes=values(manual_extended_minutes),graded_by=values(graded_by)
+      updated_at=values(updated_at),manual_extended_minutes=values(manual_extended_minutes),graded_by=values(graded_by),
+      question_order_json=values(question_order_json),option_order_json=values(option_order_json)
       """, str(r, "id"), str(r, "examId"), str(r, "studentId"), str(r, "studentName"), json(r.get("answers")),
       json(r.get("answerDetail")), number(r, "switchCount"), bool(r, "suspicious"), json(r.get("suspiciousReasons")),
       number(r, "autoScore"), number(r, "finalScore"), normalizeStatus(str(r, "status")), timestamp(r.get("startedAt")),
       timestamp(r.get("deadlineAt")), timestamp(r.get("submittedAt")), timestamp(r.get("updatedAt")),
-      number(r, "manualExtendedMinutes"), nullableStr(r, "gradedBy"));
+      number(r, "manualExtendedMinutes"), nullableStr(r, "gradedBy"), json(r.get("questionOrder")), json(r.get("optionOrder")));
   }
 
   private void upsertWrongBook(Map<String, Object> r) {
@@ -220,6 +224,15 @@ public class StoreService {
       return mapper.readValue(String.valueOf(raw), new TypeReference<List<Object>>() {});
     } catch (Exception e) {
       return new ArrayList<>();
+    }
+  }
+
+  private Map<String, Object> readMap(Object raw) {
+    if (raw == null) return new LinkedHashMap<>();
+    try {
+      return mapper.readValue(String.valueOf(raw), new TypeReference<Map<String, Object>>() {});
+    } catch (Exception e) {
+      return new LinkedHashMap<>();
     }
   }
 
@@ -302,6 +315,47 @@ public class StoreService {
       map.put(String.valueOf(pairs[i]), pairs[i + 1]);
     }
     return map;
+  }
+
+  public Map<String, Object> queryQuestionsPage(String teacherId, int page, int pageSize, String keyword, String type, String subject) {
+    StringBuilder where = new StringBuilder("WHERE 1=1");
+    List<Object> params = new ArrayList<>();
+    if (teacherId != null && !teacherId.isBlank()) {
+      where.append(" AND teacher_id = ?");
+      params.add(teacherId);
+    }
+    if (keyword != null && !keyword.isBlank()) {
+      where.append(" AND (title LIKE ? OR knowledge_point LIKE ?)");
+      params.add("%" + keyword + "%");
+      params.add("%" + keyword + "%");
+    }
+    if (type != null && !type.equals("all")) {
+      where.append(" AND type = ?");
+      params.add(type);
+    }
+    if (subject != null && !subject.equals("all")) {
+      where.append(" AND subject = ?");
+      params.add(subject);
+    }
+    int total = Optional.ofNullable(jdbc.queryForObject(
+      "SELECT COUNT(*) FROM question " + where, Integer.class, params.toArray())).orElse(0);
+    int offset = (Math.max(1, page) - 1) * pageSize;
+    List<Object> fullParams = new ArrayList<>(params);
+    fullParams.add(pageSize);
+    fullParams.add(offset);
+    List<Map<String, Object>> rows = jdbc.queryForList(
+      "SELECT * FROM question " + where + " ORDER BY id LIMIT ? OFFSET ?", fullParams.toArray()).stream()
+      .map(row -> compact(mapOf(
+        "id", row.get("id"), "teacherId", row.get("teacher_id"), "subject", row.get("subject"),
+        "knowledgePoint", row.get("knowledge_point"), "difficulty", row.get("difficulty"), "type", row.get("type"),
+        "title", row.get("title"), "options", readList(row.get("options_json")), "answer", readList(row.get("answer_json")),
+        "score", row.get("score") != null ? ((Number) row.get("score")).intValue() : 0, "sourceTag", row.get("source_tag")
+      ))).toList();
+    return mapOf("rows", rows, "total", total, "page", page, "pageSize", pageSize);
+  }
+
+  public List<String> queryQuestionSubjects(String teacherId) {
+    return jdbc.queryForList("SELECT DISTINCT subject FROM question WHERE teacher_id = ? ORDER BY subject", String.class, teacherId);
   }
 
   private String normalizeStatus(String status) {

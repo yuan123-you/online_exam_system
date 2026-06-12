@@ -3,14 +3,15 @@
     <template #header>
       <div>
         <h3>{{ paper.name }}</h3>
-        <p class="muted">题量 {{ questions.length }} · 总分 {{ paper.totalScore }} · 时长 {{ paper.durationMinutes }} 分钟</p>
+        <p class="muted" style="font-size:13px;margin-top:4px;">题量 {{ questions.length }} · 总分 {{ paper.totalScore }} · 时长 {{ paper.durationMinutes }} 分钟</p>
       </div>
     </template>
     <div class="preview-list">
       <div v-for="(item, index) in questions" :key="item.id" class="preview-item">
         <h4>{{ index + 1 }}. {{ item.title }}</h4>
-        <p class="muted">{{ typeLabel(item.type) }} · {{ item.subject }} / {{ item.knowledgePoint }} · {{ item.score }} 分</p>
+        <p class="muted"><span class="tag" style="margin-right:8px;">{{ typeLabel(item.type) }}</span>{{ item.subject }} / {{ item.knowledgePoint }} · {{ item.score }} 分</p>
       </div>
+      <div v-if="questions.length === 0" class="empty-state">暂无题目</div>
     </div>
   </BaseModal>
 </template>

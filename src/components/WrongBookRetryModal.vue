@@ -3,29 +3,33 @@
     <template #header>
       <div>
         <h3>错题重做</h3>
-        <p class="muted">{{ entry.subject }} / {{ entry.knowledgePoint }} / {{ typeLabel(entry.type) }}</p>
+        <p class="muted" style="font-size:13px;margin-top:4px;">
+          {{ entry.subject }} / {{ entry.knowledgePoint }} / <span class="tag">{{ typeLabel(entry.type) }}</span>
+        </p>
       </div>
     </template>
 
     <div class="preview-item">
       <h4>{{ entry.title }}</h4>
-      <div v-if="entry.question?.type === 'single' || entry.question?.type === 'judge'" class="option-list">
+      <div v-if="entry.question?.type === 'single' || entry.question?.type === 'judge'" class="option-list" style="margin-top:12px;">
         <label v-for="option in entry.question.options" :key="option" class="option-item">
           <input v-model="singleAnswer" :value="option" name="singleAnswer" type="radio" />
-          <span>{{ option }}</span>
+          <span class="option-text">{{ option }}</span>
         </label>
       </div>
-      <div v-else-if="entry.question?.type === 'multiple'" class="option-list">
+      <div v-else-if="entry.question?.type === 'multiple'" class="option-list" style="margin-top:12px;">
         <label v-for="option in entry.question.options" :key="option" class="option-item">
           <input v-model="multipleAnswer" :value="option" type="checkbox" />
-          <span>{{ option }}</span>
+          <span class="option-text">{{ option }}</span>
         </label>
       </div>
-      <textarea v-else v-model="textAnswer" placeholder="请输入你的答案"></textarea>
-      <p class="muted">参考答案：{{ joinAnswer(entry.expectedAnswer) }}</p>
+      <textarea v-else v-model="textAnswer" placeholder="请输入你的答案" style="margin-top:12px;width:100%;min-height:120px;"></textarea>
+      <p class="muted" style="margin-top:12px;padding:10px 14px;background:var(--ok-soft);border-radius:var(--radius);border-left:3px solid var(--ok);">
+        参考答案：{{ joinAnswer(entry.expectedAnswer) }}
+      </p>
     </div>
 
-    <div class="action-row">
+    <div class="action-row" style="justify-content:flex-end;margin-top:12px;">
       <button class="ghost-btn" type="button" @click="$emit('close')">取消</button>
       <button class="primary-btn" type="button" @click="submitRetry">提交重做</button>
     </div>

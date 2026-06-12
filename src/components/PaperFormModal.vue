@@ -3,23 +3,14 @@
     <template #header>
       <div>
         <h3>{{ model ? "编辑试卷" : "新增试卷" }}</h3>
-        <p class="muted">题目池会自动排除已被其他试卷占用的题目。</p>
+        <p class="muted" style="font-size:13px;margin-top:4px;">题目池会自动排除已被其他试卷占用的题目</p>
       </div>
     </template>
 
     <form class="form-grid" @submit.prevent="submitForm">
-      <label>
-        <span>试卷名称</span>
-        <input v-model.trim="name" required />
-      </label>
-      <label>
-        <span>考试时长（分钟）</span>
-        <input v-model.number="durationMinutes" type="number" min="1" required />
-      </label>
-      <label>
-        <span>及格线</span>
-        <input v-model.number="passScore" type="number" min="0" required />
-      </label>
+      <label><span>试卷名称</span><input v-model.trim="name" required placeholder="请输入试卷名称" /></label>
+      <label><span>考试时长（分钟）</span><input v-model.number="durationMinutes" type="number" min="1" required /></label>
+      <label><span>及格线</span><input v-model.number="passScore" type="number" min="0" required /></label>
       <label>
         <span>科目筛选</span>
         <select v-model="subjectFilter">
@@ -41,11 +32,11 @@
       </label>
 
       <div class="selection-summary span-2">
-        <span>已选题量：{{ selectedIds.length }}</span>
-        <span>总分：{{ totalScore }}</span>
+        <span>已选题量：<strong>{{ selectedIds.length }}</strong></span>
+        <span>总分：<strong>{{ totalScore }}</strong></span>
       </div>
 
-      <div class="action-row">
+      <div class="action-row" style="justify-content:flex-end;margin-top:8px;">
         <button class="ghost-btn" type="button" @click="$emit('close')">取消</button>
         <button class="primary-btn" type="submit">保存试卷</button>
       </div>

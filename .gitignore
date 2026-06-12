@@ -1,0 +1,27 @@
+# Dependencies
+node_modules/
+
+# Build output
+backend/target/
+dist/
+
+# IDE
+.idea/
+.vscode/
+*.iml
+
+# Maven local repo
+.m2/
+
+# Logs
+logs/
+*.log
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Environment
+.env
+.env.local

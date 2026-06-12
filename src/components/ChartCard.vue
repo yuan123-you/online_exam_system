@@ -2,8 +2,8 @@
   <article class="panel chart-panel">
     <div class="section-head">
       <div>
-        <h3>{{ title }}</h3>
-        <p v-if="description" class="muted">{{ description }}</p>
+        <h3 style="font-size:17px;font-weight:700;letter-spacing:-0.02em;">{{ title }}</h3>
+        <p v-if="description" class="muted" style="font-size:13px;margin-top:2px;">{{ description }}</p>
       </div>
     </div>
     <div ref="container" class="chart-surface" :style="{ height }"></div>
@@ -23,7 +23,7 @@ const props = withDefaults(
     height?: string;
   }>(),
   {
-    height: "320px",
+    height: "300px",
   }
 );
 
