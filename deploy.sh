@@ -11,6 +11,11 @@ REPO_URL="https://github.com/yuan123-you/online_exam_system.git"
 MYSQL_ROOT_PASS="123456"
 MYSQL_DB="online_exam_system"
 
+# Suppress all interactive prompts and auto-restart dialogs
+export DEBIAN_FRONTEND=noninteractive
+export NEEDRESTART_MODE=a
+sudo sed -i 's/^#\?\(nrconf{restart}\).*/\1 = '\''a'\'';/' /etc/needrestart/conf.d/*.conf 2>/dev/null || true
+
 echo "=========================================="
 echo "  Online Exam System Deployment"
 echo "  Domain: $DOMAIN"
@@ -21,8 +26,8 @@ echo "=========================================="
 #--------------------------------------------------------------
 echo ""
 echo "[1/8] Updating system packages..."
-sudo apt-get update -y
-sudo apt-get install -y curl wget gnupg2 software-properties-common apt-transport-https ca-certificates lsb-release git unzip
+sudo apt-get update -y -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold"
+sudo apt-get install -y -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" curl wget gnupg2 software-properties-common apt-transport-https ca-certificates lsb-release git unzip
 
 #--------------------------------------------------------------
 # 2. Install Java 21 (Eclipse Temurin)
@@ -36,7 +41,7 @@ else
     wget -qO - https://packages.adoptium.net/artifactory/api/gpg/key/public | sudo gpg --dearmor -o /usr/share/keyrings/adoptium.gpg
     echo "deb [signed-by=/usr/share/keyrings/adoptium.gpg] https://packages.adoptium.net/artifactory/deb $(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/adoptium.list
     sudo apt-get update -y
-    sudo apt-get install -y temurin-21-jdk
+    sudo apt-get install -y -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" temurin-21-jdk
 fi
 echo "  Java version: $(java -version 2>&1 | head -1)"
 
@@ -48,7 +53,7 @@ echo "[3/8] Installing Maven..."
 if command -v mvn &> /dev/null; then
     echo "  Maven already installed, skipping."
 else
-    sudo apt-get install -y maven
+    sudo apt-get install -y -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" maven
 fi
 echo "  Maven version: $(mvn -version 2>&1 | head -1)"
 
@@ -77,7 +82,7 @@ if command -v node &> /dev/null && node -v | grep -q "v2[0-9]"; then
     echo "  Node.js already installed, skipping."
 else
     curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
-    sudo apt-get install -y nodejs
+    sudo apt-get install -y -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" nodejs
 fi
 echo "  Node version: $(node -v)"
 echo "  npm version: $(npm -v)"
@@ -91,7 +96,7 @@ echo "[5/8] Installing and configuring MySQL..."
 if command -v mysql &> /dev/null; then
     echo "  MySQL already installed, skipping."
 else
-    sudo apt-get install -y mysql-server
+    sudo apt-get install -y -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" mysql-server
 
     # Start MySQL
     sudo systemctl start mysql
@@ -225,7 +230,7 @@ fi
 echo ""
 echo "[8/8] Configuring Nginx..."
 
-sudo apt-get install -y nginx
+sudo apt-get install -y -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" nginx
 
 # Create Nginx configuration
 sudo tee /etc/nginx/sites-available/online-exam > /dev/null <<NGINX_EOF
