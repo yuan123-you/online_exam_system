@@ -301,9 +301,71 @@ echo "    Restart backend:       sudo systemctl restart online-exam"
 echo "    Restart Nginx:         sudo systemctl restart nginx"
 echo "    View Nginx logs:       sudo tail -f /var/log/nginx/error.log"
 echo ""
-echo "  NOTE: If your domain DNS is not yet pointing to"
-echo "  54.179.150.131, please add an A record in your"
-echo "  DNS settings. You can also access via IP directly:"
-echo "  http://54.179.150.131"
+
+#--------------------------------------------------------------
+# 9. Setup Auto-Deploy Webhook (listens for GitHub push events)
+#--------------------------------------------------------------
 echo ""
+echo "[9/9] Setting up auto-deploy webhook..."
+
+# Make auto-deploy script executable
+chmod +x /opt/online-exam/auto-deploy.sh
+
+# Generate a random webhook secret if not already set
+WEBHOOK_SECRET_FILE="/opt/online-exam/.webhook-secret"
+if [ -f "$WEBHOOK_SECRET_FILE" ]; then
+  WEBHOOK_SECRET=$(cat "$WEBHOOK_SECRET_FILE")
+else
+  WEBHOOK_SECRET=$(openssl rand -hex 24)
+  echo "$WEBHOOK_SECRET" | sudo tee "$WEBHOOK_SECRET_FILE" > /dev/null
+  sudo chmod 600 "$WEBHOOK_SECRET_FILE"
+fi
+
+# Create webhook systemd service
+WEBHOOK_BIN=$(which node)
+sudo tee /etc/systemd/system/online-exam-webhook.service > /dev/null <<WEBHOOK_SERVICE_EOF
+[Unit]
+Description=Online Exam Auto-Deploy Webhook
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/online-exam
+Environment=WEBHOOK_PORT=9000
+Environment=WEBHOOK_SECRET=${WEBHOOK_SECRET}
+ExecStart=${WEBHOOK_BIN} /opt/online-exam/auto-deploy-webhook.js
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+WEBHOOK_SERVICE_EOF
+
+sudo systemctl daemon-reload
+sudo systemctl enable online-exam-webhook
+sudo systemctl start online-exam-webhook
+
+echo ""
+echo "  Auto-deploy webhook is running on port 9000."
+echo "  Webhook secret: ${WEBHOOK_SECRET}"
+echo ""
+echo "  =========================================="
+echo "  NEXT: Configure GitHub Webhook"
+echo "  =========================================="
+echo "  1. Go to: https://github.com/yuan123-you/online_exam_system/settings/hooks"
+echo "  2. Click 'Add webhook'"
+echo "  3. Payload URL:  http://54.179.150.131:9000/webhook"
+echo "  4. Content type: application/json"
+echo "  5. Secret:       ${WEBHOOK_SECRET}"
+echo "  6. Events:       Just the push event"
+echo "  7. Click 'Add webhook'"
+echo ""
+echo "  After this, every 'git push' to GitHub will"
+echo "  automatically update the server!"
+echo ""
+echo "  NOTE: Make sure port 9000 is open in your"
+echo "  Lightsail firewall (Networking > Firewall >"
+echo "  Add rule > Custom TCP > Port 9000)."
 echo "=========================================="
+
