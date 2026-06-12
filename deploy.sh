@@ -252,9 +252,16 @@ server {
     root /opt/online-exam/dist;
     index index.html;
 
-    # Frontend routes - SPA fallback
+    # Frontend routes - SPA fallback (never cache HTML)
     location / {
         try_files \$uri \$uri/ /index.html;
+    }
+
+    # Never cache HTML and CSS files (ensures users always get latest version)
+    location ~* \.(html|css)$ {
+        add_header Cache-Control "no-cache, no-store, must-revalidate";
+        add_header Pragma "no-cache";
+        add_header Expires "0";
     }
 
     # API reverse proxy to Spring Boot backend
