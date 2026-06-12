@@ -148,17 +148,9 @@ else
     cd "$APP_DIR"
 fi
 
-# Build Frontend
-echo ""
-echo "  Building frontend..."
-cd "$APP_DIR"
-
-# Configure npm registry mirror for speed
-npm config set registry https://registry.npmmirror.com
-
-npm install
-npx vite build
-echo "  Frontend built to dist/"
+# Frontend is served from backend/src/main/resources/static/ (green theme)
+# No Vite build needed — static HTML/CSS/JS files are used directly
+echo "  Frontend: using static files from backend/src/main/resources/static/"
 
 # Build Backend
 echo ""
@@ -248,11 +240,11 @@ server {
     listen 80;
     server_name ${DOMAIN} 54.179.150.131;
 
-    # Frontend static files
-    root /opt/online-exam/dist;
+    # Frontend static files (green theme from Spring Boot resources)
+    root /opt/online-exam/backend/src/main/resources/static;
     index index.html;
 
-    # Frontend routes - SPA fallback (never cache HTML)
+    # Frontend routes
     location / {
         try_files \$uri \$uri/ /index.html;
     }
@@ -281,10 +273,10 @@ server {
         client_max_body_size 10m;
     }
 
-    # Cache static assets
-    location /assets/ {
-        expires 1y;
-        add_header Cache-Control "public, immutable";
+    # Cache JS static assets
+    location ~* \.js$ {
+        expires 1d;
+        add_header Cache-Control "public";
     }
 
     # Gzip compression

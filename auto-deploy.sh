@@ -24,10 +24,9 @@ cd "$APP_DIR"
 echo "$(date -Iseconds) Pulling latest code..." >> "$LOG_FILE"
 git pull origin master >> "$LOG_FILE" 2>&1
 
-# 2. Rebuild frontend
-echo "$(date -Iseconds) Building frontend..." >> "$LOG_FILE"
-npm install --production=false >> "$LOG_FILE" 2>&1
-npx vite build >> "$LOG_FILE" 2>&1
+# 2. Frontend is static (green theme in backend/src/main/resources/static/)
+#    No build step needed — files are served directly by Nginx
+echo "$(date -Iseconds) Frontend: using static files (no build needed)" >> "$LOG_FILE"
 
 # 3. Rebuild backend
 echo "$(date -Iseconds) Building backend..." >> "$LOG_FILE"
