@@ -117,7 +117,13 @@ sudo systemctl start mysql
 
 # Create the database
 sudo mysql -u root -p"${MYSQL_ROOT_PASS}" -e "CREATE DATABASE IF NOT EXISTS ${MYSQL_DB} CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
-echo "  MySQL configured. Database '${MYSQL_DB}' created."
+
+# Import seed data (departments, classes, users, questions)
+echo "  Importing seed data..."
+sudo mysql -u root -p"${MYSQL_ROOT_PASS}" "${MYSQL_DB}" < /opt/online-exam/backend/src/main/resources/schema.sql 2>/dev/null || true
+sudo mysql -u root -p"${MYSQL_ROOT_PASS}" "${MYSQL_DB}" < /opt/online-exam/backend/src/main/resources/data.sql 2>/dev/null || true
+sudo mysql -u root -p"${MYSQL_ROOT_PASS}" "${MYSQL_DB}" < /opt/online-exam/scripts/bulk-questions.sql 2>/dev/null || true
+echo "  MySQL configured. Database '${MYSQL_DB}' created and seeded."
 
 #--------------------------------------------------------------
 # 6. Clone Repository and Build
