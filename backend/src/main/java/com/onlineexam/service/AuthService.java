@@ -1,16 +1,15 @@
 package com.onlineexam.service;
 
 import com.onlineexam.StoreService;
-import com.onlineexam.StoreService.Store;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
-import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.stereotype.Service;
 
@@ -22,6 +21,7 @@ public class AuthService {
 
   private final StoreService storeService;
   private final SystemLogService systemLogService;
+  private final JdbcTemplate jdbc;
   private final BCryptPasswordEncoder passwordEncoder = new BCryptPasswordEncoder();
 
   // Brute-force protection: track failed login attempts per username
@@ -29,9 +29,10 @@ public class AuthService {
   private static final int MAX_FAILED_ATTEMPTS = 5;
   private static final long LOCKOUT_WINDOW_MS = 1 * 60 * 1000; // 1 minute
 
-  public AuthService(StoreService storeService, SystemLogService systemLogService) {
+  public AuthService(StoreService storeService, SystemLogService systemLogService, JdbcTemplate jdbc) {
     this.storeService = storeService;
     this.systemLogService = systemLogService;
+    this.jdbc = jdbc;
   }
 
   /**
@@ -45,16 +46,15 @@ public class AuthService {
       return error(HttpStatus.TOO_MANY_REQUESTS, "登录尝试次数过多，请1分钟后再试。");
     }
 
-    Store store = storeService.readStore();
-    Optional<Map<String, Object>> found = store.users.stream()
-      .filter(user -> Objects.equals(str(user, "username"), inputUsername))
-      .findFirst();
-    if (found.isEmpty() || !matchesPassword(str(body, "password"), str(found.get(), "password"))) {
-      // Record failed attempt
+    // Direct SQL query — only fetch the one user row needed, not the entire database
+    List<Map<String, Object>> rows = jdbc.queryForList(
+      "select id,role,username,password,name,department_id,class_id,major from user_account where username=? limit 1",
+      inputUsername);
+    if (rows.isEmpty() || !matchesPassword(str(body, "password"), str(rows.get(0), "password"))) {
       recordFailedAttempt(inputUsername);
       return error(HttpStatus.UNAUTHORIZED, "Username or password is incorrect.");
     }
-    Map<String, Object> matchedUser = found.get();
+    Map<String, Object> matchedUser = rows.get(0);
     // Clear failed attempts on successful login
     loginAttempts.remove(inputUsername);
     if (needsPasswordUpgrade(str(matchedUser, "password"))) {

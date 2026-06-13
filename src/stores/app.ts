@@ -459,7 +459,7 @@ export const useAppStore = defineStore('app', () => {
       const result = await apiLogin(payload.username, payload.password)
       setCurrentAuthToken(result.user.id)
       localStorage.setItem('auth_token', result.user.id)
-      await loadData()
+      loadData() // fire-and-forget — don't block login on full data load
       showToast('登录成功，欢迎回来！', 'success')
       return true
     } catch (err: any) {

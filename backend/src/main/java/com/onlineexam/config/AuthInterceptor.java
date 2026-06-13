@@ -1,11 +1,9 @@
 package com.onlineexam.config;
 
-import com.onlineexam.StoreService;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
-import java.util.Map;
-import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 import org.springframework.web.servlet.HandlerInterceptor;
 
@@ -20,14 +18,14 @@ import org.springframework.web.servlet.HandlerInterceptor;
 @Component
 public class AuthInterceptor implements HandlerInterceptor {
 
-  private final StoreService storeService;
+  private final JdbcTemplate jdbc;
 
   /** Cache: userId -> expiry timestamp (ms).  Entries are valid for 30 seconds. */
   private final ConcurrentHashMap<String, Long> validUserCache = new ConcurrentHashMap<>();
   private static final long CACHE_TTL_MS = 30_000; // 30 seconds
 
-  public AuthInterceptor(StoreService storeService) {
-    this.storeService = storeService;
+  public AuthInterceptor(JdbcTemplate jdbc) {
+    this.jdbc = jdbc;
   }
 
   @Override
@@ -63,13 +61,13 @@ public class AuthInterceptor implements HandlerInterceptor {
     if (expiry != null && expiry > now) {
       return true; // still cached and valid
     }
-    // Remove expired entry
     if (expiry != null) {
       validUserCache.remove(userId);
     }
-    // Check against the store
-    boolean exists = storeService.readStore().users.stream()
-        .anyMatch(u -> Objects.equals(String.valueOf(u.get("id")), userId));
+    // Direct COUNT query — one indexed lookup, not a full table scan
+    Integer count = jdbc.queryForObject(
+      "select count(*) from user_account where id=?", Integer.class, userId);
+    boolean exists = count != null && count > 0;
     if (exists) {
       validUserCache.put(userId, now + CACHE_TTL_MS);
     }
