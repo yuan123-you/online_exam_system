@@ -351,4 +351,36 @@ UNLOCK TABLES;
 /*!40101 SET COLLATION_CONNECTION=@OLD_COLLATION_CONNECTION */;
 /*!40111 SET SQL_NOTES=@OLD_SQL_NOTES */;
 
+--
+-- Table structure for table `chat_conversation`
+--
+
+DROP TABLE IF EXISTS `chat_conversation`;
+CREATE TABLE `chat_conversation` (
+  `id` varchar(64) NOT NULL,
+  `user_id` varchar(64) NOT NULL,
+  `title` varchar(200) NOT NULL,
+  `role` varchar(20) NOT NULL DEFAULT 'student',
+  `created_at` datetime(3) NOT NULL,
+  `updated_at` datetime(3) NOT NULL,
+  PRIMARY KEY (`id`),
+  KEY `idx_chat_conv_user` (`user_id`),
+  KEY `idx_chat_conv_updated` (`updated_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+--
+-- Table structure for table `chat_message`
+--
+
+DROP TABLE IF EXISTS `chat_message`;
+CREATE TABLE `chat_message` (
+  `id` varchar(64) PRIMARY KEY,
+  `conversation_id` varchar(64) NOT NULL,
+  `role` varchar(20) NOT NULL,
+  `content` text NOT NULL,
+  `reasoning` text,
+  `created_at` datetime(3) NOT NULL,
+  KEY `idx_chat_msg_conv` (`conversation_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
 -- Dump completed on 2026-06-12 13:25:03

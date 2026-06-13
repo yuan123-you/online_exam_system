@@ -246,4 +246,34 @@ function onDelete(id: string) {
 }
 .conv-item:hover .ci-delete { display: flex; }
 .ci-delete:hover { background: #fee2e2; color: #ef4444; }
+
+/* ===== Responsive — Mobile overlay sidebar ===== */
+@media (max-width: 768px) {
+  .chat-sidebar {
+    position: absolute;
+    left: 0; top: 0; bottom: 0;
+    width: 260px;
+    z-index: 30;
+    box-shadow: 4px 0 16px rgba(0,0,0,0.12);
+    transform: translateX(-100%);
+    transition: transform 0.25s ease;
+  }
+  .chat-sidebar:not(.collapsed) {
+    transform: translateX(0);
+  }
+  .chat-sidebar.collapsed {
+    width: 260px;
+    overflow: hidden;
+    transform: translateX(-100%);
+  }
+
+  /* Mobile toggle button — fixed to left edge */
+  .sidebar-collapse {
+    right: auto;
+    left: 100%;
+    border-radius: 0 8px 8px 0;
+    height: 56px;
+    width: 28px;
+  }
+}
 </style>

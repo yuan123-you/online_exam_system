@@ -675,4 +675,33 @@ function escapeHtml(s: string) {
 .copy-menu button:hover {
   background: #f3f4f6;
 }
+
+/* ===== Responsive — Mobile ===== */
+@media (max-width: 768px) {
+  .chat-bubble { max-width: 92%; }
+
+  .bubble-body {
+    padding: 10px 14px;
+    font-size: 13px;
+    border-radius: 14px;
+  }
+  .bubble-avatar {
+    width: 26px; height: 26px;
+    font-size: 12px;
+  }
+
+  .msg-meta { margin-top: 4px; padding: 0 2px; }
+  .copy-trigger { font-size: 11px; padding: 4px 8px; }
+
+  .exam-paper { margin-top: 8px; border-radius: 8px; }
+  .exam-header { padding: 8px 12px; }
+  .exam-title { font-size: 12px; }
+  .exam-submit { font-size: 11px; padding: 4px 12px; }
+  .exam-question { padding: 10px 12px; }
+  .eq-body { font-size: 13px; }
+  .eq-opt { padding: 6px 10px; gap: 6px; }
+  .eo-letter { width: 22px; height: 22px; font-size: 11px; }
+  .eo-text { font-size: 12px; }
+  .eq-textarea textarea { font-size: 12px; padding: 8px 10px; }
+}
 </style>

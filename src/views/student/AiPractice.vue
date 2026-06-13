@@ -463,4 +463,57 @@ function smoothScrollToBottom(duration: number) {
   0%, 100% { box-shadow: 0 0 0 0 rgba(239,68,68,0.4); }
   50% { box-shadow: 0 0 0 8px rgba(239,68,68,0); }
 }
+
+/* ===== Responsive — Tablet & Mobile ===== */
+@media (max-width: 768px) {
+  .chat-layout {
+    height: calc(100vh - 120px);
+    max-height: none;
+    min-height: 360px;
+    border-radius: 0;
+    border: none;
+  }
+
+  .top-bar {
+    padding: 8px 12px;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .tb-right { gap: 6px; }
+  .tb-title { font-size: 13px; }
+  .tb-model { font-size: 10px; }
+
+  .think-toggle {
+    padding: 3px 8px;
+    font-size: 11px;
+  }
+  .tab-switcher button {
+    padding: 4px 10px;
+    font-size: 11px;
+  }
+
+  .msg-area {
+    padding: 16px 10px;
+    gap: 10px;
+  }
+
+  .welcome { padding: 24px 12px; }
+  .welcome h3 { font-size: 15px; }
+  .wc-chip { font-size: 11px; padding: 5px 10px; }
+
+  .quick-chips { padding: 6px 10px 0; gap: 4px; }
+  .quick-chips button { font-size: 10px; padding: 3px 8px; }
+
+  .input-row { padding: 8px 10px; }
+  .msg-input {
+    padding: 10px 44px 10px 12px;
+    font-size: 13px;
+    border-radius: 12px;
+  }
+  .action-btn {
+    width: 34px; height: 34px;
+    right: 4px; bottom: 4px;
+    border-radius: 8px;
+  }
+}
 </style>
