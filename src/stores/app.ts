@@ -459,7 +459,8 @@ export const useAppStore = defineStore('app', () => {
       const result = await apiLogin(payload.username, payload.password)
       setCurrentAuthToken(result.user.id)
       localStorage.setItem('auth_token', result.user.id)
-      loadData() // fire-and-forget — don't block login on full data load
+      bootstrap.value = null // clear stale data from previous user immediately
+      await loadData()       // ensure fresh data before UI renders
       showToast('登录成功，欢迎回来！', 'success')
       return true
     } catch (err: any) {
@@ -506,6 +507,18 @@ export const useAppStore = defineStore('app', () => {
     localStorage.removeItem('auth_token')
     bootstrap.value = null
     loginMessage.value = ''
+    // Clear AI chat state so next user doesn't see previous user's conversations
+    chatMessages.value = []
+    practiceMessages.value = []
+    chatStreamingContent.value = ''
+    chatStreamingActive.value = false
+    chatStreamingReasoning.value = ''
+    practiceStreamingContent.value = ''
+    practiceStreamingActive.value = false
+    practiceStreamingReasoning.value = ''
+    conversations.value = []
+    activeConversationId.value = null
+    conversationsLoading.value = false
   }
 
   function openEditor(kind: typeof editorState.value.kind, model: any) {
