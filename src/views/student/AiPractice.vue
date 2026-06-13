@@ -131,7 +131,7 @@ const suggestions = [
 
 function switchTab(tab: 'chat' | 'practice') {
   activeTab.value = tab
-  nextTick(() => scrollToBottom(false))
+  nextTick(() => smoothScrollToBottom(300))
 }
 
 function send(text: string) {

@@ -100,15 +100,15 @@ function onDelete(id: string) {
 .sidebar-collapse {
   position: absolute;
   top: 50%;
-  right: -16px;
+  right: -18px;
   transform: translateY(-50%);
-  width: 32px;
-  height: 48px;
+  width: 36px;
+  height: 56px;
   border: 1px solid #e5e7eb;
   border-radius: 0 8px 8px 0;
   background: #fff;
   color: #6b7280;
-  font-size: 12px;
+  font-size: 15px;
   cursor: pointer;
   display: flex;
   align-items: center;
@@ -272,11 +272,12 @@ function onDelete(id: string) {
 
   /* Button peeks from left viewport edge when collapsed */
   .sidebar-collapse {
-    right: -28px;
+    right: -30px;
     left: auto;
     border-radius: 0 8px 8px 0;
-    height: 56px;
-    width: 28px;
+    height: 52px;
+    width: 30px;
+    font-size: 14px;
   }
 }
 </style>
