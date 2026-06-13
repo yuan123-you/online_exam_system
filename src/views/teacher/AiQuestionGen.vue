@@ -64,10 +64,10 @@
               @input="autoResize"
             ></textarea>
             <button v-if="!streamingActive" class="action-btn send-action" :disabled="!inputText.trim() || loading" @click="doSend">
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg>
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg>
             </button>
             <button v-else class="action-btn stop-action" @click="stopStreaming">
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>
             </button>
           </div>
         </div>
@@ -363,8 +363,8 @@ async function importSelected() {
 .msg-input:disabled { opacity: 0.5; }
 
 .action-btn {
-  position: absolute; right: 6px; bottom: 6px;
-  width: 40px; height: 40px; border: none; border-radius: 10px;
+  position: absolute; right: 8px; top: 50%; transform: translateY(-50%);
+  width: 44px; height: 44px; border: none; border-radius: 12px;
   cursor: pointer; display: flex; align-items: center; justify-content: center;
   transition: all 0.15s; z-index: 2;
 }

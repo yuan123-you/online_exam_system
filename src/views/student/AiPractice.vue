@@ -68,7 +68,7 @@
               @click="doSend"
               title="发送 (Enter)"
             >
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
                 <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/>
               </svg>
             </button>
@@ -78,7 +78,7 @@
               @click="stopStreaming"
               title="停止生成"
             >
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
                 <rect x="4" y="4" width="16" height="16" rx="2"/>
               </svg>
             </button>
@@ -393,12 +393,13 @@ function smoothScrollToBottom(duration: number) {
 /* Unified action button inside input */
 .action-btn {
   position: absolute;
-  right: 6px;
-  bottom: 6px;
-  width: 40px;
-  height: 40px;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 44px;
+  height: 44px;
   border: none;
-  border-radius: 10px;
+  border-radius: 12px;
   cursor: pointer;
   display: flex;
   align-items: center;
@@ -489,9 +490,9 @@ function smoothScrollToBottom(duration: number) {
     border-radius: 12px;
   }
   .action-btn {
-    width: 34px; height: 34px;
-    right: 4px; bottom: 4px;
-    border-radius: 8px;
+    width: 38px; height: 38px;
+    right: 6px;
+    border-radius: 10px;
   }
 }
 </style>

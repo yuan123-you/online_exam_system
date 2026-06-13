@@ -48,28 +48,12 @@
       <!-- Duration + Copy row (AI only, after streaming) -->
       <div v-if="msg.role === 'assistant' && msg.content && !(isLast(idx) && streamingActive)" class="msg-meta">
         <span v-if="msg.duration != null" class="msg-duration">{{ formatDuration(msg.duration) }}</span>
-        <div class="copy-dropdown">
-          <button class="copy-trigger" @click="toggleCopyMenu(idx)" :class="{ open: copyMenuIdx === idx }">
-            📋 复制
-          </button>
-          <div v-if="copyMenuIdx === idx" class="copy-menu" :class="{ 'copy-menu-up': isNearBottom(idx) }">
-            <button @click="copyMarkdown(msg.content, idx); copyMenuIdx = null">📝 复制 Markdown</button>
-            <button @click="copyPlain(msg.content, idx); copyMenuIdx = null">📄 复制文本</button>
-          </div>
-        </div>
+        <button class="copy-btn" @click="copyPlain(msg.content, idx)">📋 复制</button>
       </div>
 
       <!-- Copy row for user messages -->
       <div v-if="msg.role === 'user' && msg.content" class="msg-meta msg-meta-user">
-        <div class="copy-dropdown">
-          <button class="copy-trigger" @click="toggleCopyMenu(idx)" :class="{ open: copyMenuIdx === idx }">
-            复制
-          </button>
-          <div v-if="copyMenuIdx === idx" class="copy-menu copy-menu-right" :class="{ 'copy-menu-up': isNearBottom(idx) }">
-            <button @click="copyMarkdown(msg.content, idx); copyMenuIdx = null">📝 复制 Markdown</button>
-            <button @click="copyPlain(msg.content, idx); copyMenuIdx = null">📄 复制文本</button>
-          </div>
-        </div>
+        <button class="copy-btn" @click="copyPlain(msg.content, idx)">📋 复制</button>
       </div>
 
       <!-- Parsed practice question cards — exam paper style -->
@@ -175,13 +159,7 @@ const props = defineProps<{
 
 const store = useAppStore()
 
-// Copy state
-const copyMenuIdx = ref<number | null>(null)
 const copiedIdx = ref<number | null>(null)
-
-function toggleCopyMenu(idx: number) {
-  copyMenuIdx.value = copyMenuIdx.value === idx ? null : idx
-}
 
 function formatDuration(seconds: number): string {
   if (seconds < 60) return seconds.toFixed(1) + 's'
@@ -198,10 +176,6 @@ const submitted = reactive<Record<number, boolean>>({})
 
 function isLast(idx: number) {
   return idx === props.messages.length - 1
-}
-
-function isNearBottom(idx: number) {
-  return idx >= props.messages.length - 3
 }
 
 // ---- Copy Plain Text (strip markdown) ----
@@ -625,13 +599,9 @@ function escapeHtml(s: string) {
   color: #9ca3af;
 }
 
-/* ===== Copy Dropdown ===== */
-.copy-dropdown {
-  position: relative;
-}
-
-.copy-trigger {
-  padding: 5px 12px;
+/* Simple copy button */
+.copy-btn {
+  padding: 4px 10px;
   border: 1px solid #e5e7eb;
   border-radius: 6px;
   background: #fff;
@@ -640,52 +610,10 @@ function escapeHtml(s: string) {
   cursor: pointer;
   transition: all 0.12s;
 }
-.copy-trigger:hover, .copy-trigger.open {
+.copy-btn:hover {
   border-color: #6366f1;
   color: #6366f1;
   background: #eef2ff;
-}
-
-.copy-menu {
-  position: absolute;
-  top: 100%;
-  right: 0;
-  margin-top: 4px;
-  background: #fff;
-  border: 1px solid #e5e7eb;
-  border-radius: 8px;
-  box-shadow: 0 4px 12px rgba(0,0,0,0.1);
-  overflow: hidden;
-  z-index: 20;
-  min-width: 160px;
-}
-.copy-menu-right {
-  right: auto;
-  left: 0;
-}
-
-/* Flip upward for last messages to avoid overflowing container */
-.copy-menu-up {
-  top: auto;
-  bottom: 100%;
-  margin-top: 0;
-  margin-bottom: 4px;
-}
-
-.copy-menu button {
-  display: block;
-  width: 100%;
-  padding: 8px 14px;
-  border: none;
-  background: transparent;
-  color: #374151;
-  font-size: 13px;
-  text-align: left;
-  cursor: pointer;
-  white-space: nowrap;
-}
-.copy-menu button:hover {
-  background: #f3f4f6;
 }
 
 /* ===== Responsive — Mobile ===== */
