@@ -64,7 +64,7 @@ const router = createRouter({
           name: 'overview',
           component: () => {
             const store = useAppStore()
-            return store.isAdmin ? AdminOverview : TeacherOverview
+            return Promise.resolve(store.isAdmin ? AdminOverview : TeacherOverview)
           },
           meta: { roles: ['admin', 'teacher'] },
         },
