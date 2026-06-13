@@ -52,7 +52,7 @@ public class AuthService {
       inputUsername);
     if (rows.isEmpty() || !matchesPassword(str(body, "password"), str(rows.get(0), "password"))) {
       recordFailedAttempt(inputUsername);
-      return error(HttpStatus.UNAUTHORIZED, "Username or password is incorrect.");
+      return error(HttpStatus.UNAUTHORIZED, "账号或密码错误，请检查后重试。");
     }
     Map<String, Object> matchedUser = rows.get(0);
     // Clear failed attempts on successful login

@@ -1,561 +1,389 @@
 <template>
-  <article class="panel">
-    <div class="section-title">
-      <div>
-        <h3>AI 智能出题</h3>
-        <p class="section-subtitle">
-          使用 AI 模型生成题目 | 题库: {{ store.aiQuotaUsed }}/{{ store.aiQuotaUsed + store.aiQuotaRemaining }}
-        </p>
-      </div>
-      <button class="ghost-btn" type="button" @click="$router.push('/questions')">返回题库</button>
-    </div>
-
-    <!-- Mode Toggle -->
-    <div class="mode-toggle">
-      <button type="button" :class="['mode-btn', { active: mode === 'prompt' }]" @click="mode = 'prompt'">自定义提示词</button>
-      <button type="button" :class="['mode-btn', { active: mode === 'form' }]" @click="mode = 'form'">预设参数</button>
-    </div>
-
-    <!-- Custom Prompt Mode -->
-    <form v-if="mode === 'prompt'" class="ai-settings-form" @submit.prevent="generate">
-      <label class="prompt-label">
-        <span>请输入出题需求</span>
-        <textarea v-model="customPrompt" rows="4" placeholder="例如：帮我出10道CSS的单选题目，包含选择器、盒模型、布局等知识点，难度适中，每题附带详细解析"></textarea>
-      </label>
-      <div class="prompt-tips">
-        <span>示例提示词：</span>
-        <button type="button" class="tip-chip" @click="customPrompt = '帮我出10道CSS的单选题目，包含选择器、盒模型、布局等知识点，难度适中'">CSS 单选题</button>
-        <button type="button" class="tip-chip" @click="customPrompt = '出5道关于JavaScript闭包和作用链的多选题，难度较难，附详细解析'">JS 多选题</button>
-        <button type="button" class="tip-chip" @click="customPrompt = '生成8道数据结构与算法的判断题，涵盖排序、查找、树的知识点'">数据结构判断题</button>
-        <button type="button" class="tip-chip" @click="customPrompt = '出5道Python基础编程题，包含输入输出、循环、函数等，附参考答案和解析'">Python 编程题</button>
-      </div>
-      <div class="action-row" style="margin-top:12px;">
-        <button class="primary-btn" type="submit" :disabled="store.aiLoading">
-          {{ store.aiLoading ? 'AI 生成中...' : 'AI 生成题目' }}
-        </button>
-      </div>
-    </form>
-
-    <!-- Form Mode -->
-    <form v-else class="ai-settings-form" @submit.prevent="generate">
-      <div class="form-grid">
-        <label>
-          <span>科目</span>
-          <select v-model="subject">
-            <option value="">请选择科目</option>
-            <option v-for="s in subjectOptions" :key="s" :value="s">{{ s }}</option>
-          </select>
-        </label>
-        <label>
-          <span>知识点</span>
-          <input v-model="knowledgePoint" placeholder="如：循环结构、面向对象..." />
-        </label>
-        <label>
-          <span>题型</span>
-          <select v-model="type">
-            <option value="single">单选题</option>
-            <option value="multiple">多选题</option>
-            <option value="judge">判断题</option>
-            <option value="fill">填空题</option>
-            <option value="short">简答题</option>
-            <option value="coding">编程题</option>
-          </select>
-        </label>
-        <label>
-          <span>难度</span>
-          <select v-model="difficulty">
-            <option value="easy">简单</option>
-            <option value="medium">中等</option>
-            <option value="hard">困难</option>
-          </select>
-        </label>
-        <label>
-          <span>数量 (1-10)</span>
-          <input v-model.number="count" type="number" min="1" max="10" />
-        </label>
-      </div>
-      <div class="action-row" style="margin-top:12px;">
-        <button class="primary-btn" type="submit" :disabled="store.aiLoading">
-          {{ store.aiLoading ? 'AI 生成中...' : 'AI 生成题目' }}
-        </button>
-      </div>
-    </form>
-
-    <!-- Streaming Mode Toggle -->
-    <div class="mode-toggle" style="margin-bottom:12px;">
-      <button type="button" :class="['mode-btn', { active: !streamMode }]" @click="streamMode = false">普通模式</button>
-      <button type="button" :class="['mode-btn', { active: streamMode }]" @click="streamMode = true">流式模式 (深度思考)</button>
-    </div>
-
-    <!-- Loading / Streaming Live Display -->
-    <div v-if="store.aiLoading" class="ai-loading">
-      <div v-if="streamMode && store.streamingActive" class="streaming-box">
-        <div v-if="store.streamingReasoning" class="streaming-reasoning">
-          <h5>🤔 AI 思考中...</h5>
-          <pre class="streaming-text">{{ store.streamingReasoning }}</pre>
+  <div class="teacher-ai-layout">
+    <!-- Chat-style AI question generation -->
+    <div class="chat-main">
+      <header class="top-bar">
+        <div class="tb-left">
+          <span class="tb-title">AI 智能出题</span>
+          <span class="tb-info">已用 {{ store.aiQuotaUsed }}/{{ store.aiQuotaUsed + store.aiQuotaRemaining }}</span>
         </div>
-        <div v-if="store.streamingContent" class="streaming-content">
-          <h5>📝 生成内容</h5>
-          <pre class="streaming-text">{{ store.streamingContent }}</pre>
-        </div>
-        <div class="streaming-cursor">▋</div>
-      </div>
-      <p v-else>AI 正在生成题目，请稍候...</p>
-    </div>
+        <button class="ghost-btn" @click="$router.push('/questions')">返回题库</button>
+      </header>
 
-    <!-- Question Preview List -->
-    <div v-if="store.aiQuestions.length > 0" class="ai-preview">
-      <div class="section-title" style="margin-top:16px;">
-        <h4>预览（已选 {{ selectedCount }}/{{ store.aiQuestions.length }}）</h4>
-        <div class="action-row">
-          <button class="primary-btn" type="button" :disabled="selectedCount === 0 || store.aiLoading" @click="importSelected">
-            导入选中到题库
-          </button>
-          <button class="ghost-btn" type="button" @click="discard">放弃所有</button>
+      <!-- Messages area -->
+      <div ref="msgList" class="msg-area">
+        <div v-if="messages.length === 0 && !loading" class="welcome">
+          <div class="welcome-icon">🤖</div>
+          <h3>AI 智能出题助手</h3>
+          <p class="welcome-sub">描述你想要的题目，AI 将为你生成并支持批量导入题库</p>
+          <div class="welcome-chips">
+            <button v-for="c in quickChips" :key="c.label" class="wc-chip" @click="doSend(c.prompt)">{{ c.icon }} {{ c.label }}</button>
+          </div>
+        </div>
+
+        <MessageBubbles
+          :messages="messages"
+          :streaming-active="streamingActive"
+          :streaming-reasoning="streamingReasoning"
+          :loading="false"
+        />
+
+        <!-- Import bar — shown after AI generates questions -->
+        <div v-if="parsedQuestions.length > 0 && !streamingActive" class="import-bar">
+          <div class="import-header">
+            <span>📋 已生成 {{ parsedQuestions.length }} 道题目（已选 {{ selectedCount }}）</span>
+            <div class="import-actions">
+              <button class="primary-btn" :disabled="selectedCount === 0" @click="importSelected">导入选中到题库</button>
+              <button class="ghost-btn" @click="discardAll">放弃</button>
+            </div>
+          </div>
+          <div v-for="(q, qi) in parsedQuestions" :key="qi" class="import-card">
+            <label class="import-check">
+              <input type="checkbox" :checked="selected[qi] !== false" @change="selected[qi] = !selected[qi]" />
+              <span class="import-num">{{ qi + 1 }}.</span>
+              <span class="import-type">{{ typeLabel(q.type as any) }}</span>
+              <span class="import-diff">{{ diffLabel(q.difficulty) }}</span>
+            </label>
+            <p class="import-title">{{ q.title }}</p>
+          </div>
         </div>
       </div>
 
-      <div v-for="(q, idx) in store.aiQuestions" :key="q.id || idx" class="ai-question-card">
-        <div class="ai-question-header">
-          <label class="ai-checkbox">
-            <input type="checkbox" :checked="selected[idx]" @change="toggleSelect(idx)" />
-            <span>第 {{ idx + 1 }} 题</span>
-          </label>
-          <span class="tag">{{ typeLabel(q.type as any) }}</span>
-          <span class="tag">{{ difficultyLabel(q.difficulty) }}</span>
-          <span class="tag">{{ q.score }} 分</span>
-          <button class="ghost-btn" type="button" @click="toggleEdit(idx)">
-            {{ editingIdx === idx ? '完成编辑' : '编辑' }}
-          </button>
-        </div>
-
-        <!-- View Mode -->
-        <div v-if="editingIdx !== idx" class="ai-question-body">
-          <p class="ai-title">{{ q.title }}</p>
-          <ul v-if="q.options && q.options.length > 0" class="ai-options">
-            <li v-for="(opt, oi) in q.options" :key="oi">{{ opt }}</li>
-          </ul>
-          <p class="ai-answer"><strong>答案：</strong>{{ (q.answer || []).join('、') || '-' }}</p>
-          <p class="ai-explanation"><strong>解析：</strong>{{ q.explanation || '暂无解析' }}</p>
-        </div>
-
-        <!-- Edit Mode -->
-        <div v-else class="ai-question-edit">
-          <label>
-            <span>题目</span>
-            <textarea v-model="q.title" rows="3"></textarea>
-          </label>
-          <label v-if="q.options && q.options.length > 0">
-            <span>选项（每行一个）</span>
-            <textarea v-model="optionsText[idx]" rows="4"></textarea>
-          </label>
-          <label>
-            <span>答案（逗号分隔）</span>
-            <input v-model="answerText[idx]" />
-          </label>
-          <label>
-            <span>解析</span>
-            <textarea v-model="q.explanation" rows="2"></textarea>
-          </label>
-          <label>
-            <span>分值</span>
-            <input v-model.number="q.score" type="number" min="1" max="100" />
-          </label>
+      <!-- Input area -->
+      <div class="bottom-area">
+        <div class="input-row">
+          <div class="input-wrapper">
+            <textarea
+              ref="inputRef"
+              v-model="inputText"
+              class="msg-input"
+              rows="1"
+              placeholder="描述出题需求，Enter 发送，Shift+Enter 换行"
+              :disabled="loading"
+              @keydown="onKeydown"
+              @input="autoResize"
+            ></textarea>
+            <button v-if="!streamingActive" class="action-btn send-action" :disabled="!inputText.trim() || loading" @click="doSend">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg>
+            </button>
+            <button v-else class="action-btn stop-action" @click="stopStreaming">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>
+            </button>
+          </div>
         </div>
       </div>
     </div>
-
-    <!-- Empty state -->
-    <div v-if="!store.aiLoading && store.aiQuestions.length === 0" class="ai-empty">
-      <p>{{ mode === 'prompt' ? '输入出题需求后点击生成' : '请设置参数后点击"AI 生成题目"按钮' }}</p>
-    </div>
-  </article>
+  </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, reactive, watch } from 'vue'
+import { ref, reactive, computed, watch, nextTick } from 'vue'
 import { useAppStore } from '@/stores/app'
 import { typeLabel } from '@/utils/format'
+import { aiChatStream } from '@/api/client'
+import MessageBubbles from '@/views/student/AiPractice/MessageBubbles.vue'
 import type { AiQuestion } from '@/api/client'
 
 const store = useAppStore()
 
-const mode = ref<'prompt' | 'form'>('prompt')
-const streamMode = ref(false)
-const customPrompt = ref('')
-const subject = ref('')
-const knowledgePoint = ref('')
-const type = ref('single')
-const difficulty = ref('medium')
-const count = ref(5)
-const editingIdx = ref(-1)
-
+const inputText = ref('')
+const msgList = ref<HTMLElement | null>(null)
+const inputRef = ref<HTMLTextAreaElement | null>(null)
+const loading = ref(false)
+const streamingActive = ref(false)
+const streamingReasoning = ref('')
+const streamingContent = ref('')
+const messages = ref<Array<{ role: string; content: string; reasoning?: string }>>([])
 const selected = reactive<Record<number, boolean>>({})
-const optionsText = reactive<Record<number, string>>({})
-const answerText = reactive<Record<number, string>>({})
+let abortCtrl: AbortController | null = null
 
-// Initialize all as selected when questions change
-watch(() => store.aiQuestions.length, (len) => {
-  for (let i = 0; i < len; i++) {
+const quickChips = [
+  { icon: '📐', label: '高等数学', prompt: '帮我出5道高等数学单选题，涵盖微积分、线性代数，难度较难，附详细解析' },
+  { icon: '📖', label: '大学语文', prompt: '帮我出5道大学语文单选题，涵盖诗词鉴赏、文言文阅读、文学常识，附详细解析' },
+  { icon: '🏛️', label: '马克思主义', prompt: '帮我出5道马克思主义基本原理单选题，涵盖唯物辩证法、科学社会主义，附详细解析' },
+  { icon: '🗳️', label: '政治', prompt: '帮我出5道政治理论单选题，涵盖中国特色社会主义、时政热点，附详细解析' },
+  { icon: '💻', label: 'Java', prompt: '帮我出5道Java基础单选题，涵盖面向对象、集合、异常处理，难度中等，附详细解析' },
+  { icon: '🌐', label: '计算机网络', prompt: '帮我出5道计算机网络单选题，涵盖TCP/IP、HTTP、DNS，附详细解析' },
+  { icon: '🗄️', label: '数据库', prompt: '帮我出5道数据库单选题，涵盖SQL查询、索引、事务，难度中等，附详细解析' },
+  { icon: '📜', label: '中国近现代史', prompt: '帮我出5道中国近现代史判断题，涵盖鸦片战争到改革开放，附详细解析' },
+]
+
+const selectedCount = computed(() => Object.values(selected).filter(Boolean).length)
+
+const parsedQuestions = computed((): AiQuestion[] => {
+  for (let i = messages.value.length - 1; i >= 0; i--) {
+    const content = messages.value[i].content
+    if (!content) continue
+    try {
+      const jsonMatch = content.match(/\[[\s\S]*\]/)
+      if (!jsonMatch) continue
+      const parsed = JSON.parse(jsonMatch[0])
+      if (Array.isArray(parsed) && parsed.length > 0 && parsed[0].title) {
+        return parsed as AiQuestion[]
+      }
+    } catch { continue }
+  }
+  return []
+})
+
+watch(parsedQuestions, (qs) => {
+  for (let i = 0; i < qs.length; i++) {
     if (selected[i] === undefined) selected[i] = true
   }
 })
 
-const subjectOptions = computed(() => {
-  const subjects = new Set<string>()
-  store.myQuestions.forEach(q => { if (q.subject) subjects.add(q.subject) })
-  if (subjects.size === 0) {
-    ['Java', 'Python', '数据结构', '计算机网络', '操作系统', '数据库', '计算机基础'].forEach(s => subjects.add(s))
-  }
-  return [...subjects].sort()
-})
-
-const selectedCount = computed(() => {
-  return Object.values(selected).filter(Boolean).length
-})
-
-function difficultyLabel(d: string) {
+function diffLabel(d: string) {
   return { easy: '简单', medium: '中等', hard: '困难' }[d] || d
 }
 
-function toggleSelect(idx: number) {
-  selected[idx] = !selected[idx]
+function doSend(text?: string) {
+  const t = (text || inputText.value).trim()
+  if (!t || loading.value) return
+  inputText.value = ''
+  sendMessage(t)
 }
 
-function toggleEdit(idx: number) {
-  if (editingIdx.value === idx) {
-    // Save edits
-    const q = store.aiQuestions[idx]
-    if (optionsText[idx] !== undefined) {
-      q.options = optionsText[idx].split('\n').map(s => s.trim()).filter(Boolean)
-    }
-    if (answerText[idx] !== undefined) {
-      q.answer = answerText[idx].split(',').map(s => s.trim()).filter(Boolean)
-    }
-    editingIdx.value = -1
-  } else {
-    const q = store.aiQuestions[idx]
-    optionsText[idx] = (q.options || []).join('\n')
-    answerText[idx] = (q.answer || []).join(', ')
-    editingIdx.value = idx
+function sendMessage(prompt: string) {
+  messages.value.push({ role: 'user', content: prompt })
+  const aiIdx = messages.value.length
+  messages.value.push({ role: 'assistant', content: '' })
+
+  streamingActive.value = true
+  streamingReasoning.value = ''
+  streamingContent.value = ''
+  loading.value = true
+
+  abortCtrl = aiChatStream(
+    { message: prompt, deepThinking: store.deepThinkingEnabled },
+    // onChunk
+    (chunk) => {
+      if (chunk.type === 'reasoning') {
+        streamingReasoning.value += chunk.text
+      } else {
+        streamingContent.value += chunk.text
+        messages.value[aiIdx].content = streamingContent.value
+      }
+      smoothScrollToBottom(200)
+    },
+    // onComplete
+    (data) => {
+      streamingActive.value = false
+      loading.value = false
+      if (data.content) {
+        messages.value[aiIdx].content = data.content
+      }
+      if (data.reasoning || streamingReasoning.value) {
+        messages.value[aiIdx].reasoning = data.reasoning || streamingReasoning.value
+      }
+      smoothScrollToBottom(400)
+    },
+    // onError
+    (err) => {
+      streamingActive.value = false
+      loading.value = false
+      messages.value[aiIdx].content = '❌ ' + (err || '生成失败，请重试')
+    },
+  )
+}
+
+function stopStreaming() {
+  if (abortCtrl) {
+    abortCtrl.abort()
+    abortCtrl = null
+  }
+  streamingActive.value = false
+  loading.value = false
+}
+
+function onKeydown(e: KeyboardEvent) {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault()
+    doSend()
   }
 }
 
-async function generate() {
-  if (mode.value === 'prompt') {
-    if (!customPrompt.value.trim()) {
-      store.showToast('请输入出题需求', 'error')
-      return
-    }
-  } else {
-    if (!subject.value) {
-      store.showToast('请选择科目', 'error')
-      return
-    }
-  }
-
-  const params: Record<string, any> = {}
-  if (mode.value === 'prompt') {
-    params.customPrompt = customPrompt.value.trim()
-    params.subject = subject.value || '计算机基础'
-    params.type = type.value
-    params.difficulty = difficulty.value
-    params.count = count.value
-  } else {
-    params.subject = subject.value
-    params.knowledgePoint = knowledgePoint.value
-    params.type = type.value
-    params.difficulty = difficulty.value
-    params.count = count.value
-  }
-
-  try {
-    if (streamMode.value) {
-      store.handleAiGenerateQuestionsStream(params as any)
-    } else {
-      await store.handleAiGenerateQuestions(params as any)
-    }
-  } catch (err) {
-    // Error already handled by store (toast)
+function autoResize() {
+  if (inputRef.value) {
+    inputRef.value.style.height = 'auto'
+    inputRef.value.style.height = Math.min(inputRef.value.scrollHeight, 150) + 'px'
   }
 }
 
-function discard() {
-  store.clearAiQuestions()
-  editingIdx.value = -1
+// Smooth scroll
+let scrollRafId: number | null = null
+let scrollTarget = 0
+
+function smoothScrollToBottom(duration: number) {
+  const el = msgList.value
+  if (!el) return
+  scrollTarget = el.scrollHeight
+  if (scrollRafId !== null) {
+    cancelAnimationFrame(scrollRafId)
+    scrollRafId = null
+  }
+  const start = el.scrollTop
+  if (scrollTarget - start < 20) { el.scrollTop = scrollTarget; return }
+  const cappedTarget = Math.min(scrollTarget, start + 200)
+  const startTime = performance.now()
+  function animate(now: number) {
+    const elapsed = now - startTime
+    const progress = Math.min(elapsed / duration, 1)
+    const ease = 1 - (1 - progress) * (1 - progress)
+    el!.scrollTop = start + (cappedTarget - start) * ease
+    if (progress < 1) scrollRafId = requestAnimationFrame(animate)
+    else { el!.scrollTop = scrollTarget; scrollRafId = null }
+  }
+  scrollRafId = requestAnimationFrame(animate)
+}
+
+function discardAll() {
+  messages.value = []
   Object.keys(selected).forEach(k => delete selected[Number(k)])
 }
 
 async function importSelected() {
-  const selectedQuestions: AiQuestion[] = []
-  store.aiQuestions.forEach((q, idx) => {
-    if (selected[idx]) selectedQuestions.push(q)
-  })
-  if (selectedQuestions.length === 0) return
-  await store.handleAiImportQuestions(selectedQuestions)
+  const qs = parsedQuestions.value.filter((_, i) => selected[i] !== false)
+  if (qs.length === 0) return
+  await store.handleAiImportQuestions(qs)
+  // Remove imported questions from preview
+  discardAll()
 }
 </script>
 
 <style scoped>
-.mode-toggle {
+.teacher-ai-layout {
   display: flex;
-  gap: 4px;
-  margin-bottom: 16px;
-  background: var(--bg-alt, #f5f5f5);
-  border-radius: 8px;
-  padding: 4px;
-  width: fit-content;
-}
-
-.mode-btn {
-  padding: 8px 20px;
-  border: none;
-  border-radius: 6px;
-  background: transparent;
-  color: var(--muted);
-  font-size: 14px;
-  cursor: pointer;
-  transition: all 0.2s;
-}
-
-.mode-btn.active {
-  background: var(--card-bg, #fff);
-  color: var(--text);
-  font-weight: 600;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
-}
-
-.ai-settings-form {
-  margin-bottom: 16px;
-}
-
-.form-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
-  gap: 12px;
-}
-
-.form-grid label {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  font-size: 13px;
-  color: var(--muted);
-}
-
-.form-grid label input,
-.form-grid label select {
-  padding: 8px 10px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  font-size: 14px;
-  background: var(--bg);
-  color: var(--text);
-}
-
-.prompt-label {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.prompt-label span {
-  font-size: 13px;
-  color: var(--muted);
-  font-weight: 500;
-}
-
-.prompt-label textarea {
-  width: 100%;
-  padding: 12px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  font-size: 14px;
-  font-family: inherit;
-  resize: vertical;
-  line-height: 1.6;
-  background: var(--bg);
-  color: var(--text);
-  transition: border-color 0.2s;
-}
-
-.prompt-label textarea:focus {
-  outline: none;
-  border-color: var(--primary);
-}
-
-.prompt-tips {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
-  margin-top: 10px;
-}
-
-.prompt-tips > span {
-  font-size: 12px;
-  color: var(--muted);
-}
-
-.tip-chip {
-  padding: 4px 12px;
-  border: 1px solid var(--border);
-  border-radius: 20px;
-  background: var(--bg);
-  color: var(--text);
-  font-size: 12px;
-  cursor: pointer;
-  transition: all 0.2s;
-}
-
-.tip-chip:hover {
-  border-color: var(--primary);
-  color: var(--primary);
-  background: color-mix(in srgb, var(--primary) 6%, transparent);
-}
-
-.ai-loading {
-  text-align: center;
-  padding: 40px 20px;
-  color: var(--primary);
-  font-size: 15px;
-}
-
-/* Streaming live display */
-.streaming-box {
-  text-align: left;
-  max-width: 100%;
+  flex: 1;
+  height: calc(100vh - 140px);
+  max-height: 750px;
+  min-height: 420px;
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
   overflow: hidden;
 }
 
-.streaming-reasoning,
-.streaming-content {
-  margin-bottom: 16px;
+.chat-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
 }
 
-.streaming-reasoning h5,
-.streaming-content h5 {
-  font-size: 14px;
-  margin-bottom: 8px;
-  color: var(--text);
+.top-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 20px;
+  border-bottom: 1px solid #f3f4f6;
+  background: #fafbfc;
+  flex-shrink: 0;
 }
+.tb-left { display: flex; align-items: center; gap: 10px; }
+.tb-title { font-size: 14px; font-weight: 600; color: #111827; }
+.tb-info { font-size: 11px; color: #9ca3af; background: #f3f4f6; padding: 2px 8px; border-radius: 4px; }
 
-.streaming-text {
-  font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
-  font-size: 13px;
-  line-height: 1.6;
-  white-space: pre-wrap;
-  word-wrap: break-word;
-  background: var(--bg-alt, #f5f5f5);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 12px;
-  max-height: 400px;
+.msg-area {
+  flex: 1;
   overflow-y: auto;
-  text-align: left;
-  color: var(--text);
+  padding: 20px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  scroll-behavior: smooth;
 }
+.msg-area::-webkit-scrollbar { width: 6px; }
+.msg-area::-webkit-scrollbar-track { background: transparent; }
+.msg-area::-webkit-scrollbar-thumb { background: #d1d5db; border-radius: 3px; }
 
-.streaming-reasoning .streaming-text {
-  color: #8b5cf6;
-  border-color: #8b5cf640;
-  background: #f5f3ff;
+.welcome { text-align: center; padding: 40px 20px; margin: auto; }
+.welcome-icon { font-size: 40px; margin-bottom: 12px; }
+.welcome h3 { font-size: 18px; color: #111827; margin: 0 0 4px; }
+.welcome-sub { color: #9ca3af; font-size: 13px; margin: 0 0 16px; }
+.welcome-chips {
+  display: flex; flex-wrap: wrap; gap: 6px; justify-content: center;
+  max-width: 560px; margin: 0 auto;
 }
-
-.streaming-cursor {
-  display: inline-block;
-  animation: blink 1s step-end infinite;
-  font-size: 20px;
-  color: var(--primary);
-  padding-left: 4px;
+.wc-chip {
+  padding: 6px 14px; border: 1px solid #e5e7eb; border-radius: 16px;
+  background: #fff; color: #374151; font-size: 12px; cursor: pointer;
+  transition: all 0.12s;
 }
+.wc-chip:hover { border-color: #9ca3af; background: #f9fafb; }
 
-@keyframes blink {
-  50% { opacity: 0; }
-}
-
-.ai-empty {
-  text-align: center;
-  padding: 40px 20px;
-  color: var(--muted);
-}
-
-.ai-preview {
+/* Import bar */
+.import-bar {
   margin-top: 8px;
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  background: #fafbfc;
+  overflow: hidden;
 }
+.import-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 14px; background: #f3f4f6; border-bottom: 1px solid #e5e7eb;
+  font-size: 13px; font-weight: 600; color: #374151;
+}
+.import-actions { display: flex; gap: 8px; }
 
-.ai-question-card {
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 16px;
-  margin-bottom: 12px;
-  background: var(--card-bg, var(--bg));
+.import-card {
+  padding: 10px 14px;
+  border-bottom: 1px solid #f3f4f6;
 }
+.import-card:last-child { border-bottom: none; }
+.import-check {
+  display: flex; align-items: center; gap: 8px; cursor: pointer;
+  font-size: 12px; color: #6b7280; margin-bottom: 4px;
+}
+.import-num { font-weight: 600; color: #374151; }
+.import-type {
+  padding: 1px 6px; border-radius: 4px; background: #eef2ff;
+  color: #6366f1; font-size: 11px; font-weight: 500;
+}
+.import-diff {
+  padding: 1px 6px; border-radius: 4px; background: #f3f4f6;
+  color: #6b7280; font-size: 11px;
+}
+.import-title { font-size: 13px; color: #374151; margin: 0; line-height: 1.4; }
 
-.ai-question-header {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 12px;
-  flex-wrap: wrap;
+/* Input */
+.bottom-area { flex-shrink: 0; border-top: 1px solid #f3f4f6; background: #fff; }
+.input-row { padding: 10px 16px; }
+.input-wrapper { position: relative; display: flex; align-items: flex-end; }
+.msg-input {
+  width: 100%;
+  padding: 12px 52px 12px 16px;
+  border: 2px solid #e5e7eb; border-radius: 14px;
+  font-size: 14px; font-family: inherit; line-height: 1.5;
+  resize: none; outline: none; background: #f9fafb; color: #111827;
+  max-height: 150px;
+  transition: border-color 0.15s, box-shadow 0.15s;
 }
+.msg-input:focus { border-color: #6366f1; background: #fff; box-shadow: 0 0 0 4px rgba(99,102,241,0.1); }
+.msg-input:disabled { opacity: 0.5; }
 
-.ai-checkbox {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-weight: 600;
-  cursor: pointer;
+.action-btn {
+  position: absolute; right: 6px; bottom: 6px;
+  width: 40px; height: 40px; border: none; border-radius: 10px;
+  cursor: pointer; display: flex; align-items: center; justify-content: center;
+  transition: all 0.15s; z-index: 2;
 }
+.send-action { background: #6366f1; color: #fff; }
+.send-action:hover:not(:disabled) { background: #4f46e5; transform: scale(1.06); }
+.send-action:disabled { opacity: 0.3; cursor: not-allowed; }
+.stop-action { background: #ef4444; color: #fff; }
+.stop-action:hover { background: #dc2626; }
 
-.ai-question-body .ai-title {
-  font-weight: 500;
-  margin-bottom: 8px;
-  line-height: 1.5;
+/* Ghost btn */
+.ghost-btn {
+  padding: 6px 14px; border: 1px solid #d1d5db; border-radius: 6px;
+  background: #fff; color: #6b7280; font-size: 12px; cursor: pointer;
 }
-
-.ai-options {
-  list-style: none;
-  padding: 0;
-  margin: 0 0 8px 0;
+.ghost-btn:hover { background: #f3f4f6; }
+.primary-btn {
+  padding: 6px 16px; border: none; border-radius: 6px;
+  background: #6366f1; color: #fff; font-size: 12px; font-weight: 600; cursor: pointer;
 }
-
-.ai-options li {
-  padding: 4px 12px;
-  margin-bottom: 4px;
-  border-radius: 4px;
-  background: var(--bg-alt, #f5f5f5);
-  font-size: 14px;
-}
-
-.ai-answer, .ai-explanation {
-  font-size: 13px;
-  color: var(--muted);
-  margin-top: 4px;
-}
-
-.ai-question-edit {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.ai-question-edit label {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  font-size: 13px;
-  color: var(--muted);
-}
-
-.ai-question-edit label input,
-.ai-question-edit label textarea {
-  padding: 8px 10px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  font-size: 14px;
-  background: var(--bg);
-  color: var(--text);
-  font-family: inherit;
-}
+.primary-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.primary-btn:hover:not(:disabled) { background: #4f46e5; }
 </style>
