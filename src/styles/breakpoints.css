@@ -1,0 +1,113 @@
+/* ============================================
+   Responsive Breakpoint Tokens
+   Centralised breakpoint variables for the
+   Online Exam System. Reference these from
+   component CSS or JS via CSS custom properties.
+   ============================================ */
+
+:root {
+  /* Breakpoint widths */
+  --bp-mobile: 768px;
+  --bp-tablet: 1024px;
+  --bp-desktop: 1280px;
+
+  /* Derived semantic tokens */
+  --bp-mobile-max: 767px;
+  --bp-tablet-min: 768px;
+  --bp-tablet-max: 1023px;
+  --bp-desktop-min: 1024px;
+
+  /* Sidebar widths per breakpoint */
+  --sidebar-width-mobile: 280px;
+  --sidebar-width-tablet: 64px;
+  --sidebar-width-desktop: var(--sidebar-width);
+
+  /* Safe-area insets for notched devices */
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
+}
+
+/* ============================================
+   Utility classes that views can use directly.
+   Apply these on container elements to get
+   responsive behaviour without writing
+   per-component media queries.
+   ============================================ */
+
+/* Responsive grid: auto-fits columns that shrink gracefully */
+.r-grid {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr));
+}
+
+/* Responsive stack: vertical on mobile, horizontal above */
+.r-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+@media (min-width: 768px) {
+  .r-stack {
+    flex-direction: row;
+    align-items: center;
+  }
+}
+
+/* Hide / show helpers */
+.show-mobile  { display: block; }
+.show-tablet  { display: none; }
+.show-desktop { display: none; }
+
+@media (min-width: 768px) and (max-width: 1023px) {
+  .show-mobile  { display: none; }
+  .show-tablet  { display: block; }
+  .show-desktop { display: none; }
+}
+
+@media (min-width: 1024px) {
+  .show-mobile  { display: none; }
+  .show-tablet  { display: none; }
+  .show-desktop { display: block; }
+}
+
+.hide-mobile  { display: none; }
+.hide-tablet  { display: block; }
+.hide-desktop { display: block; }
+
+@media (max-width: 767px) {
+  .hide-mobile { display: none; }
+}
+
+@media (min-width: 768px) and (max-width: 1023px) {
+  .hide-tablet { display: none; }
+}
+
+@media (min-width: 1024px) {
+  .hide-desktop { display: none; }
+}
+
+/* Responsive text sizing */
+.r-text-sm {
+  font-size: clamp(0.8rem, 0.75rem + 0.25vw, 0.875rem);
+}
+
+.r-text-base {
+  font-size: clamp(0.875rem, 0.8rem + 0.35vw, 1rem);
+}
+
+.r-text-lg {
+  font-size: clamp(1rem, 0.9rem + 0.5vw, 1.25rem);
+}
+
+/* Responsive spacing */
+.r-gap-sm { gap: clamp(8px, 1vw, 14px); }
+.r-gap-md { gap: clamp(12px, 2vw, 20px); }
+.r-gap-lg { gap: clamp(16px, 3vw, 28px); }
+
+.r-pad-sm { padding: clamp(8px, 1vw, 14px); }
+.r-pad-md { padding: clamp(12px, 2vw, 20px); }
+.r-pad-lg { padding: clamp(16px, 3vw, 28px); }

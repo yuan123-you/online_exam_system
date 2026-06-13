@@ -1,4 +1,4 @@
-import type { BootstrapData, ExamDetail, SubmissionReview, User, WrongBookEntry } from "../types";
+﻿import type { BootstrapData, ExamDetail, SubmissionReview, User, WrongBookEntry } from "../types";
 import { normalizeApiData } from "../utils/text";
 
 let currentAuthToken = "";
@@ -17,9 +17,19 @@ async function request<T>(url: string, options: RequestInit = {}): Promise<T> {
   const raw = await response.text();
   const payload = raw ? normalizeApiData(JSON.parse(raw)) : ({} as T);
   if (!response.ok) {
-    const errorMessage =
-      (payload as { message?: string })?.message ||
-      (response.status === 401 ? "登录状态已失效，请重新登录。" : "请求失败，请稍后重试。");
+    const apiMessage = (payload as { message?: string })?.message;
+    let errorMessage: string;
+    if (apiMessage) {
+      errorMessage = apiMessage;
+    } else if (response.status === 429) {
+      errorMessage = "AI 服务繁忙，请求过于频繁，请稍后再试。";
+    } else if (response.status === 503) {
+      errorMessage = "AI 服务暂时不可用，请稍后重试。";
+    } else if (response.status === 401) {
+      errorMessage = "登录状态已失效，请重新登录。";
+    } else {
+      errorMessage = "请求失败，请稍后重试。";
+    }
     throw new Error(errorMessage);
   }
   return payload as T;
@@ -121,6 +131,30 @@ export interface BatchImportResult {
   failedCount: number;
   created: Array<Record<string, unknown>>;
   errors: Array<{ index?: number; title?: string; message: string }>;
+}
+
+export interface QuestionsPageResult {
+  rows: Array<Record<string, unknown>>;
+  total: number;
+  page: number;
+  pageSize: number;
+}
+
+export function loadQuestionsPage(params: {
+  page: number;
+  pageSize: number;
+  keyword?: string;
+  type?: string;
+  subject?: string;
+}) {
+  const query = new URLSearchParams({
+    page: String(params.page),
+    pageSize: String(params.pageSize),
+    keyword: params.keyword || '',
+    type: params.type || 'all',
+    subject: params.subject || 'all',
+  });
+  return request<QuestionsPageResult>(`/api/questions/page?${query.toString()}`);
 }
 
 export function batchImportUsers(records: Array<Record<string, unknown>>) {
@@ -255,4 +289,571 @@ export interface KnowledgePointMastery {
 
 export function knowledgeRadar() {
   return request<{ subjectMastery: SubjectMastery[]; knowledgePointMastery: KnowledgePointMastery[] }>("/api/student/knowledge-radar");
+}
+
+// ---- Quota API ----
+
+export interface QuotaInfo {
+  used: number;
+  limit: number;
+}
+
+export interface QuotaResult {
+  questionBank?: QuotaInfo;
+  wrongBook?: QuotaInfo;
+  practiceRecords?: QuotaInfo;
+}
+
+export function loadQuotas() {
+  return request<QuotaResult>("/api/user/quotas");
+}
+
+// ---- Batch operations ----
+
+export interface BatchDeleteResult {
+  deletedCount: number;
+  failedCount: number;
+  deletedIds: string[];
+  errors: Array<{ id: string; message: string }>;
+}
+
+export function batchDeleteQuestions(ids: string[]) {
+  return request<BatchDeleteResult>("/api/questions/batch-delete", {
+    method: "POST",
+    body: JSON.stringify({ ids }),
+  });
+}
+
+export interface BatchRestoreResult {
+  restoredCount: number;
+  failedCount: number;
+  restoredIds: string[];
+  errors: Array<{ id: string; message: string }>;
+}
+
+export function batchRestoreQuestions(ids: string[]) {
+  return request<BatchRestoreResult>("/api/questions/batch-restore", {
+    method: "POST",
+    body: JSON.stringify({ ids }),
+  });
+}
+
+export interface BatchRemoveWrongBookResult {
+  removedCount: number;
+  removedIds: string[];
+}
+
+export function batchRemoveWrongBook(ids: string[]) {
+  return request<BatchRemoveWrongBookResult>("/api/wrongbook/batch-remove", {
+    method: "POST",
+    body: JSON.stringify({ ids }),
+  });
+}
+
+// ========== AI API Functions ==========
+
+/**
+ * SSE streaming callback types
+ */
+export interface SseChunk {
+  type: 'reasoning' | 'content';
+  text: string;
+}
+
+export interface SseComplete {
+  content: string;
+  reasoning: string;
+  done: boolean;
+}
+
+export interface SseError {
+  error: string;
+}
+
+/**
+ * 流式调用 AI 练习（学生端）- 使用 fetch + ReadableStream 消费 SSE
+ * @param params 与 aiPracticeQuestions 相同
+ * @param onChunk 每收到一个 chunk 时回调 (思考或内容片段)
+ * @param onComplete 流完成时回调 (携带完整内容)
+ * @param onError 出错时回调
+ */
+export function aiPracticeQuestionsStream(
+  params: {
+    customPrompt?: string;
+    subject: string;
+    type: string;
+    difficulty: string;
+    count: number;
+    deepThinking?: boolean;
+  },
+  onChunk: (chunk: SseChunk) => void,
+  onComplete: (data: SseComplete) => void,
+  onError: (error: string) => void,
+  onFinally?: () => void
+): AbortController {
+  const controller = new AbortController();
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (currentAuthToken) headers['X-User-Id'] = currentAuthToken;
+
+  fetch('/api/ai/practice-questions/stream', {
+    method: 'POST',
+    headers,
+    body: JSON.stringify(params),
+    signal: controller.signal,
+  }).then(async (response) => {
+    if (!response.ok) {
+      const text = await response.text();
+      onError(`HTTP ${response.status}: ${text.substring(0, 200)}`);
+      onFinally?.();
+      return;
+    }
+
+    const reader = response.body?.getReader();
+    if (!reader) {
+      onError('Response body is not readable');
+      onFinally?.();
+      return;
+    }
+
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        // Parse SSE events from the buffer
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || ''; // Keep incomplete line in buffer
+
+        let currentEvent = '';
+        let currentData = '';
+
+        for (const line of lines) {
+          // Handle both "event: " and "event:" (some SSE implementations omit the space)
+          if (line.startsWith('event: ')) {
+            currentEvent = line.substring(7).trim();
+          } else if (line.startsWith('event:')) {
+            currentEvent = line.substring(6).trim();
+          } else if (line.startsWith('data: ')) {
+            currentData = line.substring(6).trim();
+          } else if (line.startsWith('data:')) {
+            currentData = line.substring(5).trim();
+          } else if (line === '') {
+            // Empty line = end of event
+            if (currentData) {
+              try {
+                const parsed = JSON.parse(currentData);
+                if (currentEvent === 'chunk') {
+                  onChunk(parsed as SseChunk);
+                } else if (currentEvent === 'complete') {
+                  onComplete(parsed as SseComplete);
+                } else if (currentEvent === 'error') {
+                  onError(parsed.error || 'Unknown error');
+                }
+              } catch { /* skip malformed JSON */ }
+            }
+            currentEvent = '';
+            currentData = '';
+          }
+        }
+      }
+    } catch (err: unknown) {
+      if ((err as Error)?.name !== 'AbortError') {
+        onError(String(err));
+      }
+    } finally {
+      reader.releaseLock();
+      onFinally?.();
+    }
+  }).catch((err: unknown) => {
+    if ((err as Error)?.name !== 'AbortError') {
+      onError(String(err));
+    }
+    onFinally?.();
+  });
+
+  return controller;
+}
+
+/**
+ * 流式调用 AI 出题（教师端）
+ */
+export function aiGenerateQuestionsStream(
+  params: {
+    subject: string;
+    knowledgePoint?: string;
+    type: string;
+    difficulty: string;
+    count: number;
+    deepThinking?: boolean;
+  },
+  onChunk: (chunk: SseChunk) => void,
+  onComplete: (data: SseComplete) => void,
+  onError: (error: string) => void,
+  onFinally?: () => void
+): AbortController {
+  const controller = new AbortController();
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (currentAuthToken) headers['X-User-Id'] = currentAuthToken;
+
+  fetch('/api/ai/generate-questions/stream', {
+    method: 'POST',
+    headers,
+    body: JSON.stringify(params),
+    signal: controller.signal,
+  }).then(async (response) => {
+    if (!response.ok) {
+      const text = await response.text();
+      onError(`HTTP ${response.status}: ${text.substring(0, 200)}`);
+      onFinally?.();
+      return;
+    }
+
+    const reader = response.body?.getReader();
+    if (!reader) {
+      onError('Response body is not readable');
+      onFinally?.();
+      return;
+    }
+
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+
+        let currentEvent = '';
+        let currentData = '';
+
+        for (const line of lines) {
+          if (line.startsWith('event: ')) {
+            currentEvent = line.substring(7).trim();
+          } else if (line.startsWith('event:')) {
+            currentEvent = line.substring(6).trim();
+          } else if (line.startsWith('data: ')) {
+            currentData = line.substring(6).trim();
+          } else if (line.startsWith('data:')) {
+            currentData = line.substring(5).trim();
+          } else if (line === '') {
+            if (currentData) {
+              try {
+                const parsed = JSON.parse(currentData);
+                if (currentEvent === 'chunk') {
+                  onChunk(parsed as SseChunk);
+                } else if (currentEvent === 'complete') {
+                  onComplete(parsed as SseComplete);
+                } else if (currentEvent === 'error') {
+                  onError(parsed.error || 'Unknown error');
+                }
+              } catch { /* skip */ }
+            }
+            currentEvent = '';
+            currentData = '';
+          }
+        }
+      }
+    } catch (err: unknown) {
+      if ((err as Error)?.name !== 'AbortError') {
+        onError(String(err));
+      }
+    } finally {
+      reader.releaseLock();
+      onFinally?.();
+    }
+  }).catch((err: unknown) => {
+    if ((err as Error)?.name !== 'AbortError') {
+      onError(String(err));
+    }
+    onFinally?.();
+  });
+
+  return controller;
+}
+
+export interface AiQuestion {
+  id: string;
+  title: string;
+  type: string;
+  options: string[];
+  answer: string[];
+  score: number;
+  explanation: string;
+  subject: string;
+  knowledgePoint: string;
+  difficulty: string;
+  sourceTag?: string;
+}
+
+export interface AiGenerateResult {
+  questions: AiQuestion[];
+  aiUsed: boolean;
+  totalCount: number;
+  existingCount: number;
+  remainingQuota: number;
+}
+
+export interface AiImportResult {
+  importedCount: number;
+  errors: Array<{ index?: number; title?: string; message: string }>;
+  totalCount: number;
+  remainingQuota: number;
+}
+
+export interface AiGradeDetail {
+  questionId: string;
+  title: string;
+  type: string;
+  score: number;
+  fullScore: number;
+  aiScore: number;
+  aiComment: string;
+  answer: string[];
+  expectedAnswer: string[];
+}
+
+export interface AiGradeResult {
+  submissionId: string;
+  aiScore: number;
+  manualScore: number;
+  details: AiGradeDetail[];
+  message: string;
+}
+
+export interface AiExplainResult {
+  isCorrect: boolean;
+  explanation: string;
+  tips: string;
+}
+
+export function aiGenerateQuestions(params: {
+  subject: string;
+  knowledgePoint?: string;
+  type: string;
+  difficulty: string;
+  count: number;
+}) {
+  return request<AiGenerateResult>("/api/ai/generate-questions", {
+    method: "POST",
+    body: JSON.stringify(params),
+  });
+}
+
+export function aiImportQuestions(questions: AiQuestion[]) {
+  return request<AiImportResult>("/api/ai/import-questions", {
+    method: "POST",
+    body: JSON.stringify({ questions }),
+  });
+}
+
+export function aiGradeSubmission(submissionId: string) {
+  return request<AiGradeResult>("/api/ai/grade-submission", {
+    method: "POST",
+    body: JSON.stringify({ submissionId }),
+  });
+}
+
+export function aiPracticeQuestions(params: {
+  customPrompt?: string;
+  subject: string;
+  type: string;
+  difficulty: string;
+  count: number;
+}) {
+  return request<{ questions: AiQuestion[]; totalCount: number }>("/api/ai/practice-questions", {
+    method: "POST",
+    body: JSON.stringify(params),
+  });
+}
+
+export function aiExplainAnswer(params: {
+  question: string | { title: string };
+  studentAnswer: string[];
+  correctAnswer: string[];
+}) {
+  return request<AiExplainResult>("/api/ai/explain-answer", {
+    method: "POST",
+    body: JSON.stringify(params),
+  });
+}
+
+export function savePracticeRecords(records: Array<Record<string, unknown>>) {
+  return request<{ savedCount: number }>("/api/practice/records", {
+    method: "POST",
+    body: JSON.stringify({ records }),
+  });
+}
+
+// ========== AI Chat API ==========
+
+export interface ChatMessage {
+  role: 'user' | 'assistant';
+  content: string;
+  reasoning?: string;  // 深度思考内容，流式结束后保留供查阅
+  duration?: number;   // AI回答耗时(秒)
+}
+
+export interface ChatResult {
+  content: string;
+  role: string;
+}
+
+export function aiChat(params: {
+  message: string;
+  messages?: ChatMessage[];
+}) {
+  return request<ChatResult>("/api/ai/chat", {
+    method: "POST",
+    body: JSON.stringify({
+      message: params.message,
+      messages: params.messages || [],
+    }),
+  });
+}
+
+/**
+ * 流式 AI 对话 - 使用 fetch + ReadableStream 消费 SSE
+ */
+export function aiChatStream(
+  params: {
+    message: string;
+    messages?: ChatMessage[];
+    deepThinking?: boolean;
+  },
+  onChunk: (chunk: SseChunk) => void,
+  onComplete: (data: SseComplete) => void,
+  onError: (error: string) => void,
+  onFinally?: () => void,
+): AbortController {
+  const controller = new AbortController();
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (currentAuthToken) headers['X-User-Id'] = currentAuthToken;
+
+  fetch('/api/ai/chat/stream', {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({
+      message: params.message,
+      messages: params.messages || [],
+    }),
+    signal: controller.signal,
+  }).then(async (response) => {
+    if (!response.ok) {
+      const text = await response.text();
+      onError(`HTTP ${response.status}: ${text.substring(0, 200)}`);
+      onFinally?.();
+      return;
+    }
+
+    const reader = response.body?.getReader();
+    if (!reader) {
+      onError('Response body is not readable');
+      onFinally?.();
+      return;
+    }
+
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+
+        let currentEvent = '';
+        let currentData = '';
+
+        for (const line of lines) {
+          if (line.startsWith('event: ')) {
+            currentEvent = line.substring(7).trim();
+          } else if (line.startsWith('event:')) {
+            currentEvent = line.substring(6).trim();
+          } else if (line.startsWith('data: ')) {
+            currentData = line.substring(6).trim();
+          } else if (line.startsWith('data:')) {
+            currentData = line.substring(5).trim();
+          } else if (line === '') {
+            if (currentData) {
+              try {
+                const parsed = JSON.parse(currentData);
+                if (currentEvent === 'chunk') {
+                  onChunk(parsed as SseChunk);
+                } else if (currentEvent === 'complete') {
+                  onComplete(parsed as SseComplete);
+                } else if (currentEvent === 'error') {
+                  onError(parsed.error || 'Unknown error');
+                }
+              } catch { /* skip */ }
+            }
+            currentEvent = '';
+            currentData = '';
+          }
+        }
+      }
+    } catch (err: unknown) {
+      if ((err as Error)?.name !== 'AbortError') {
+        onError(String(err));
+      }
+    } finally {
+      reader.releaseLock();
+      onFinally?.();
+    }
+  }).catch((err: unknown) => {
+    if ((err as Error)?.name !== 'AbortError') {
+      onError(String(err));
+    }
+    onFinally?.();
+  });
+
+  return controller;
+}
+
+// ========== Chat History API ==========
+
+export interface Conversation {
+  id: string;
+  title: string;
+  role: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export function listConversations() {
+  return request<{ conversations: Conversation[] }>('/api/chat/conversations');
+}
+
+export function getConversationMessages(conversationId: string) {
+  return request<{ messages: ChatMessage[] }>(`/api/chat/conversations/${conversationId}`);
+}
+
+export function createConversation(title?: string, role?: string) {
+  return request<Conversation>('/api/chat/conversations', {
+    method: 'POST',
+    body: JSON.stringify({ title: title || '新对话', role: role || 'student' }),
+  });
+}
+
+export function appendConversationMessages(conversationId: string, messages: ChatMessage[]) {
+  return request<{ saved: number }>(`/api/chat/conversations/${conversationId}/messages`, {
+    method: 'POST',
+    body: JSON.stringify({ messages }),
+  });
+}
+
+export function deleteConversation(conversationId: string) {
+  return request<{ deleted: boolean }>(`/api/chat/conversations/${conversationId}`, {
+    method: 'DELETE',
+  });
 }

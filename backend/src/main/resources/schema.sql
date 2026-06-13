@@ -1,6 +1,7 @@
 CREATE TABLE IF NOT EXISTS department (
   id VARCHAR(64) PRIMARY KEY,
-  name VARCHAR(100) NOT NULL
+  name VARCHAR(100) NOT NULL,
+  created_by VARCHAR(64)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS class_info (
@@ -8,6 +9,7 @@ CREATE TABLE IF NOT EXISTS class_info (
   name VARCHAR(50) NOT NULL,
   major VARCHAR(100) NOT NULL,
   department_id VARCHAR(64) NOT NULL,
+  created_by VARCHAR(64),
   INDEX idx_class_department (department_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
@@ -36,8 +38,10 @@ CREATE TABLE IF NOT EXISTS question (
   answer_json JSON NOT NULL,
   score INT NOT NULL,
   source_tag VARCHAR(100),
+  deleted TINYINT(1) NOT NULL DEFAULT 0,
   INDEX idx_question_teacher (teacher_id),
-  INDEX idx_question_subject (subject)
+  INDEX idx_question_subject (subject),
+  INDEX idx_question_deleted (deleted)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS paper (
@@ -50,7 +54,9 @@ CREATE TABLE IF NOT EXISTS paper (
   question_ids_json JSON NOT NULL,
   paper_type VARCHAR(50),
   source_tag VARCHAR(100),
-  INDEX idx_paper_teacher (teacher_id)
+  deleted TINYINT(1) NOT NULL DEFAULT 0,
+  INDEX idx_paper_teacher (teacher_id),
+  INDEX idx_paper_deleted (deleted)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS exam (
@@ -63,8 +69,10 @@ CREATE TABLE IF NOT EXISTS exam (
   end_time DATETIME(3) NOT NULL,
   anti_cheat_limit INT NOT NULL,
   published TINYINT(1) NOT NULL DEFAULT 1,
+  deleted TINYINT(1) NOT NULL DEFAULT 0,
   INDEX idx_exam_teacher (teacher_id),
-  INDEX idx_exam_paper (paper_id)
+  INDEX idx_exam_paper (paper_id),
+  INDEX idx_exam_deleted (deleted)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS submission (
@@ -129,6 +137,27 @@ CREATE TABLE IF NOT EXISTS system_log (
   detail TEXT,
   time DATETIME(3) NOT NULL,
   INDEX idx_log_time (time)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS chat_conversation (
+  id VARCHAR(64) PRIMARY KEY,
+  user_id VARCHAR(64) NOT NULL,
+  title VARCHAR(200) NOT NULL,
+  role VARCHAR(20) NOT NULL DEFAULT 'student',
+  created_at DATETIME(3) NOT NULL,
+  updated_at DATETIME(3) NOT NULL,
+  INDEX idx_chat_conv_user (user_id),
+  INDEX idx_chat_conv_updated (updated_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS chat_message (
+  id VARCHAR(64) PRIMARY KEY,
+  conversation_id VARCHAR(64) NOT NULL,
+  role VARCHAR(20) NOT NULL,
+  content TEXT NOT NULL,
+  reasoning TEXT,
+  created_at DATETIME(3) NOT NULL,
+  INDEX idx_chat_msg_conv (conversation_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- Migration: add question_order_json to submission table

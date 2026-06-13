@@ -29,33 +29,33 @@ public class StoreService {
 
   public Store readStore() {
     Store store = new Store();
-    store.departments = jdbc.queryForList("select id,name from department order by id").stream().map(row -> mapOf(
-      "id", row.get("id"), "name", row.get("name")
+    store.departments = jdbc.queryForList("select id,name,created_by from department order by id").stream().map(row -> mapOf(
+      "id", row.get("id"), "name", row.get("name"), "createdBy", row.get("created_by")
     )).toList();
-    store.classes = jdbc.queryForList("select id,name,major,department_id from class_info order by id").stream().map(row -> mapOf(
-      "id", row.get("id"), "name", row.get("name"), "major", row.get("major"), "departmentId", row.get("department_id")
+    store.classes = jdbc.queryForList("select id,name,major,department_id,created_by from class_info order by id").stream().map(row -> mapOf(
+      "id", row.get("id"), "name", row.get("name"), "major", row.get("major"), "departmentId", row.get("department_id"), "createdBy", row.get("created_by")
     )).toList();
     store.users = jdbc.queryForList("select id,role,username,password,name,department_id,class_id,major from user_account order by id").stream().map(row -> mapOf(
       "id", row.get("id"), "role", row.get("role"), "username", row.get("username"), "password", row.get("password"),
       "name", row.get("name"), "departmentId", row.get("department_id"), "classId", row.get("class_id"), "major", row.get("major")
     )).map(this::compact).toList();
-    store.questions = jdbc.queryForList("select * from question order by id").stream().map(row -> compact(mapOf(
+    store.questions = jdbc.queryForList("select * from question where deleted=0 order by id").stream().map(row -> compact(mapOf(
       "id", row.get("id"), "teacherId", row.get("teacher_id"), "subject", row.get("subject"),
       "knowledgePoint", row.get("knowledge_point"), "difficulty", row.get("difficulty"), "type", row.get("type"),
       "title", row.get("title"), "options", readList(row.get("options_json")), "answer", readList(row.get("answer_json")),
-      "score", asInt(row.get("score")), "sourceTag", row.get("source_tag")
+      "score", asInt(row.get("score")), "sourceTag", row.get("source_tag"), "deleted", asBool(row.get("deleted"))
     ))).toList();
-    store.papers = jdbc.queryForList("select * from paper order by id").stream().map(row -> compact(mapOf(
+    store.papers = jdbc.queryForList("select * from paper where deleted=0 order by id").stream().map(row -> compact(mapOf(
       "id", row.get("id"), "teacherId", row.get("teacher_id"), "name", row.get("name"),
       "durationMinutes", asInt(row.get("duration_minutes")), "totalScore", asInt(row.get("total_score")),
       "passScore", asInt(row.get("pass_score")), "questionIds", readList(row.get("question_ids_json")),
-      "paperType", row.get("paper_type"), "sourceTag", row.get("source_tag")
+      "paperType", row.get("paper_type"), "sourceTag", row.get("source_tag"), "deleted", asBool(row.get("deleted"))
     ))).toList();
-    store.exams = jdbc.queryForList("select * from exam order by start_time desc,id").stream().map(row -> compact(mapOf(
+    store.exams = jdbc.queryForList("select * from exam where deleted=0 order by start_time desc,id").stream().map(row -> compact(mapOf(
       "id", row.get("id"), "teacherId", row.get("teacher_id"), "paperId", row.get("paper_id"), "name", row.get("name"),
       "targetClassIds", readList(row.get("target_class_ids_json")), "startTime", asIso(row.get("start_time")),
       "endTime", asIso(row.get("end_time")), "antiCheatLimit", asInt(row.get("anti_cheat_limit")),
-      "published", asBool(row.get("published"))
+      "published", asBool(row.get("published")), "deleted", asBool(row.get("deleted"))
     ))).toList();
     store.submissions = jdbc.queryForList("select * from submission order by updated_at desc,id").stream().map(row -> compact(mapOf(
       "id", row.get("id"), "examId", row.get("exam_id"), "studentId", row.get("student_id"), "studentName", row.get("student_name"),
@@ -105,30 +105,44 @@ public class StoreService {
 
   @Transactional
   public void deleteRecord(String entity, String id) {
-    String table = switch (entity) {
-      case "departments" -> "department";
-      case "classes" -> "class_info";
-      case "users" -> "user_account";
-      case "questions" -> "question";
-      case "papers" -> "paper";
-      case "exams" -> "exam";
-      case "submissions" -> "submission";
-      case "wrongBookEntries" -> "wrong_book_entry";
-      case "logs" -> "system_log";
-      default -> throw new IllegalArgumentException("Unknown entity: " + entity);
-    };
-    jdbc.update("delete from " + table + " where id=?", id);
+    switch (entity) {
+      case "questions" -> jdbc.update("update question set deleted=1 where id=?", id);
+      case "papers" -> jdbc.update("update paper set deleted=1 where id=?", id);
+      case "exams" -> jdbc.update("update exam set deleted=1 where id=?", id);
+      default -> {
+        String table = switch (entity) {
+          case "departments" -> "department";
+          case "classes" -> "class_info";
+          case "users" -> "user_account";
+          case "submissions" -> "submission";
+          case "wrongBookEntries" -> "wrong_book_entry";
+          case "logs" -> "system_log";
+          default -> throw new IllegalArgumentException("Unknown entity: " + entity);
+        };
+        jdbc.update("delete from " + table + " where id=?", id);
+      }
+    }
+  }
+
+  @Transactional
+  public void restoreRecord(String entity, String id) {
+    switch (entity) {
+      case "questions" -> jdbc.update("update question set deleted=0 where id=?", id);
+      case "papers" -> jdbc.update("update paper set deleted=0 where id=?", id);
+      case "exams" -> jdbc.update("update exam set deleted=0 where id=?", id);
+      default -> throw new IllegalArgumentException("Restore not supported for entity: " + entity);
+    }
   }
 
   private void upsertDepartment(Map<String, Object> r) {
-    jdbc.update("insert into department(id,name) values(?,?) on duplicate key update name=values(name)", str(r, "id"), str(r, "name"));
+    jdbc.update("insert into department(id,name,created_by) values(?,?,?) on duplicate key update name=values(name),created_by=values(created_by)", str(r, "id"), str(r, "name"), nullableStr(r, "createdBy"));
   }
 
   private void upsertClass(Map<String, Object> r) {
     jdbc.update("""
-      insert into class_info(id,name,major,department_id) values(?,?,?,?)
-      on duplicate key update name=values(name),major=values(major),department_id=values(department_id)
-      """, str(r, "id"), str(r, "name"), str(r, "major"), str(r, "departmentId"));
+      insert into class_info(id,name,major,department_id,created_by) values(?,?,?,?,?)
+      on duplicate key update name=values(name),major=values(major),department_id=values(department_id),created_by=values(created_by)
+      """, str(r, "id"), str(r, "name"), str(r, "major"), str(r, "departmentId"), nullableStr(r, "createdBy"));
   }
 
   private void upsertUser(Map<String, Object> r) {
@@ -142,35 +156,38 @@ public class StoreService {
 
   private void upsertQuestion(Map<String, Object> r) {
     jdbc.update("""
-      insert into question(id,teacher_id,subject,knowledge_point,difficulty,type,title,options_json,answer_json,score,source_tag)
-      values(?,?,?,?,?,?,?,?,?,?,?)
+      insert into question(id,teacher_id,subject,knowledge_point,difficulty,type,title,options_json,answer_json,score,source_tag,deleted)
+      values(?,?,?,?,?,?,?,?,?,?,?,?)
       on duplicate key update teacher_id=values(teacher_id),subject=values(subject),knowledge_point=values(knowledge_point),
       difficulty=values(difficulty),type=values(type),title=values(title),options_json=values(options_json),
-      answer_json=values(answer_json),score=values(score),source_tag=values(source_tag)
+      answer_json=values(answer_json),score=values(score),source_tag=values(source_tag),deleted=values(deleted)
       """, str(r, "id"), str(r, "teacherId"), str(r, "subject"), str(r, "knowledgePoint"), str(r, "difficulty"),
-      str(r, "type"), str(r, "title"), json(r.get("options")), json(r.get("answer")), number(r, "score"), nullableStr(r, "sourceTag"));
+      str(r, "type"), str(r, "title"), json(r.get("options")), json(r.get("answer")), number(r, "score"), nullableStr(r, "sourceTag"),
+      bool(r, "deleted") ? 1 : 0);
   }
 
   private void upsertPaper(Map<String, Object> r) {
     jdbc.update("""
-      insert into paper(id,teacher_id,name,duration_minutes,total_score,pass_score,question_ids_json,paper_type,source_tag)
-      values(?,?,?,?,?,?,?,?,?)
+      insert into paper(id,teacher_id,name,duration_minutes,total_score,pass_score,question_ids_json,paper_type,source_tag,deleted)
+      values(?,?,?,?,?,?,?,?,?,?)
       on duplicate key update teacher_id=values(teacher_id),name=values(name),duration_minutes=values(duration_minutes),
       total_score=values(total_score),pass_score=values(pass_score),question_ids_json=values(question_ids_json),
-      paper_type=values(paper_type),source_tag=values(source_tag)
+      paper_type=values(paper_type),source_tag=values(source_tag),deleted=values(deleted)
       """, str(r, "id"), str(r, "teacherId"), str(r, "name"), number(r, "durationMinutes"), number(r, "totalScore"),
-      number(r, "passScore"), json(r.get("questionIds")), nullableStr(r, "paperType"), nullableStr(r, "sourceTag"));
+      number(r, "passScore"), json(r.get("questionIds")), nullableStr(r, "paperType"), nullableStr(r, "sourceTag"),
+      bool(r, "deleted") ? 1 : 0);
   }
 
   private void upsertExam(Map<String, Object> r) {
     jdbc.update("""
-      insert into exam(id,teacher_id,paper_id,name,target_class_ids_json,start_time,end_time,anti_cheat_limit,published)
-      values(?,?,?,?,?,?,?,?,?)
+      insert into exam(id,teacher_id,paper_id,name,target_class_ids_json,start_time,end_time,anti_cheat_limit,published,deleted)
+      values(?,?,?,?,?,?,?,?,?,?)
       on duplicate key update teacher_id=values(teacher_id),paper_id=values(paper_id),name=values(name),
       target_class_ids_json=values(target_class_ids_json),start_time=values(start_time),end_time=values(end_time),
-      anti_cheat_limit=values(anti_cheat_limit),published=values(published)
+      anti_cheat_limit=values(anti_cheat_limit),published=values(published),deleted=values(deleted)
       """, str(r, "id"), str(r, "teacherId"), str(r, "paperId"), str(r, "name"), json(r.get("targetClassIds")),
-      timestamp(r.get("startTime")), timestamp(r.get("endTime")), number(r, "antiCheatLimit"), bool(r, "published"));
+      timestamp(r.get("startTime")), timestamp(r.get("endTime")), number(r, "antiCheatLimit"), bool(r, "published"),
+      bool(r, "deleted") ? 1 : 0);
   }
 
   private void upsertSubmission(Map<String, Object> r) {
@@ -318,7 +335,7 @@ public class StoreService {
   }
 
   public Map<String, Object> queryQuestionsPage(String teacherId, int page, int pageSize, String keyword, String type, String subject) {
-    StringBuilder where = new StringBuilder("WHERE 1=1");
+    StringBuilder where = new StringBuilder("WHERE deleted=0");
     List<Object> params = new ArrayList<>();
     if (teacherId != null && !teacherId.isBlank()) {
       where.append(" AND teacher_id = ?");
@@ -349,7 +366,7 @@ public class StoreService {
         "id", row.get("id"), "teacherId", row.get("teacher_id"), "subject", row.get("subject"),
         "knowledgePoint", row.get("knowledge_point"), "difficulty", row.get("difficulty"), "type", row.get("type"),
         "title", row.get("title"), "options", readList(row.get("options_json")), "answer", readList(row.get("answer_json")),
-        "score", row.get("score") != null ? ((Number) row.get("score")).intValue() : 0, "sourceTag", row.get("source_tag")
+        "score", asInt(row.get("score")), "sourceTag", row.get("source_tag")
       ))).toList();
     return mapOf("rows", rows, "total", total, "page", page, "pageSize", pageSize);
   }

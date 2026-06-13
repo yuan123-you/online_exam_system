@@ -11,38 +11,7 @@
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
-    <main class="page-shell">
-      <section id="loginView" class="login-shell" aria-label="登录区域">
-        <div class="login-card card">
-          <div class="brand-block">
-            <p class="eyebrow">ONLINE EXAM</p>
-            <h1>在线考试系统</h1>
-          </div>
-          <form id="loginForm" class="form-grid" autocomplete="on">
-            <label>
-              <span>账号</span>
-              <input name="username" value="admin" required autocomplete="username" />
-            </label>
-            <label>
-              <span>密码</span>
-              <input type="password" name="password" value="123456" required autocomplete="current-password" />
-            </label>
-            <button type="submit" class="primary-btn wide">进入系统</button>
-          </form>
-          <p id="loginMessage" class="message" role="alert"></p>
-        </div>
-      </section>
-
-      <section id="dashboardView" class="workspace-shell hidden" aria-label="工作台"></section>
-    </main>
-
-    <div id="modal" class="modal hidden" role="dialog" aria-modal="true">
-      <div class="modal-card">
-        <button id="closeModalBtn" class="close-btn" type="button" aria-label="关闭弹窗">&times;</button>
-        <div id="modalContent"></div>
-      </div>
-    </div>
-
-    <script src="/app.js"></script>
+    <div id="app"></div>
+    <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

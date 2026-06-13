@@ -136,6 +136,8 @@ export interface WrongBookEntry {
   removable: boolean;
   statusText?: string;
   question?: Question;
+  lastWrongAt?: string;
+  status?: string;
 }
 
 export interface LogEntry {

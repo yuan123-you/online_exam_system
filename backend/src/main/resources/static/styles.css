@@ -191,24 +191,11 @@ textarea {
   border-color: var(--line);
 }
 
-/* ---- Login Page ---- */
-.login-shell {
-  min-height: 100dvh;
-  display: grid;
-  place-items: center;
-  padding: 24px;
-  background:
-    radial-gradient(ellipse at 30% 20%, rgba(61, 153, 128, 0.12), transparent 50%),
-    radial-gradient(ellipse at 70% 80%, rgba(168, 218, 200, 0.3), transparent 50%),
-    linear-gradient(165deg, #e0f2ec, #c8e6da);
-}
-
-.login-card {
-  width: min(560px, 100%);
-  padding: 36px 40px;
-  display: grid;
-  gap: 24px;
-  animation: loginEnter 0.5s var(--ease) both;
+/* ---- Login Page (styles now scoped in AuthLogin.vue) ---- */
+/* mobile overrides */
+@media (max-width: 768px) {
+  .login-shell { grid-template-columns: 1fr; }
+  .login-left { display: none; }
 }
 
 @keyframes loginEnter {
@@ -220,6 +207,38 @@ textarea {
     opacity: 1;
     transform: translateY(0) scale(1);
   }
+}
+
+/* Password visibility toggle */
+.password-input-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.password-input-wrap input {
+  padding-right: 42px;
+}
+
+.password-toggle-btn {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 4px;
+  color: var(--muted);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  transition: color var(--duration) var(--ease);
+}
+
+.password-toggle-btn:hover {
+  color: var(--primary);
 }
 
 .brand-block h1,
@@ -377,11 +396,12 @@ label span {
   background: var(--sidebar-surface);
   color: var(--sidebar-text);
   border: 1px solid var(--sidebar-border);
-  padding: 5px 8px;
-  border-radius: 6px;
-  font-size: 14px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  font-size: 18px;
   line-height: 1;
   flex-shrink: 0;
+  cursor: pointer;
   transition: all var(--duration) var(--ease);
 }
 
@@ -637,11 +657,11 @@ label span {
 
 .sidebar-collapsed .sidebar-top {
   justify-content: center;
-  padding: 14px 8px 10px;
+  padding: 12px 8px 10px;
 }
 
 .sidebar-collapsed .sidebar-brand-text,
-.sidebar-collapsed .sidebar-collapse-btn {
+.sidebar-collapsed .sidebar-brand-icon {
   display: none;
 }
 
@@ -681,36 +701,7 @@ label span {
   padding: 10px;
 }
 
-/* Sidebar expand btn (shown when collapsed) */
-.sidebar-expand-btn {
-  position: absolute;
-  top: 50%;
-  right: -14px;
-  transform: translateY(-50%);
-  width: 28px;
-  height: 28px;
-  border-radius: 50%;
-  background: var(--sidebar-bg);
-  border: 1px solid var(--sidebar-border);
-  color: var(--sidebar-text);
-  display: none;
-  align-items: center;
-  justify-content: center;
-  font-size: 12px;
-  cursor: pointer;
-  z-index: 5;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
-  transition: all var(--duration) var(--ease);
-}
 
-.sidebar-expand-btn:hover {
-  background: var(--sidebar-bg-deep);
-  color: var(--sidebar-accent);
-}
-
-.sidebar-collapsed .sidebar-expand-btn {
-  display: flex;
-}
 
 /* ---- Main Workspace ---- */
 .workspace-main {
@@ -1148,7 +1139,8 @@ th {
 }
 
 /* ---- Modals ---- */
-.modal {
+.modal,
+.modal-backdrop {
   position: fixed;
   inset: 0;
   background: rgba(26, 58, 52, 0.25);
@@ -2667,7 +2659,19 @@ th {
 }
 
 @media (max-width: 640px) {
-  .login-shell,
+  .login-shell {
+    grid-template-columns: 1fr;
+    padding: 0;
+  }
+
+  .login-intro {
+    display: none;
+  }
+
+  .login-panel {
+    padding: 12px;
+  }
+
   .workspace-main {
     padding: 12px;
   }
@@ -2692,6 +2696,148 @@ th {
 
   .span-2 {
     grid-column: span 1;
+  }
+}
+
+/* Mobile sidebar fix */
+@media (max-width: 767px) {
+  .sidebar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    width: 280px;
+    z-index: 1000;
+    transform: translateX(-100%);
+    transition: transform 0.3s var(--ease);
+  }
+
+  .sidebar-open .sidebar {
+    transform: translateX(0);
+  }
+
+  .sidebar-overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.5);
+    z-index: 999;
+  }
+
+  .sidebar-open .sidebar-overlay {
+    display: block;
+  }
+
+  .main-panel {
+    margin-left: 0 !important;
+    width: 100% !important;
+  }
+
+  .sidebar-expand-btn {
+    display: none !important;
+  }
+}
+
+/* Tablet sidebar fix */
+@media (min-width: 768px) and (max-width: 1023px) {
+  .sidebar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    width: 260px;
+    z-index: 1000;
+    transform: translateX(-100%);
+    transition: transform 0.3s var(--ease);
+  }
+
+  .sidebar-open .sidebar {
+    transform: translateX(0);
+  }
+
+  .sidebar-overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.5);
+    z-index: 999;
+  }
+
+  .sidebar-open .sidebar-overlay {
+    display: block;
+  }
+
+  .main-panel {
+    margin-left: 0 !important;
+    width: 100% !important;
+  }
+}
+
+/* iOS tab bar - only on mobile/tablet */
+.ios-tab-bar {
+  display: none;
+}
+
+@media (max-width: 1023px) {
+  .ios-tab-bar {
+    display: block;
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    z-index: 900;
+    background: var(--panel);
+    border-top: 1px solid var(--line);
+    padding: 4px 0 env(safe-area-inset-bottom, 4px);
+    box-shadow: 0 -2px 10px rgba(0, 0, 0, 0.08);
+  }
+
+  .ios-tab-bar-inner {
+    display: flex;
+    justify-content: space-around;
+    align-items: center;
+  }
+
+  .ios-tab-btn {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+    padding: 6px 8px;
+    background: none;
+    border: none;
+    cursor: pointer;
+    color: var(--muted);
+    font-size: 10px;
+    transition: color var(--duration) var(--ease);
+  }
+
+  .ios-tab-btn.active {
+    color: var(--primary);
+  }
+
+  .ios-tab-btn .tab-icon {
+    width: 22px;
+    height: 22px;
+  }
+
+  .ios-tab-btn .tab-icon svg {
+    width: 100%;
+    height: 100%;
+  }
+
+  .content-panel {
+    padding-bottom: 72px !important;
+  }
+}
+
+@media (min-width: 1024px) {
+  .ios-tab-bar {
+    display: none !important;
+  }
+
+  .mobile-menu-btn {
+    display: none !important;
   }
 }
 
@@ -2729,5 +2875,719 @@ th {
   .table-wrap {
     max-height: none;
     overflow: visible;
+  }
+}
+
+/* ============================================
+   PHASE 2 - Responsive Layout Overrides
+   Appended after all existing styles.
+   ============================================ */
+
+/* ---- Login UX Enhancements ---- */
+
+/* Focus states with visual feedback on login inputs */
+.login-input:focus,
+.login-form input:focus {
+  outline: none;
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px var(--primary-glow), var(--shadow-sm);
+  transition: border-color var(--duration) var(--ease),
+              box-shadow var(--duration) var(--ease);
+}
+
+.login-input:hover,
+.login-form input:hover {
+  border-color: var(--primary-hover);
+}
+
+/* Error message styling */
+.login-message-error {
+  color: var(--danger);
+  font-weight: 500;
+  animation: loginShake 0.4s var(--ease);
+}
+
+@keyframes loginShake {
+  0%, 100% { transform: translateX(0); }
+  20%      { transform: translateX(-6px); }
+  40%      { transform: translateX(6px); }
+  60%      { transform: translateX(-4px); }
+  80%      { transform: translateX(4px); }
+}
+
+/* Loading spinner on submit button */
+.login-spinner {
+  display: inline-block;
+  width: 16px;
+  height: 16px;
+  border: 2px solid rgba(255, 255, 255, 0.3);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: loginSpin 0.7s linear infinite;
+  margin-right: 8px;
+  vertical-align: middle;
+}
+
+@keyframes loginSpin {
+  to { transform: rotate(360deg); }
+}
+
+.login-submit-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background var(--duration) var(--ease),
+              transform var(--duration) var(--ease),
+              opacity var(--duration) var(--ease);
+}
+
+.login-submit-btn:active:not(:disabled) {
+  transform: scale(0.98);
+}
+
+.login-submit-btn:disabled {
+  opacity: 0.75;
+  cursor: not-allowed;
+}
+
+/* ---- Mobile Drawer Sidebar Enhancements ---- */
+
+/* Smooth backdrop fade */
+.sidebar-overlay {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.3s var(--ease);
+}
+
+.sidebar-open .sidebar-overlay {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+/* Sidebar slide-in with subtle spring feel */
+.sidebar {
+  transition: transform 0.32s cubic-bezier(0.25, 0.46, 0.45, 0.94);
+  will-change: transform;
+}
+
+/* Prevent body scroll when drawer is open on mobile */
+.sidebar-open {
+  overflow: hidden;
+}
+
+/* ============================================
+   MOBILE OVERRIDES  (<768px)
+   ============================================ */
+@media (max-width: 767px) {
+
+  /* ---- General ---- */
+  html {
+    font-size: 14px; /* slightly smaller base for mobile */
+  }
+
+  body {
+    font-size: 14px;
+  }
+
+  .app-shell {
+    grid-template-columns: 1fr; /* no sidebar column */
+  }
+
+  .main-panel {
+    width: 100%;
+    min-height: 100dvh;
+  }
+
+  .content-panel {
+    padding: 14px 12px 80px; /* room for bottom tab bar */
+  }
+
+  .topbar {
+    padding: 12px 14px;
+  }
+
+  .topbar h1 {
+    font-size: 17px;
+  }
+
+  /* ---- Stats grid single column ---- */
+  .stats-grid {
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+  }
+
+  .card-grid {
+    grid-template-columns: 1fr;
+    gap: 12px;
+  }
+
+  .two-column,
+  .three-column {
+    grid-template-columns: 1fr;
+  }
+
+  .span-2 {
+    grid-column: span 1;
+  }
+
+  /* ---- Stat cards compact ---- */
+  .stat-card {
+    padding: 14px;
+  }
+
+  .stat-card h4 {
+    font-size: 12px;
+  }
+
+  /* ---- Panels ---- */
+  .panel {
+    padding: 16px;
+    margin-bottom: 12px;
+  }
+
+  /* ---- Tables -> Card-style layouts ---- */
+  .table-wrap {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    max-height: none;
+  }
+
+  /* Card-style table for mobile */
+  .mobile-card-table .table-wrap,
+  .table-card-mobile {
+    border: none;
+    overflow: visible;
+  }
+
+  .mobile-card-table table,
+  .table-card-mobile table {
+    border-collapse: separate;
+    border-spacing: 0 8px;
+  }
+
+  .mobile-card-table thead,
+  .table-card-mobile thead {
+    display: none;
+  }
+
+  .mobile-card-table tbody tr,
+  .table-card-mobile tbody tr {
+    display: block;
+    background: var(--panel);
+    border: 1px solid var(--line-soft);
+    border-radius: var(--radius);
+    padding: 12px 14px;
+    margin-bottom: 10px;
+    box-shadow: var(--shadow-sm);
+  }
+
+  .mobile-card-table tbody td,
+  .table-card-mobile tbody td {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 4px 0;
+    border-bottom: 1px solid var(--line-soft);
+    font-size: 13px;
+  }
+
+  .mobile-card-table tbody td:last-child,
+  .table-card-mobile tbody td:last-child {
+    border-bottom: none;
+  }
+
+  .mobile-card-table tbody td::before,
+  .table-card-mobile tbody td::before {
+    content: attr(data-label);
+    font-weight: 600;
+    color: var(--muted);
+    margin-right: 12px;
+    flex-shrink: 0;
+  }
+
+  /* ---- Forms stack vertically ---- */
+  .form-grid,
+  .toolbar-form,
+  .inline-form {
+    grid-template-columns: 1fr !important;
+  }
+
+  .section-title,
+  .topbar-actions,
+  .action-row,
+  .section-actions {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+  }
+
+  .toolbar-form label,
+  .toolbar-form select,
+  .toolbar-form input {
+    width: 100%;
+  }
+
+  /* ---- Modals ---- */
+  .modal-card {
+    padding: 18px;
+    max-width: 100%;
+    margin: 8px;
+    border-radius: var(--radius);
+  }
+
+  /* ---- Login page mobile ---- */
+  .login-shell {
+    grid-template-columns: 1fr;
+  }
+  .login-intro {
+    display: none;
+  }
+
+  /* ---- Buttons tighter ---- */
+  button,
+  .btn {
+    font-size: 14px;
+    padding: 8px 14px;
+  }
+
+  /* ---- Sidebar drawer on mobile ---- */
+  .sidebar {
+    width: var(--sidebar-width-mobile, 280px);
+    box-shadow: 4px 0 24px rgba(0, 0, 0, 0.25);
+  }
+
+  .sidebar-collapse-btn {
+    display: none;
+  }
+
+  /* ---- Bottom tab bar adjustments ---- */
+  .ios-tab-bar {
+    display: block;
+  }
+
+  /* ---- Charts resize ---- */
+  .chart-container {
+    min-height: 220px;
+  }
+}
+
+/* ============================================
+   TABLET OVERRIDES  (768px - 1023px)
+   ============================================ */
+@media (min-width: 768px) and (max-width: 1023px) {
+
+  .app-shell {
+    grid-template-columns: 1fr; /* sidebar is overlay, not column */
+  }
+
+  .main-panel {
+    width: 100%;
+  }
+
+  .content-panel {
+    padding: 18px 16px 80px;
+  }
+
+  /* ---- Sidebar collapsed by default ---- */
+  .sidebar {
+    width: 260px;
+    box-shadow: 4px 0 20px rgba(0, 0, 0, 0.18);
+  }
+
+  /* ---- Tables remain with horizontal scroll ---- */
+  .table-wrap {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  /* ---- Stats grid 2-col ---- */
+  .stats-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .card-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .three-column {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  /* ---- Forms ---- */
+  .form-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .toolbar-form {
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  }
+
+  /* ---- Moderate spacing ---- */
+  .panel {
+    padding: 18px;
+  }
+
+  .stat-card {
+    padding: 16px;
+  }
+
+  /* ---- Login page tablet ---- */
+  .login-shell {
+    grid-template-columns: 1fr;
+    padding: 20px;
+  }
+
+  .login-hero {
+    display: none;
+  }
+
+  .login-card {
+    max-width: 480px;
+    margin: 0 auto;
+  }
+
+  /* ---- Bottom tab bar visible ---- */
+  .ios-tab-bar {
+    display: block;
+  }
+
+  .mobile-menu-btn {
+    display: flex;
+  }
+
+  /* ---- Charts ---- */
+  .chart-container {
+    min-height: 280px;
+  }
+}
+
+/* ============================================
+   DESKTOP OVERRIDES  (>= 1024px)
+   ============================================ */
+@media (min-width: 1024px) {
+
+  /* Full sidebar always visible - hide the overlay */
+  .sidebar-overlay {
+    display: none !important;
+  }
+
+  /* Bottom tab bar hidden */
+  .ios-tab-bar {
+    display: none !important;
+  }
+
+  /* Hamburger hidden */
+  .mobile-menu-btn {
+    display: none !important;
+  }
+
+  /* Ensure proper grid layout */
+  .app-shell {
+    grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
+  }
+
+  .app-shell.sidebar-collapsed {
+    grid-template-columns: var(--sidebar-collapsed-width) minmax(0, 1fr);
+  }
+
+  /* Content panel has no bottom padding for tab bar */
+  .content-panel {
+    padding-bottom: 20px;
+  }
+}
+
+/* ============================================
+   LARGE DESKTOP  (>= 1280px)
+   ============================================ */
+@media (min-width: 1280px) {
+
+  .stats-grid {
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  }
+
+  .content-panel {
+    padding: 24px 28px;
+  }
+
+  .panel {
+    padding: 22px;
+  }
+}
+
+/* ============================================
+   PRINT MEDIA QUERY (Enhanced)
+   ============================================ */
+@media print {
+
+  /* Hide all UI chrome */
+  .ios-tab-bar,
+  .sidebar-overlay,
+  .mobile-menu-btn,
+  .topbar,
+  .menu-footer,
+  .sidebar-actions,
+  .sidebar-expand-btn,
+  .sidebar-collapse-btn {
+    display: none !important;
+  }
+
+  .app-shell {
+    display: block;
+  }
+
+  .main-panel {
+    height: auto;
+    overflow: visible;
+  }
+
+  .content-panel {
+    padding: 0;
+    overflow: visible;
+  }
+
+  /* Clean table printing */
+  .table-wrap {
+    max-height: none;
+    overflow: visible;
+  }
+
+  table {
+    page-break-inside: auto;
+  }
+
+  tr {
+    page-break-inside: avoid;
+    page-break-after: auto;
+  }
+
+  /* Stat cards print nicely */
+  .stat-card,
+  .panel,
+  .card {
+    box-shadow: none;
+    border: 1px solid #ccc;
+    break-inside: avoid;
+  }
+
+  /* Show URLs after links */
+  a[href]::after {
+    content: " (" attr(href) ")";
+    font-size: 0.85em;
+    color: #666;
+  }
+}
+
+/* ============================================
+   ENHANCED ANIMATIONS & TRANSITIONS
+   ============================================ */
+
+/* Smooth page-load fade for content panels */
+.content-panel > * {
+  animation: contentFadeIn 0.35s var(--ease) both;
+}
+
+@keyframes contentFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Card hover lift with smooth transition */
+.stat-card,
+.panel,
+.card {
+  transition: transform var(--duration) var(--ease),
+              box-shadow var(--duration) var(--ease),
+              border-color var(--duration) var(--ease);
+}
+
+/* Button press effect */
+button:active:not(:disabled),
+.btn:active:not(:disabled) {
+  transform: scale(0.97);
+  transition: transform 0.1s var(--ease);
+}
+
+/* Menu button active indicator */
+.menu-btn {
+  transition: background var(--duration) var(--ease),
+              color var(--duration) var(--ease);
+}
+
+/* Smooth modal entry */
+.modal-card {
+  animation: modalSlideUp 0.3s var(--ease) both;
+}
+
+@keyframes modalSlideUp {
+  from {
+    opacity: 0;
+    transform: translateY(24px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+/* Toast slide-in */
+.toast-item {
+  animation: toastSlideIn 0.3s var(--ease) both;
+}
+
+@keyframes toastSlideIn {
+  from {
+    opacity: 0;
+    transform: translateX(40px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+/* Skeleton loader for async content */
+.skeleton {
+  background: linear-gradient(
+    90deg,
+    var(--panel-soft) 25%,
+    var(--line-soft) 50%,
+    var(--panel-soft) 75%
+  );
+  background-size: 200% 100%;
+  animation: skeletonShimmer 1.5s ease infinite;
+  border-radius: var(--radius);
+}
+
+@keyframes skeletonShimmer {
+  0%   { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+/* Pulse animation for loading states */
+.pulse-loading {
+  animation: pulseLoad 1.8s ease infinite;
+}
+
+@keyframes pulseLoad {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.5; }
+}
+
+/* ============================================
+   RESPONSIVE UTILITY CLASSES
+   ============================================ */
+
+/* Visually hidden but accessible */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* Truncate text with ellipsis */
+.text-truncate {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Responsive text clamp */
+.text-clamp-2 {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.text-clamp-3 {
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* Flex utilities */
+.flex-center {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.flex-between {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+/* Responsive visibility helpers */
+@media (max-width: 767px) {
+  .hide-on-mobile { display: none !important; }
+}
+
+@media (min-width: 768px) and (max-width: 1023px) {
+  .hide-on-tablet { display: none !important; }
+}
+
+@media (min-width: 1024px) {
+  .hide-on-desktop { display: none !important; }
+}
+
+@media (max-width: 767px) {
+  .show-on-mobile { display: block !important; }
+}
+
+@media (min-width: 768px) {
+  .show-on-mobile { display: none !important; }
+}
+
+/* Reduced motion preference */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* High contrast mode support */
+@media (prefers-contrast: high) {
+  :root {
+    --line: #666;
+    --muted: #444;
+    --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.2);
+    --shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+  }
+
+  .panel,
+  .card,
+  .stat-card {
+    border-width: 2px;
+  }
+
+  button,
+  .btn {
+    border-width: 2px;
+  }
+}
+
+/* Dark mode hint (for future implementation) */
+@media (prefers-color-scheme: dark) {
+  :root {
+    /* Reserved for future dark mode tokens */
   }
 }
