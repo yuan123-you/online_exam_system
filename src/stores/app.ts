@@ -443,6 +443,7 @@ export const useAppStore = defineStore('app', () => {
       setCurrentAuthToken(savedToken)
       try {
         bootstrap.value = await apiLoadBootstrap()
+        handleLoadConversations() // load conversation history in background
       } catch {
         setCurrentAuthToken('')
         localStorage.removeItem('auth_token')
@@ -978,10 +979,12 @@ export const useAppStore = defineStore('app', () => {
     }
   }
 
-  /** Save current chat messages to the active conversation.
-   *  Auto-creates a conversation if none exists yet. */
-  async function handleSaveMessages() {
-    if (chatMessages.value.length === 0) return
+  /** Save current messages to the active conversation.
+   *  Auto-creates a conversation if none exists yet.
+   *  Pass optional messages array for practice mode. */
+  async function handleSaveMessages(messages?: ChatMessage[]) {
+    const msgs = messages || chatMessages.value
+    if (msgs.length === 0) return
     // Auto-create conversation if needed (first message in a session)
     if (!activeConversationId.value) {
       try {
@@ -993,7 +996,7 @@ export const useAppStore = defineStore('app', () => {
     }
     if (!activeConversationId.value) return
     try {
-      await appendConversationMessages(activeConversationId.value, chatMessages.value)
+      await appendConversationMessages(activeConversationId.value, msgs)
       // Refresh conversation list to update title/time
       handleLoadConversations()
     } catch (err: any) {
@@ -1065,6 +1068,8 @@ export const useAppStore = defineStore('app', () => {
         // Save reasoning for later review (collapsed fold)
         if (data.reasoning) {
           chatMessages.value[aiMsgIndex].reasoning = data.reasoning
+        } else if (chatStreamingReasoning.value) {
+          chatMessages.value[aiMsgIndex].reasoning = chatStreamingReasoning.value
         }
         // Compute response duration
         const msg = chatMessages.value[aiMsgIndex] as any
@@ -1084,6 +1089,7 @@ export const useAppStore = defineStore('app', () => {
       },
       () => {
         if (chatTimeoutId) { clearTimeout(chatTimeoutId); chatTimeoutId = null }
+        chatStreamingActive.value = false
         chatLoading.value = false
       }
     )
@@ -1157,7 +1163,11 @@ export const useAppStore = defineStore('app', () => {
         // Save reasoning for later review (collapsed fold)
         if (data.reasoning) {
           practiceMessages.value[aiMsgIndex].reasoning = data.reasoning
+        } else if (practiceStreamingReasoning.value) {
+          practiceMessages.value[aiMsgIndex].reasoning = practiceStreamingReasoning.value
         }
+        // Persist practice messages to conversation history
+        handleSaveMessages(practiceMessages.value)
       },
       (error) => {
         if (practiceTimeoutId) { clearTimeout(practiceTimeoutId); practiceTimeoutId = null }
@@ -1168,6 +1178,7 @@ export const useAppStore = defineStore('app', () => {
       },
       () => {
         if (practiceTimeoutId) { clearTimeout(practiceTimeoutId); practiceTimeoutId = null }
+        practiceStreamingActive.value = false
         practSessionLoading.value = false
       }
     )
