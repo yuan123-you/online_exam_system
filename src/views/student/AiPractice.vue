@@ -1,7 +1,10 @@
 <template>
   <div class="chat-layout">
+    <!-- Sidebar overlay backdrop (mobile only) -->
+    <div v-if="sidebarExpanded" class="sidebar-overlay" @click="sidebarExpanded = false"></div>
+
     <!-- Sidebar -->
-    <ChatSidebar />
+    <ChatSidebar v-model:expanded="sidebarExpanded" />
 
     <!-- Main chat area -->
     <div class="chat-main">
@@ -100,6 +103,7 @@ import ChatSidebar from './AiPractice/ChatSidebar.vue'
 const store = useAppStore()
 
 const activeTab = ref<'chat' | 'practice'>('chat')
+const sidebarExpanded = ref(window.innerWidth > 768)
 const inputText = ref('')
 const msgList = ref<HTMLElement | null>(null)
 const inputRef = ref<HTMLTextAreaElement | null>(null)
@@ -222,6 +226,7 @@ function smoothScrollToBottom(duration: number) {
   border: 1px solid #e5e7eb;
   border-radius: 12px;
   overflow: hidden;
+  position: relative;
 }
 
 /* Hide scrollbar on page level */
@@ -431,8 +436,20 @@ function smoothScrollToBottom(duration: number) {
   50% { box-shadow: 0 0 0 8px rgba(239,68,68,0); }
 }
 
+/* Sidebar overlay backdrop — mobile only */
+.sidebar-overlay {
+  display: none;
+}
+
 /* ===== Responsive — Tablet & Mobile ===== */
 @media (max-width: 768px) {
+  .sidebar-overlay {
+    display: block;
+    position: absolute;
+    inset: 0;
+    background: rgba(0,0,0,0.3);
+    z-index: 25;
+  }
   .chat-layout {
     height: calc(100vh - 120px);
     max-height: none;

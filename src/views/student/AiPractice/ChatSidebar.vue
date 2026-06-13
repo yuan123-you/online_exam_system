@@ -1,6 +1,6 @@
 <template>
-  <aside class="chat-sidebar" :class="{ collapsed: !expanded }">
-    <template v-if="expanded">
+  <aside class="chat-sidebar" :class="{ collapsed: !props.expanded }">
+    <template v-if="props.expanded">
       <!-- Logo area -->
       <div class="sidebar-brand">
         <span class="brand-icon">🧠</span>
@@ -8,7 +8,7 @@
       </div>
 
       <!-- New chat -->
-      <button class="new-chat-btn" @click="store.handleNewConversation()">
+      <button class="new-chat-btn" @click="store.handleNewConversation(); emit('update:expanded', false)">
         <span class="nc-icon">➕</span> 新对话
       </button>
 
@@ -24,7 +24,7 @@
             v-for="conv in store.conversations"
             :key="conv.id"
             :class="['conv-item', { active: conv.id === store.activeConversationId }]"
-            @click="store.handleSwitchConversation(conv.id)"
+            @click="store.handleSwitchConversation(conv.id); emit('update:expanded', false)"
           >
             <span class="ci-icon">💬</span>
             <span class="ci-text">
@@ -38,18 +38,20 @@
     </template>
 
     <!-- Collapse toggle -->
-    <button class="sidebar-collapse" @click="expanded = !expanded" :title="expanded ? '收起侧栏' : '展开侧栏'">
-      {{ expanded ? '◀' : '▶' }}
+    <button class="sidebar-collapse" @click="emit('update:expanded', !props.expanded)" :title="props.expanded ? '收起侧栏' : '展开侧栏'">
+      {{ props.expanded ? '◀' : '▶' }}
     </button>
   </aside>
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { onMounted } from 'vue'
 import { useAppStore } from '@/stores/app'
 
+const props = defineProps<{ expanded: boolean }>()
+const emit = defineEmits<{ 'update:expanded': [value: boolean] }>()
+
 const store = useAppStore()
-const expanded = ref(true)
 
 onMounted(() => {
   store.handleLoadConversations()
@@ -252,25 +254,26 @@ function onDelete(id: string) {
   .chat-sidebar {
     position: absolute;
     left: 0; top: 0; bottom: 0;
-    width: 260px;
+    width: 240px;
     z-index: 30;
     box-shadow: 4px 0 16px rgba(0,0,0,0.12);
     transform: translateX(-100%);
     transition: transform 0.25s ease;
+    overflow: visible;
   }
   .chat-sidebar:not(.collapsed) {
     transform: translateX(0);
   }
   .chat-sidebar.collapsed {
-    width: 260px;
-    overflow: hidden;
+    width: 240px;
+    overflow: visible;
     transform: translateX(-100%);
   }
 
-  /* Mobile toggle button — fixed to left edge */
+  /* Button peeks from left viewport edge when collapsed */
   .sidebar-collapse {
-    right: auto;
-    left: 100%;
+    right: -28px;
+    left: auto;
     border-radius: 0 8px 8px 0;
     height: 56px;
     width: 28px;
