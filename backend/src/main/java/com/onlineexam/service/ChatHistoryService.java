@@ -1,5 +1,6 @@
 package com.onlineexam.service;
 
+import jakarta.annotation.PostConstruct;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -27,6 +28,14 @@ public class ChatHistoryService {
   public ChatHistoryService(JdbcTemplate jdbc, StoreService storeService) {
     this.jdbc = jdbc;
     this.storeService = storeService;
+  }
+
+  @PostConstruct
+  void initTables() {
+    try {
+      jdbc.execute("CREATE TABLE IF NOT EXISTS chat_conversation (id VARCHAR(64) PRIMARY KEY, user_id VARCHAR(64) NOT NULL, title VARCHAR(200) NOT NULL, role VARCHAR(20) NOT NULL DEFAULT 'student', created_at DATETIME(3) NOT NULL, updated_at DATETIME(3) NOT NULL, INDEX idx_chat_conv_user (user_id), INDEX idx_chat_conv_updated (updated_at)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+      jdbc.execute("CREATE TABLE IF NOT EXISTS chat_message (id VARCHAR(64) PRIMARY KEY, conversation_id VARCHAR(64) NOT NULL, role VARCHAR(20) NOT NULL, content TEXT NOT NULL, reasoning TEXT, created_at DATETIME(3) NOT NULL, INDEX idx_chat_msg_conv (conversation_id)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+    } catch (Exception ignored) { }
   }
 
   /** 获取用户的会话列表（按更新时间降序，最多 200） */

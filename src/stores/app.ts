@@ -988,7 +988,11 @@ export const useAppStore = defineStore('app', () => {
     // Auto-create conversation if needed (first message in a session)
     if (!activeConversationId.value) {
       try {
-        await handleNewConversation()
+        if (!currentUser.value) return
+        const conv = await createConversation('新对话')
+        conversations.value.unshift(conv)
+        activeConversationId.value = conv.id
+        // Don't reset chatMessages here — that's the UI being displayed!
       } catch (err: any) {
         console.error('Failed to auto-create conversation:', err)
         return
