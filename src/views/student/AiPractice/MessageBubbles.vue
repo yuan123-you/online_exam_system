@@ -52,7 +52,7 @@
           <button class="copy-trigger" @click="toggleCopyMenu(idx)" :class="{ open: copyMenuIdx === idx }">
             📋 复制
           </button>
-          <div v-if="copyMenuIdx === idx" class="copy-menu">
+          <div v-if="copyMenuIdx === idx" class="copy-menu" :class="{ 'copy-menu-up': isNearBottom(idx) }">
             <button @click="copyMarkdown(msg.content, idx); copyMenuIdx = null">📝 复制 Markdown</button>
             <button @click="copyPlain(msg.content, idx); copyMenuIdx = null">📄 复制文本</button>
           </div>
@@ -65,7 +65,7 @@
           <button class="copy-trigger" @click="toggleCopyMenu(idx)" :class="{ open: copyMenuIdx === idx }">
             复制
           </button>
-          <div v-if="copyMenuIdx === idx" class="copy-menu copy-menu-right">
+          <div v-if="copyMenuIdx === idx" class="copy-menu copy-menu-right" :class="{ 'copy-menu-up': isNearBottom(idx) }">
             <button @click="copyMarkdown(msg.content, idx); copyMenuIdx = null">📝 复制 Markdown</button>
             <button @click="copyPlain(msg.content, idx); copyMenuIdx = null">📄 复制文本</button>
           </div>
@@ -198,6 +198,10 @@ const submitted = reactive<Record<number, boolean>>({})
 
 function isLast(idx: number) {
   return idx === props.messages.length - 1
+}
+
+function isNearBottom(idx: number) {
+  return idx >= props.messages.length - 3
 }
 
 // ---- Copy Plain Text (strip markdown) ----
@@ -658,6 +662,14 @@ function escapeHtml(s: string) {
 .copy-menu-right {
   right: auto;
   left: 0;
+}
+
+/* Flip upward for last messages to avoid overflowing container */
+.copy-menu-up {
+  top: auto;
+  bottom: 100%;
+  margin-top: 0;
+  margin-bottom: 4px;
 }
 
 .copy-menu button {

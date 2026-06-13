@@ -173,33 +173,43 @@ function autoResize() {
 let scrollRafId: number | null = null
 let scrollTarget = 0
 
-watch(() => currentMessages.value.length, () => nextTick(() => smoothScrollToBottom(300)))
+watch(() => currentMessages.value.length, () => nextTick(() => smoothScrollToBottom(400)))
 watch(() => activeTab.value === 'chat' ? store.chatStreamingContent : store.practiceStreamingContent,
-  () => smoothScrollToBottom(120))
+  () => smoothScrollToBottom(250))
 
 function smoothScrollToBottom(duration: number) {
   const el = msgList.value
   if (!el) return
   scrollTarget = el.scrollHeight
-  // If already animating, just update the target — the running RAF loop picks it up
-  if (scrollRafId === null) {
-    const start = el.scrollTop
-    const startTime = performance.now()
-    function animate(now: number) {
-      const elapsed = now - startTime
-      const progress = Math.min(elapsed / duration, 1)
-      // easeOutCubic for natural deceleration
-      const ease = 1 - Math.pow(1 - progress, 3)
-      el.scrollTop = start + (scrollTarget - start) * ease
-      if (progress < 1 && el.scrollTop < scrollTarget - 1) {
-        scrollRafId = requestAnimationFrame(animate)
-      } else {
-        el.scrollTop = scrollTarget
-        scrollRafId = null
-      }
-    }
-    scrollRafId = requestAnimationFrame(animate)
+  // Cancel previous animation and start fresh from current position
+  if (scrollRafId !== null) {
+    cancelAnimationFrame(scrollRafId)
+    scrollRafId = null
   }
+  const start = el.scrollTop
+  // Don't animate tiny deltas — jump directly
+  if (scrollTarget - start < 20) {
+    el.scrollTop = scrollTarget
+    return
+  }
+  // Cap max scroll distance per animation to avoid large jumps
+  const cappedTarget = Math.min(scrollTarget, start + 200)
+  const startTime = performance.now()
+  function animate(now: number) {
+    const elapsed = now - startTime
+    const progress = Math.min(elapsed / duration, 1)
+    // easeOutQuad — gentler deceleration
+    const ease = 1 - (1 - progress) * (1 - progress)
+    el.scrollTop = start + (cappedTarget - start) * ease
+    if (progress < 1) {
+      scrollRafId = requestAnimationFrame(animate)
+    } else {
+      // Final snap to true bottom
+      el.scrollTop = scrollTarget
+      scrollRafId = null
+    }
+  }
+  scrollRafId = requestAnimationFrame(animate)
 }
 </script>
 
