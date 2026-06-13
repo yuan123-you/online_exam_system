@@ -150,6 +150,14 @@ function onDelete(id: string) {
   flex: 1;
   overflow-y: auto;
   padding: 0 8px;
+  scroll-behavior: smooth;
+}
+
+.history-section::-webkit-scrollbar { width: 4px; }
+.history-section::-webkit-scrollbar-track { background: transparent; }
+.history-section::-webkit-scrollbar-thumb {
+  background: #d1d5db;
+  border-radius: 2px;
 }
 
 .history-label {

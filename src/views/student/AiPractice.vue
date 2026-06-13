@@ -182,16 +182,37 @@ function autoResize() {
   }
 }
 
-// Scroll
-watch(() => currentMessages.value.length, () => nextTick(() => scrollToBottom(false)))
-watch(() => activeTab.value === 'chat' ? store.chatStreamingContent : store.practiceStreamingContent,
-  () => scrollToBottom(true))
+// Scroll — smooth even during streaming
+let scrollRafId: number | null = null
+let scrollTarget = 0
 
-function scrollToBottom(instant: boolean) {
+watch(() => currentMessages.value.length, () => nextTick(() => smoothScrollToBottom(300)))
+watch(() => activeTab.value === 'chat' ? store.chatStreamingContent : store.practiceStreamingContent,
+  () => smoothScrollToBottom(120))
+
+function smoothScrollToBottom(duration: number) {
   const el = msgList.value
   if (!el) return
-  if (instant) el.scrollTop = el.scrollHeight
-  else el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' })
+  scrollTarget = el.scrollHeight
+  // If already animating, just update the target — the running RAF loop picks it up
+  if (scrollRafId === null) {
+    const start = el.scrollTop
+    const startTime = performance.now()
+    function animate(now: number) {
+      const elapsed = now - startTime
+      const progress = Math.min(elapsed / duration, 1)
+      // easeOutCubic for natural deceleration
+      const ease = 1 - Math.pow(1 - progress, 3)
+      el.scrollTop = start + (scrollTarget - start) * ease
+      if (progress < 1 && el.scrollTop < scrollTarget - 1) {
+        scrollRafId = requestAnimationFrame(animate)
+      } else {
+        el.scrollTop = scrollTarget
+        scrollRafId = null
+      }
+    }
+    scrollRafId = requestAnimationFrame(animate)
+  }
 }
 </script>
 
@@ -223,6 +244,15 @@ function scrollToBottom(instant: boolean) {
   gap: 14px;
   scroll-behavior: smooth;
 }
+
+/* Smooth custom scrollbar */
+.msg-area::-webkit-scrollbar { width: 6px; }
+.msg-area::-webkit-scrollbar-track { background: transparent; }
+.msg-area::-webkit-scrollbar-thumb {
+  background: #d1d5db;
+  border-radius: 3px;
+}
+.msg-area::-webkit-scrollbar-thumb:hover { background: #9ca3af; }
 
 /* ===== Main ===== */
 .chat-main {

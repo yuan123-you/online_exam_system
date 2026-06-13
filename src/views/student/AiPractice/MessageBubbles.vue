@@ -6,42 +6,44 @@
     :class="['chat-bubble', msg.role === 'user' ? 'bubble-user' : 'bubble-ai']"
   >
     <div v-if="msg.role === 'assistant'" class="bubble-avatar">🤖</div>
-    <div class="bubble-body">
-      <!-- Loading dots before first token -->
-      <div
-        v-if="msg.role === 'assistant' && isLast(idx) && streamingActive && !msg.content && !streamingReasoning"
-        class="typing-dots"
-      ><span></span><span></span><span></span></div>
+    <div class="bubble-col">
+      <div class="bubble-body">
+        <!-- Loading dots before first token -->
+        <div
+          v-if="msg.role === 'assistant' && isLast(idx) && streamingActive && !msg.content && !streamingReasoning"
+          class="typing-dots"
+        ><span></span><span></span><span></span></div>
 
-      <!-- Reasoning (deep thinking) block — during streaming: open -->
-      <div
-        v-if="msg.role === 'assistant' && isLast(idx) && streamingActive && streamingReasoning"
-        class="reasoning-block"
-      >
-        <details open>
-          <summary>🤔 深度思考中...</summary>
-          <div class="reasoning-text">{{ streamingReasoning }}</div>
-        </details>
+        <!-- Reasoning (deep thinking) block — during streaming: open -->
+        <div
+          v-if="msg.role === 'assistant' && isLast(idx) && streamingActive && streamingReasoning"
+          class="reasoning-block"
+        >
+          <details open>
+            <summary>🤔 深度思考中...</summary>
+            <div class="reasoning-text">{{ streamingReasoning }}</div>
+          </details>
+        </div>
+
+        <!-- Reasoning block — after streaming: collapsed, preserved for review -->
+        <div
+          v-if="msg.role === 'assistant' && msg.reasoning && !(isLast(idx) && streamingActive)"
+          class="reasoning-block reasoning-saved"
+        >
+          <details>
+            <summary>🤔 深度思考</summary>
+            <div class="reasoning-text">{{ msg.reasoning }}</div>
+          </details>
+        </div>
+
+        <!-- Rendered Markdown content -->
+        <div
+          v-if="msg.content"
+          class="message-content"
+          :class="{ streaming: msg.role === 'assistant' && isLast(idx) && streamingActive }"
+          v-html="renderContent(msg.content, msg.role, idx)"
+        ></div>
       </div>
-
-      <!-- Reasoning block — after streaming: collapsed, preserved for review -->
-      <div
-        v-if="msg.role === 'assistant' && msg.reasoning && !(isLast(idx) && streamingActive)"
-        class="reasoning-block reasoning-saved"
-      >
-        <details>
-          <summary>🤔 深度思考</summary>
-          <div class="reasoning-text">{{ msg.reasoning }}</div>
-        </details>
-      </div>
-
-      <!-- Rendered Markdown content -->
-      <div
-        v-if="msg.content"
-        class="message-content"
-        :class="{ streaming: msg.role === 'assistant' && isLast(idx) && streamingActive }"
-        v-html="renderContent(msg.content, msg.role, idx)"
-      ></div>
 
       <!-- Duration + Copy row (AI only, after streaming) -->
       <div v-if="msg.role === 'assistant' && msg.content && !(isLast(idx) && streamingActive)" class="msg-meta">
@@ -394,6 +396,14 @@ function escapeHtml(s: string) {
   color: var(--text); border-bottom-left-radius: 4px;
 }
 
+/* Column wrapper for bubble body + meta (keeps layout) */
+.bubble-col {
+  display: flex; flex-direction: column;
+  min-width: 0;
+}
+.bubble-user .bubble-col { align-items: flex-end; }
+.bubble-ai .bubble-col { align-items: flex-start; }
+
 /* Typing dots */
 .typing-dots { display: flex; gap: 3px; padding: 2px 0; }
 .typing-dots span {
@@ -593,14 +603,14 @@ function escapeHtml(s: string) {
 .eq-result.correct { background: #f0fdf4; color: #166534; }
 .eq-result.wrong { background: #fef2f2; color: #991b1b; }
 
-/* ===== Meta row (duration + copy) ===== */
+/* ===== Meta row (duration + copy) — outside bubble body ===== */
 .msg-meta {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-top: 8px;
-  padding-top: 8px;
-  border-top: 1px solid rgba(0,0,0,0.06);
+  gap: 8px;
+  margin-top: 6px;
+  padding: 0 4px;
 }
 .msg-meta-user {
   justify-content: flex-end;
