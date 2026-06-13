@@ -35,6 +35,7 @@ CREATE TABLE `class_info` (
   `name` varchar(50) NOT NULL,
   `major` varchar(100) NOT NULL,
   `department_id` varchar(64) NOT NULL,
+  `created_by` varchar(64) DEFAULT NULL,
   PRIMARY KEY (`id`),
   KEY `idx_class_department` (`department_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
@@ -60,6 +61,7 @@ DROP TABLE IF EXISTS `department`;
 CREATE TABLE `department` (
   `id` varchar(64) NOT NULL,
   `name` varchar(100) NOT NULL,
+  `created_by` varchar(64) DEFAULT NULL,
   PRIMARY KEY (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
@@ -91,9 +93,11 @@ CREATE TABLE `exam` (
   `end_time` datetime(3) NOT NULL,
   `anti_cheat_limit` int NOT NULL,
   `published` tinyint(1) NOT NULL DEFAULT '1',
+  `deleted` tinyint(1) NOT NULL DEFAULT '0',
   PRIMARY KEY (`id`),
   KEY `idx_exam_teacher` (`teacher_id`),
-  KEY `idx_exam_paper` (`paper_id`)
+  KEY `idx_exam_paper` (`paper_id`),
+  KEY `idx_exam_deleted` (`deleted`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
@@ -124,8 +128,10 @@ CREATE TABLE `paper` (
   `question_ids_json` json NOT NULL,
   `paper_type` varchar(50) DEFAULT NULL,
   `source_tag` varchar(100) DEFAULT NULL,
+  `deleted` tinyint(1) NOT NULL DEFAULT '0',
   PRIMARY KEY (`id`),
-  KEY `idx_paper_teacher` (`teacher_id`)
+  KEY `idx_paper_teacher` (`teacher_id`),
+  KEY `idx_paper_deleted` (`deleted`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
@@ -158,9 +164,11 @@ CREATE TABLE `question` (
   `answer_json` json NOT NULL,
   `score` int NOT NULL,
   `source_tag` varchar(100) DEFAULT NULL,
+  `deleted` tinyint(1) NOT NULL DEFAULT '0',
   PRIMARY KEY (`id`),
   KEY `idx_question_teacher` (`teacher_id`),
-  KEY `idx_question_subject` (`subject`)
+  KEY `idx_question_subject` (`subject`),
+  KEY `idx_question_deleted` (`deleted`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
