@@ -47,11 +47,6 @@
 
       <!-- Bottom input area -->
       <div class="bottom-area">
-        <!-- Quick chips for chat -->
-        <div v-if="activeTab === 'chat'" class="quick-chips">
-          <button v-for="c in chatQuickChips" :key="c.label" @click="switchTab('practice'); send(c.prompt)">{{ c.label }}</button>
-        </div>
-
         <!-- Input with inline send/stop button -->
         <div class="input-row">
           <div class="input-wrapper">
@@ -114,21 +109,15 @@ const currentLoading = computed(() => activeTab.value === 'chat' ? store.chatLoa
 const currentStreamingActive = computed(() => activeTab.value === 'chat' ? store.chatStreamingActive : store.practiceStreamingActive)
 const currentStreamingReasoning = computed(() => activeTab.value === 'chat' ? store.chatStreamingReasoning : store.practiceStreamingReasoning)
 
-// Quick chips
-const chatQuickChips = [
-  { label: '📐 高等数学' },
-  { label: '⚛️ 大学物理' },
-  { label: '🧪 有机化学' },
-  { label: '📜 近代历史' },
-]
-
 const practiceQuickChips = [
   { icon: '📐', label: '高等数学', prompt: '帮我出5道高等数学单选题，涵盖微积分、线性代数，难度较难，附详细解析' },
-  { icon: '⚛️', label: '大学物理', prompt: '帮我出5道大学物理填空题，涵盖力学、电磁学，附详细解析' },
-  { icon: '🧪', label: '有机化学', prompt: '帮我出5道有机化学单选题，涵盖官能团反应、立体化学，难度较难，附详细解析' },
-  { icon: '📜', label: '世界历史', prompt: '帮我出5道世界历史判断题，涵盖文艺复兴、工业革命，附详细解析' },
-  { icon: '💹', label: '经济学', prompt: '帮我出5道经济学基础单选题，涵盖微观经济学、宏观经济学，附详细解析' },
-  { icon: '🇬🇧', label: '英语六级', prompt: '帮我出5道英语六级难度单选题，涵盖高阶词汇辨析、复杂语法，附详细解析' },
+  { icon: '📖', label: '大学语文', prompt: '帮我出5道大学语文单选题，涵盖诗词鉴赏、文言文阅读、文学常识，附详细解析' },
+  { icon: '🏛️', label: '马克思主义', prompt: '帮我出5道马克思主义基本原理单选题，涵盖唯物辩证法、剩余价值理论、科学社会主义，附详细解析' },
+  { icon: '🗳️', label: '政治', prompt: '帮我出5道政治理论单选题，涵盖中国特色社会主义、时政热点、思想道德修养，附详细解析' },
+  { icon: '📜', label: '中国近现代史', prompt: '帮我出5道中国近现代史判断题，涵盖鸦片战争到改革开放重要事件，附详细解析' },
+  { icon: '🇬🇧', label: '大学英语', prompt: '帮我出5道大学英语单选题，涵盖词汇辨析、语法结构、阅读理解，附详细解析' },
+  { icon: '⚛️', label: '大学物理', prompt: '帮我出5道大学物理填空题，涵盖力学、电磁学、热学，附详细解析' },
+  { icon: '💻', label: '计算机基础', prompt: '帮我出5道计算机基础单选题，涵盖数据结构、操作系统、计算机网络，附详细解析' },
 ]
 
 const suggestions = [
