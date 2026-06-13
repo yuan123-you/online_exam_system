@@ -743,6 +743,7 @@ export function aiChatStream(
     body: JSON.stringify({
       message: params.message,
       messages: params.messages || [],
+      deepThinking: params.deepThinking || false,
     }),
     signal: controller.signal,
   }).then(async (response) => {

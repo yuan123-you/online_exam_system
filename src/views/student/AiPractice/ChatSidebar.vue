@@ -90,7 +90,9 @@ function onDelete(id: string) {
 
 .chat-sidebar.collapsed {
   width: 0;
+  min-width: 0;
   border-right: none;
+  overflow: visible;
 }
 
 .sidebar-collapse {
