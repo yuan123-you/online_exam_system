@@ -5,18 +5,12 @@
 
     <!-- Main chat area -->
     <div class="chat-main">
-      <!-- Top bar: model info + deep thinking toggle -->
+      <!-- Top bar -->
       <header class="top-bar">
         <div class="tb-left">
           <span class="tb-title">{{ activeTab === 'chat' ? 'AI 对话' : 'AI 练题' }}</span>
-          <span class="tb-model">GLM-4.7-Flash</span>
         </div>
         <div class="tb-right">
-          <!-- Deep thinking toggle -->
-          <label class="think-toggle" title="开启后 AI 先深度思考再回答">
-            <input type="checkbox" v-model="store.deepThinkingEnabled" />
-            <span class="tt-label">🧠 深度思考</span>
-          </label>
           <!-- Tab switcher -->
           <div class="tab-switcher">
             <button :class="{ active: activeTab === 'chat' }" @click="switchTab('chat')">💬 对话</button>
@@ -276,34 +270,7 @@ function smoothScrollToBottom(duration: number) {
 
 .tb-left { display: flex; align-items: center; gap: 8px; }
 .tb-title { font-size: 14px; font-weight: 600; color: #111827; }
-.tb-model { font-size: 11px; color: #9ca3af; background: #f3f4f6; padding: 2px 8px; border-radius: 4px; }
-
 .tb-right { display: flex; align-items: center; gap: 12px; }
-
-/* Deep thinking toggle */
-.think-toggle {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  cursor: pointer;
-  user-select: none;
-  padding: 4px 10px;
-  border-radius: 16px;
-  border: 1px solid #e5e7eb;
-  font-size: 12px;
-  color: #6b7280;
-  transition: all 0.15s;
-  background: #fff;
-}
-.think-toggle:hover { border-color: #d1d5db; }
-.think-toggle input { display: none; }
-.think-toggle:has(input:checked) {
-  background: #7c3aed;
-  border-color: #7c3aed;
-  color: #fff;
-  font-weight: 700;
-  box-shadow: 0 0 0 3px rgba(124,58,237,0.2);
-}
 
 /* Tab switcher */
 .tab-switcher {
@@ -481,12 +448,7 @@ function smoothScrollToBottom(duration: number) {
   }
   .tb-right { gap: 6px; }
   .tb-title { font-size: 13px; }
-  .tb-model { font-size: 10px; }
 
-  .think-toggle {
-    padding: 3px 8px;
-    font-size: 11px;
-  }
   .tab-switcher button {
     padding: 4px 10px;
     font-size: 11px;

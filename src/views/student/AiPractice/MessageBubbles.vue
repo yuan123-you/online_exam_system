@@ -644,9 +644,9 @@ function escapeHtml(s: string) {
 
 .copy-menu {
   position: absolute;
-  bottom: 100%;
+  top: 100%;
   right: 0;
-  margin-bottom: 4px;
+  margin-top: 4px;
   background: #fff;
   border: 1px solid #e5e7eb;
   border-radius: 8px;
