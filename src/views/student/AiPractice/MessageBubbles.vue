@@ -20,19 +20,19 @@
           class="reasoning-block"
         >
           <details open>
-            <summary>🤔 深度思考中...</summary>
-            <div class="reasoning-text">{{ streamingReasoning }}</div>
+            <summary>💭 深度思考中...</summary>
+            <div class="reasoning-text" v-html="formatReasoning(streamingReasoning)"></div>
           </details>
         </div>
 
-        <!-- Reasoning block — after streaming: open by default for transparency -->
+        <!-- Reasoning block — after streaming: collapsed by default, user can expand -->
         <div
           v-if="msg.role === 'assistant' && msg.reasoning && !(isLast(idx) && streamingActive)"
           class="reasoning-block reasoning-saved"
         >
-          <details open>
-            <summary>🤔 AI 思考过程（原始输出）</summary>
-            <div class="reasoning-text">{{ msg.reasoning }}</div>
+          <details>
+            <summary>💭 深度思考</summary>
+            <div class="reasoning-text" v-html="formatReasoning(msg.reasoning)"></div>
           </details>
         </div>
 
@@ -48,6 +48,7 @@
       <!-- Duration + Copy row (AI only, after streaming) -->
       <div v-if="msg.role === 'assistant' && msg.content && !(isLast(idx) && streamingActive)" class="msg-meta">
         <span v-if="msg.duration != null" class="msg-duration">{{ formatDuration(msg.duration) }}</span>
+        <button v-if="(msg as any)._retryMessage" class="retry-btn" @click="retryMessage(idx)">🔄 重新生成</button>
         <button class="copy-btn" @click="copyPlain(msg.content, idx)">📋 复制</button>
       </div>
 
@@ -159,10 +160,11 @@ import { typeLabel } from '@/utils/format'
 import type { AiQuestion } from '@/api/client'
 
 const props = defineProps<{
-  messages: Array<{ role: string; content: string; reasoning?: string; duration?: number }>
+  messages: Array<{ role: string; content: string; reasoning?: string; duration?: number; _retryMessage?: string }>
   streamingActive: boolean
   streamingReasoning: string
   loading: boolean
+  tab?: 'chat' | 'practice'
 }>()
 
 const store = useAppStore()
@@ -176,6 +178,42 @@ function formatDuration(seconds: number): string {
   return m + 'm ' + s + 's'
 }
 
+/** Format raw AI reasoning text into clean, readable HTML */
+function formatReasoning(text: string): string {
+  if (!text) return ''
+  let html = escapeHtml(text)
+
+  // Collapse multiple blank lines into single paragraph breaks
+  html = html.replace(/\n{3,}/g, '\n\n')
+
+  // Convert **bold** and *italic* markdown
+  html = html.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+  html = html.replace(/\*([^*]+)\*/g, '<em>$1</em>')
+
+  // Convert markdown headings (### Title)
+  html = html.replace(/^### (.+)$/gm, '<h5 class="reasoning-h5">$1</h5>')
+  html = html.replace(/^## (.+)$/gm, '<h4 class="reasoning-h4">$1</h4>')
+
+  // Convert numbered lists (1. Item)
+  html = html.replace(/^(\d+)\. (.+)$/gm, '<span class="reasoning-li">$1. $2</span>')
+  html = html.replace(/^- (.+)$/gm, '<span class="reasoning-li">• $2</span>')
+
+  // Convert inline code
+  html = html.replace(/`([^`]+)`/g, '<code class="reasoning-code">$1</code>')
+
+  // Paragraph breaks: double newlines → paragraphs, single newlines → line breaks
+  html = html.replace(/\n\n/g, '</p><p class="reasoning-p">')
+  html = html.replace(/\n/g, '<br>')
+
+  // Wrap in paragraph
+  html = '<p class="reasoning-p">' + html + '</p>'
+
+  // Clean up empty paragraphs
+  html = html.replace(/<p class="reasoning-p"><\/p>/g, '')
+
+  return html
+}
+
 // Per-message answer state
 const answers = reactive<Record<number, Record<number, string[]>>>({})
 const textAnswers = reactive<Record<number, Record<number, string>>>({})
@@ -185,6 +223,10 @@ const explanationsOpen = reactive<Record<number, Record<number, boolean>>>({})
 
 function isLast(idx: number) {
   return idx === props.messages.length - 1
+}
+
+function retryMessage(idx: number) {
+  store.handleRetryMessage(idx, props.tab || 'chat')
 }
 
 // Toggle explanation visibility
@@ -252,22 +294,78 @@ async function copyToClipboard(text: string, idx: number) {
 }
 
 // ---- Question parsing ----
+/** Extract JSON question array from AI response, handling markdown fences and bare arrays */
 function parsedQuestions(msgIdx: number): AiQuestion[] {
   const msg = props.messages[msgIdx]
   if (!msg || msg.role !== 'assistant') return []
-  try {
-    const content = msg.content
-    // Try extracting JSON array from content
-    const jsonMatch = content.match(/\[[\s\S]*\]/)
-    if (!jsonMatch) return []
-    const parsed = JSON.parse(jsonMatch[0])
-    if (Array.isArray(parsed) && parsed.length > 0 && parsed[0].title) {
-      return parsed as AiQuestion[]
-    }
-    return []
-  } catch {
-    return []
+  const content = msg.content
+  if (!content) return []
+
+  // Multiple extraction strategies, tried in order
+  let jsonStr = ''
+
+  // Strategy 1: extract from ```json ... ``` code fence
+  const fenceMatch = content.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/)
+  if (fenceMatch) {
+    jsonStr = fenceMatch[1].trim()
   }
+
+  // Strategy 2: balanced bracket extraction for bare JSON arrays
+  if (!jsonStr) {
+    const startIdx = content.indexOf('[')
+    if (startIdx === -1) return []
+    let depth = 0
+    let inString = false
+    let escaped = false
+    for (let i = startIdx; i < content.length; i++) {
+      const ch = content[i]
+      if (escaped) { escaped = false; continue }
+      if (ch === '\\') { escaped = true; continue }
+      if (ch === '"') { inString = !inString; continue }
+      if (inString) continue
+      if (ch === '[') depth++
+      else if (ch === ']') {
+        depth--
+        if (depth === 0) {
+          jsonStr = content.substring(startIdx, i + 1)
+          break
+        }
+      }
+    }
+  }
+
+  if (!jsonStr) return []
+
+  // Try to parse, with recovery for common AI output issues
+  const parsed = tryParseJson(jsonStr)
+  if (Array.isArray(parsed) && parsed.length > 0 && parsed[0].title) {
+    return parsed as AiQuestion[]
+  }
+  return []
+}
+
+/** Parse JSON with recovery: trailing commas, unescaped newlines in strings */
+function tryParseJson(raw: string): unknown {
+  // Attempt 1: direct parse
+  try { return JSON.parse(raw) } catch { /* continue */ }
+
+  // Attempt 2: remove trailing commas before ] or }
+  try {
+    const cleaned = raw.replace(/,\s*([}\]])/g, '$1')
+    return JSON.parse(cleaned)
+  } catch { /* continue */ }
+
+  // Attempt 3: try to fix unescaped quotes in strings (common AI mistake)
+  try {
+    // Replace smart quotes with straight quotes
+    const fixed = raw
+      .replace(/[\u201C\u201D]/g, '"')
+      .replace(/[\u2018\u2019]/g, "'")
+      .replace(/，/g, ',')  // Chinese commas in JSON
+    return JSON.parse(fixed)
+  } catch { /* continue */ }
+
+  return null
 }
 
 function extractKey(opt: string): string {
@@ -338,6 +436,12 @@ function submitAnswers(msgIdx: number) {
     results[msgIdx][qi] = JSON.stringify(student.sort()) === JSON.stringify(correct.sort())
   }
 
+  // Auto-expand explanations for all questions after submission
+  if (!explanationsOpen[msgIdx]) explanationsOpen[msgIdx] = {}
+  for (let qi = 0; qi < qs.length; qi++) {
+    explanationsOpen[msgIdx][qi] = true
+  }
+
   const cc = Object.values(results[msgIdx]).filter(Boolean).length
   store.showToast(`练习完成！正确 ${cc}/${qs.length}`, cc === qs.length ? 'success' : 'info')
 }
@@ -346,17 +450,96 @@ function submitAnswers(msgIdx: number) {
 function renderContent(text: string, role: string, idx: number): string {
   if (role === 'user') return escapeHtml(text)
 
-  const parsed = parsedQuestions(idx)
-  let display = text
-  if (parsed.length > 0) {
-    const m = text.match(/```(?:json)?\s*[\s\S]*?```|\[[\s\S]*\]/)
-    if (m) {
-      display = text.substring(0, m.index!) + text.substring(m.index! + m[0].length)
-      if (!display.trim()) return '<p style="color:var(--muted);font-style:italic;">已为你生成下方练习题 👇</p>'
+  const isPractice = props.tab === 'practice'
+  const isStreaming = isLast(idx) && props.streamingActive
+
+  // --- Practice mode: detect and hide raw JSON question data ---
+  if (isPractice) {
+    const jsonRange = findJsonRange(text)
+
+    if (jsonRange) {
+      // JSON found — extract surrounding text (before/after the JSON block)
+      const before = text.substring(0, jsonRange.start).trim()
+      const after = text.substring(jsonRange.end).trim()
+      const nonJson = (before + ' ' + after).trim()
+
+      if (nonJson) {
+        // There's explanatory text alongside the JSON — render that
+        return renderMarkdown(nonJson)
+      }
+
+      // Entire content is just the JSON array
+      if (isStreaming) {
+        // Still generating — show animated placeholder
+        return '<div class="generating-hint">📝 正在生成题目<span class="gen-dots">...</span></div>'
+      }
+      // Streaming complete, questions are parsed and displayed as cards below
+      const parsed = parsedQuestions(idx)
+      if (parsed.length > 0) {
+        return `<p style="color:var(--muted);font-style:italic;">📋 已生成 ${parsed.length} 道练习题，请在下方作答 👇</p>`
+      }
+      // Parsing failed — show a friendly fallback (not the raw JSON)
+      return '<p style="color:var(--muted);">📋 题目已生成，点击下方卡片作答</p>'
+    }
+
+    // JSON not fully formed yet but content starts like JSON — hide during streaming
+    if (isStreaming && /^\s*[\[`]/.test(text)) {
+      return '<div class="generating-hint">📝 正在生成题目<span class="gen-dots">...</span></div>'
     }
   }
 
-  let html = escapeHtml(display)
+  // --- Chat mode (or practice with non-JSON content): normal markdown ---
+  return renderMarkdown(text)
+}
+
+/** Find the range [start, end) of a JSON question array in text. Returns null if not found. */
+function findJsonRange(text: string): { start: number; end: number } | null {
+  // Check for ```json fence first
+  const fenceMatch = text.match(/```(?:json)?\s*\n?/)
+  if (fenceMatch) {
+    const fenceStart = fenceMatch.index!
+    const contentStart = fenceStart + fenceMatch[0].length
+    const endFence = text.indexOf('```', contentStart)
+    if (endFence !== -1) {
+      return { start: fenceStart, end: endFence + 3 }
+    }
+    // Unclosed fence during streaming — treat from fence start to end
+    return { start: fenceStart, end: text.length }
+  }
+
+  // Check for bare JSON array
+  const arrStart = text.indexOf('[')
+  if (arrStart === -1) return null
+
+  // Quick heuristic: does this look like a question array?
+  // Check within first 200 chars for question-like fields
+  const peek = text.substring(arrStart, Math.min(arrStart + 200, text.length))
+  if (!/\b"(?:title|type|options|answer|explanation)"\s*:/.test(peek)) return null
+
+  // Find matching closing bracket
+  let depth = 0
+  let inString = false
+  let escaped = false
+  for (let i = arrStart; i < text.length; i++) {
+    const ch = text[i]
+    if (escaped) { escaped = false; continue }
+    if (ch === '\\') { escaped = true; continue }
+    if (ch === '"') { inString = !inString; continue }
+    if (inString) continue
+    if (ch === '[') depth++
+    else if (ch === ']') {
+      depth--
+      if (depth === 0) return { start: arrStart, end: i + 1 }
+    }
+  }
+  // Unclosed bracket during streaming — hide from start to end
+  if (depth > 0) return { start: arrStart, end: text.length }
+  return null
+}
+
+/** Render plain text as markdown HTML */
+function renderMarkdown(text: string): string {
+  let html = escapeHtml(text)
   html = html.replace(/```(\w*)\n?([\s\S]*?)```/g, '<pre class="md-code"><code>$2</code></pre>')
   html = html.replace(/`([^`]+)`/g, '<code class="md-inline">$1</code>')
   html = html.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
@@ -429,16 +612,40 @@ function escapeHtml(s: string) {
 /* Reasoning */
 .reasoning-block { margin-bottom: 6px; }
 .reasoning-block summary { font-size: 12px; color: #8b5cf6; cursor: pointer; font-weight: 500; }
-.reasoning-block.reasoning-saved summary { color: var(--muted); font-weight: 400; }
+.reasoning-block.reasoning-saved summary { color: #6b7280; font-weight: 500; }
+.reasoning-block summary:hover { color: #7c3aed; }
 .reasoning-text {
-  font-size: 11px; line-height: 1.4; color: #7c3aed;
-  background: #f5f3ff; padding: 6px 8px; border-radius: 5px;
-  white-space: pre-wrap; max-height: 160px; overflow-y: auto; margin-top: 3px;
+  font-size: 12px; line-height: 1.6; color: #5b21b6;
+  background: #f5f3ff; padding: 10px 12px; border-radius: 6px;
+  max-height: 200px; overflow-y: auto; margin-top: 4px;
 }
 .reasoning-saved .reasoning-text {
-  color: var(--muted);
-  background: var(--bg-alt, #f5f5f5);
+  color: #4b5563;
+  background: #f9fafb;
+  border: 1px solid #e5e7eb;
 }
+
+/* Reasoning formatted content */
+.reasoning-text :deep(.reasoning-p) { margin: 2px 0; }
+.reasoning-text :deep(.reasoning-h4) {
+  font-size: 13px; font-weight: 600; color: #374151;
+  margin: 8px 0 4px; padding-bottom: 2px;
+  border-bottom: 1px solid #e5e7eb;
+}
+.reasoning-text :deep(.reasoning-h5) {
+  font-size: 12px; font-weight: 600; color: #4b5563;
+  margin: 6px 0 2px;
+}
+.reasoning-text :deep(.reasoning-li) {
+  display: block; font-size: 12px;
+  padding: 1px 0 1px 8px; color: #4b5563;
+}
+.reasoning-text :deep(.reasoning-code) {
+  background: rgba(0,0,0,0.06); padding: 1px 4px;
+  border-radius: 3px; font-size: 11px; font-family: monospace;
+}
+.reasoning-text :deep(strong) { color: #374151; font-weight: 600; }
+.reasoning-text :deep(em) { color: #6b7280; }
 
 /* Message content */
 .message-content { word-break: break-word; }
@@ -451,6 +658,37 @@ function escapeHtml(s: string) {
 }
 @keyframes cursor-pulse {
   0%, 100% { opacity: 0.25; }
+  50% { opacity: 1; }
+}
+
+/* Generating hint — shown while AI streams question JSON */
+.message-content :deep(.generating-hint) {
+  color: #6366f1;
+  font-size: 13px;
+  font-weight: 500;
+  padding: 4px 0;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.message-content :deep(.gen-dots) {
+  display: inline-flex;
+  gap: 1px;
+}
+.message-content :deep(.gen-dots)::before {
+  content: '.';
+  animation: gen-dot 1.4s infinite step-end both;
+}
+.message-content :deep(.gen-dots)::after {
+  content: '..';
+  animation: gen-dots 1.4s infinite step-end both;
+}
+@keyframes gen-dot {
+  0%, 100% { opacity: 0; }
+  50% { opacity: 1; }
+}
+@keyframes gen-dots {
+  0% { opacity: 0; }
   50% { opacity: 1; }
 }
 
@@ -686,6 +924,24 @@ function escapeHtml(s: string) {
   border-color: #6366f1;
   color: #6366f1;
   background: #eef2ff;
+}
+
+/* Retry button for failed messages */
+.retry-btn {
+  padding: 4px 12px;
+  border: 1px solid #fbbf24;
+  border-radius: 6px;
+  background: #fffbeb;
+  color: #b45309;
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.15s;
+  margin-right: 4px;
+}
+.retry-btn:hover {
+  border-color: #f59e0b;
+  background: #fef3c7;
+  color: #92400e;
 }
 
 /* ===== Responsive — Mobile ===== */

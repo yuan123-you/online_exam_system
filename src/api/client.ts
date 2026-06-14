@@ -371,11 +371,135 @@ export interface SseError {
 }
 
 /**
- * 流式调用 AI 练习（学生端）- 使用 fetch + ReadableStream 消费 SSE
- * @param params 与 aiPracticeQuestions 相同
- * @param onChunk 每收到一个 chunk 时回调 (思考或内容片段)
- * @param onComplete 流完成时回调 (携带完整内容)
- * @param onError 出错时回调
+ * Shared SSE streaming engine — handles fetch, SSE parsing, auto-retry on 429/503.
+ * All three AI streaming functions delegate to this to avoid code duplication.
+ */
+function sseStream(
+  endpoint: string,
+  body: Record<string, unknown>,
+  onChunk: (chunk: SseChunk) => void,
+  onComplete: (data: SseComplete) => void,
+  onError: (error: string) => void,
+  onFinally?: () => void,
+  maxRetries: number = 2,
+): AbortController {
+  const controller = new AbortController();
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (currentAuthToken) headers['X-User-Id'] = currentAuthToken;
+
+  const doFetch = async (attempt: number): Promise<void> => {
+    try {
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(body),
+        signal: controller.signal,
+      });
+
+      // Auto-retry on 429 (rate limit) or 503 (service unavailable)
+      if (!response.ok && (response.status === 429 || response.status === 503) && attempt < maxRetries) {
+        const waitMs = 1500 * (attempt + 1) * (attempt + 1);
+        await new Promise(r => setTimeout(r, waitMs));
+        if (controller.signal.aborted) return;
+        return doFetch(attempt + 1);
+      }
+
+      if (!response.ok) {
+        const text = await response.text();
+        // Try to extract a meaningful error message from JSON body
+        let friendlyMsg = `请求失败 (HTTP ${response.status})`;
+        try {
+          const json = JSON.parse(text);
+          if (json.message) friendlyMsg = json.message;
+          else if (json.error) friendlyMsg = json.error;
+        } catch {
+          // Extract from raw text if not JSON
+          const clean = text.replace(/<[^>]+>/g, '').trim();
+          if (clean && clean.length < 200) friendlyMsg = clean;
+        }
+        if (response.status === 429) friendlyMsg = friendlyMsg + '（已自动重试，仍然繁忙，请稍后再试）';
+        onError(friendlyMsg);
+        onFinally?.();
+        return;
+      }
+
+      const reader = response.body?.getReader();
+      if (!reader) {
+        onError('响应数据不可读取');
+        onFinally?.();
+        return;
+      }
+
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop() || '';
+
+          let currentEvent = '';
+          let currentData = '';
+
+          for (const line of lines) {
+            if (line.startsWith('event: ')) {
+              currentEvent = line.substring(7).trim();
+            } else if (line.startsWith('event:')) {
+              currentEvent = line.substring(6).trim();
+            } else if (line.startsWith('data: ')) {
+              currentData = line.substring(6).trim();
+            } else if (line.startsWith('data:')) {
+              currentData = line.substring(5).trim();
+            } else if (line === '') {
+              if (currentData) {
+                try {
+                  const parsed = JSON.parse(currentData);
+                  if (currentEvent === 'chunk') {
+                    onChunk(parsed as SseChunk);
+                  } else if (currentEvent === 'complete') {
+                    onComplete(parsed as SseComplete);
+                  } else if (currentEvent === 'error') {
+                    onError(parsed.error || 'AI 请求出错');
+                  }
+                } catch { /* skip malformed JSON */ }
+              }
+              currentEvent = '';
+              currentData = '';
+            }
+          }
+        }
+      } catch (err: unknown) {
+        if ((err as Error)?.name !== 'AbortError') {
+          onError(String(err));
+        }
+      } finally {
+        reader.releaseLock();
+        onFinally?.();
+      }
+    } catch (err: unknown) {
+      if ((err as Error)?.name !== 'AbortError') {
+        // Retry on network errors
+        if (attempt < maxRetries) {
+          const waitMs = 1000 * (attempt + 1);
+          await new Promise(r => setTimeout(r, waitMs));
+          if (!controller.signal.aborted) return doFetch(attempt + 1);
+        }
+        onError('网络连接失败，请检查网络后重试');
+      }
+      onFinally?.();
+    }
+  };
+
+  doFetch(0);
+  return controller;
+}
+
+/**
+ * 流式调用 AI 练习（学生端）
  */
 export function aiPracticeQuestionsStream(
   params: {
@@ -391,91 +515,7 @@ export function aiPracticeQuestionsStream(
   onError: (error: string) => void,
   onFinally?: () => void
 ): AbortController {
-  const controller = new AbortController();
-  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-  if (currentAuthToken) headers['X-User-Id'] = currentAuthToken;
-
-  fetch('/api/ai/practice-questions/stream', {
-    method: 'POST',
-    headers,
-    body: JSON.stringify(params),
-    signal: controller.signal,
-  }).then(async (response) => {
-    if (!response.ok) {
-      const text = await response.text();
-      onError(`HTTP ${response.status}: ${text.substring(0, 200)}`);
-      onFinally?.();
-      return;
-    }
-
-    const reader = response.body?.getReader();
-    if (!reader) {
-      onError('Response body is not readable');
-      onFinally?.();
-      return;
-    }
-
-    const decoder = new TextDecoder();
-    let buffer = '';
-
-    try {
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        buffer += decoder.decode(value, { stream: true });
-        // Parse SSE events from the buffer
-        const lines = buffer.split('\n');
-        buffer = lines.pop() || ''; // Keep incomplete line in buffer
-
-        let currentEvent = '';
-        let currentData = '';
-
-        for (const line of lines) {
-          // Handle both "event: " and "event:" (some SSE implementations omit the space)
-          if (line.startsWith('event: ')) {
-            currentEvent = line.substring(7).trim();
-          } else if (line.startsWith('event:')) {
-            currentEvent = line.substring(6).trim();
-          } else if (line.startsWith('data: ')) {
-            currentData = line.substring(6).trim();
-          } else if (line.startsWith('data:')) {
-            currentData = line.substring(5).trim();
-          } else if (line === '') {
-            // Empty line = end of event
-            if (currentData) {
-              try {
-                const parsed = JSON.parse(currentData);
-                if (currentEvent === 'chunk') {
-                  onChunk(parsed as SseChunk);
-                } else if (currentEvent === 'complete') {
-                  onComplete(parsed as SseComplete);
-                } else if (currentEvent === 'error') {
-                  onError(parsed.error || 'Unknown error');
-                }
-              } catch { /* skip malformed JSON */ }
-            }
-            currentEvent = '';
-            currentData = '';
-          }
-        }
-      }
-    } catch (err: unknown) {
-      if ((err as Error)?.name !== 'AbortError') {
-        onError(String(err));
-      }
-    } finally {
-      reader.releaseLock();
-      onFinally?.();
-    }
-  }).catch((err: unknown) => {
-    if ((err as Error)?.name !== 'AbortError') {
-      onError(String(err));
-    }
-    onFinally?.();
-  });
-
-  return controller;
+  return sseStream('/api/ai/practice-questions/stream', params, onChunk, onComplete, onError, onFinally);
 }
 
 /**
@@ -495,88 +535,7 @@ export function aiGenerateQuestionsStream(
   onError: (error: string) => void,
   onFinally?: () => void
 ): AbortController {
-  const controller = new AbortController();
-  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-  if (currentAuthToken) headers['X-User-Id'] = currentAuthToken;
-
-  fetch('/api/ai/generate-questions/stream', {
-    method: 'POST',
-    headers,
-    body: JSON.stringify(params),
-    signal: controller.signal,
-  }).then(async (response) => {
-    if (!response.ok) {
-      const text = await response.text();
-      onError(`HTTP ${response.status}: ${text.substring(0, 200)}`);
-      onFinally?.();
-      return;
-    }
-
-    const reader = response.body?.getReader();
-    if (!reader) {
-      onError('Response body is not readable');
-      onFinally?.();
-      return;
-    }
-
-    const decoder = new TextDecoder();
-    let buffer = '';
-
-    try {
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split('\n');
-        buffer = lines.pop() || '';
-
-        let currentEvent = '';
-        let currentData = '';
-
-        for (const line of lines) {
-          if (line.startsWith('event: ')) {
-            currentEvent = line.substring(7).trim();
-          } else if (line.startsWith('event:')) {
-            currentEvent = line.substring(6).trim();
-          } else if (line.startsWith('data: ')) {
-            currentData = line.substring(6).trim();
-          } else if (line.startsWith('data:')) {
-            currentData = line.substring(5).trim();
-          } else if (line === '') {
-            if (currentData) {
-              try {
-                const parsed = JSON.parse(currentData);
-                if (currentEvent === 'chunk') {
-                  onChunk(parsed as SseChunk);
-                } else if (currentEvent === 'complete') {
-                  onComplete(parsed as SseComplete);
-                } else if (currentEvent === 'error') {
-                  onError(parsed.error || 'Unknown error');
-                }
-              } catch { /* skip */ }
-            }
-            currentEvent = '';
-            currentData = '';
-          }
-        }
-      }
-    } catch (err: unknown) {
-      if ((err as Error)?.name !== 'AbortError') {
-        onError(String(err));
-      }
-    } finally {
-      reader.releaseLock();
-      onFinally?.();
-    }
-  }).catch((err: unknown) => {
-    if ((err as Error)?.name !== 'AbortError') {
-      onError(String(err));
-    }
-    onFinally?.();
-  });
-
-  return controller;
+  return sseStream('/api/ai/generate-questions/stream', params, onChunk, onComplete, onError, onFinally);
 }
 
 export interface AiQuestion {
@@ -720,7 +679,7 @@ export function aiChat(params: {
 }
 
 /**
- * 流式 AI 对话 - 使用 fetch + ReadableStream 消费 SSE
+ * 流式 AI 对话
  */
 export function aiChatStream(
   params: {
@@ -733,92 +692,11 @@ export function aiChatStream(
   onError: (error: string) => void,
   onFinally?: () => void,
 ): AbortController {
-  const controller = new AbortController();
-  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-  if (currentAuthToken) headers['X-User-Id'] = currentAuthToken;
-
-  fetch('/api/ai/chat/stream', {
-    method: 'POST',
-    headers,
-    body: JSON.stringify({
-      message: params.message,
-      messages: params.messages || [],
-      deepThinking: params.deepThinking || false,
-    }),
-    signal: controller.signal,
-  }).then(async (response) => {
-    if (!response.ok) {
-      const text = await response.text();
-      onError(`HTTP ${response.status}: ${text.substring(0, 200)}`);
-      onFinally?.();
-      return;
-    }
-
-    const reader = response.body?.getReader();
-    if (!reader) {
-      onError('Response body is not readable');
-      onFinally?.();
-      return;
-    }
-
-    const decoder = new TextDecoder();
-    let buffer = '';
-
-    try {
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split('\n');
-        buffer = lines.pop() || '';
-
-        let currentEvent = '';
-        let currentData = '';
-
-        for (const line of lines) {
-          if (line.startsWith('event: ')) {
-            currentEvent = line.substring(7).trim();
-          } else if (line.startsWith('event:')) {
-            currentEvent = line.substring(6).trim();
-          } else if (line.startsWith('data: ')) {
-            currentData = line.substring(6).trim();
-          } else if (line.startsWith('data:')) {
-            currentData = line.substring(5).trim();
-          } else if (line === '') {
-            if (currentData) {
-              try {
-                const parsed = JSON.parse(currentData);
-                if (currentEvent === 'chunk') {
-                  onChunk(parsed as SseChunk);
-                } else if (currentEvent === 'complete') {
-                  onComplete(parsed as SseComplete);
-                } else if (currentEvent === 'error') {
-                  onError(parsed.error || 'Unknown error');
-                }
-              } catch { /* skip */ }
-            }
-            currentEvent = '';
-            currentData = '';
-          }
-        }
-      }
-    } catch (err: unknown) {
-      if ((err as Error)?.name !== 'AbortError') {
-        onError(String(err));
-      }
-    } finally {
-      reader.releaseLock();
-      onFinally?.();
-    }
-  }).catch((err: unknown) => {
-    if ((err as Error)?.name !== 'AbortError') {
-      onError(String(err));
-    }
-    onFinally?.();
-  });
-
-  return controller;
+  return sseStream('/api/ai/chat/stream', {
+    message: params.message,
+    messages: params.messages || [],
+    deepThinking: params.deepThinking || false,
+  }, onChunk, onComplete, onError, onFinally);
 }
 
 // ========== Chat History API ==========

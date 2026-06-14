@@ -8,9 +8,10 @@
     <meta name="color-scheme" content="light" />
     <title>在线考试系统</title>
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📝</text></svg>" />
-    <script type="module" crossorigin src="/assets/index-B7AHLJkJ.js"></script>
-    <link rel="modulepreload" crossorigin href="/assets/app-DyoxAgQy.js">
-    <link rel="stylesheet" crossorigin href="/assets/index-n8zf6yNG.css">
+    <link rel="stylesheet" href="/styles.css" />
+    <script type="module" crossorigin src="/assets/index-DZue19hA.js"></script>
+    <link rel="modulepreload" crossorigin href="/assets/app-Btwk2SSD.js">
+    <link rel="stylesheet" crossorigin href="/assets/index-DRn_Mr5H.css">
   </head>
   <body>
     <div id="app"></div>

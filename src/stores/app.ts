@@ -167,6 +167,8 @@ export const useAppStore = defineStore('app', () => {
   const conversations = ref<Conversation[]>([])
   const activeConversationId = ref<string | null>(null)
   const conversationsLoading = ref(false)
+  // Track how many messages have been persisted per conversation to avoid re-saving duplicates
+  const persistedCount: Record<string, number> = {}
 
   // User preference state (personalized recommendations)
   const userPreferences = ref<UserPreference | null>(null)
@@ -529,6 +531,8 @@ export const useAppStore = defineStore('app', () => {
     conversations.value = []
     activeConversationId.value = null
     conversationsLoading.value = false
+    // Clear persisted-count tracking
+    for (const k of Object.keys(persistedCount)) delete persistedCount[k]
     userPreferences.value = null
     preferencesLoading.value = false
     deepThinkingEnabled.value = false
@@ -991,6 +995,8 @@ export const useAppStore = defineStore('app', () => {
       const conv = await createConversation('新对话')
       conversations.value.unshift(conv)
       activeConversationId.value = conv.id
+      persistedCount[`chat:${conv.id}`] = 0
+      persistedCount[`practice:${conv.id}`] = 0
       chatMessages.value = []
       practiceMessages.value = []
     } catch (err: any) {
@@ -1005,11 +1011,22 @@ export const useAppStore = defineStore('app', () => {
     try {
       const result = await getConversationMessages(conversationId)
       activeConversationId.value = conversationId
-      chatMessages.value = result.messages.map(m => ({
-        role: m.role,
+      // Deduplicate messages on load (fixes any pre-existing duplicates in DB)
+      const seen = new Set<string>()
+      const deduped = result.messages.filter(m => {
+        const key = `${m.role}|${m.content}|${m.reasoning || ''}`
+        if (seen.has(key)) return false
+        seen.add(key)
+        return true
+      })
+      chatMessages.value = deduped.map(m => ({
+        role: m.role as 'user' | 'assistant',
         content: m.content,
         reasoning: m.reasoning,
       }))
+      // Mark all loaded messages as persisted (chat mode)
+      persistedCount[`chat:${conversationId}`] = chatMessages.value.length
+      persistedCount[`practice:${conversationId}`] = 0
       practiceMessages.value = []
     } catch (err: any) {
       showToast(err?.message || '加载会话失败', 'error')
@@ -1020,10 +1037,12 @@ export const useAppStore = defineStore('app', () => {
 
   /** Save current messages to the active conversation.
    *  Auto-creates a conversation if none exists yet.
-   *  Pass optional messages array for practice mode. */
+   *  Only saves new messages since last persist (delta) to avoid duplicates.
+   *  Pass optional messages array for practice mode (chat and practice track separately). */
   async function handleSaveMessages(messages?: ChatMessage[]) {
     const msgs = messages || chatMessages.value
     if (msgs.length === 0) return
+
     // Auto-create conversation if needed (first message in a session)
     if (!activeConversationId.value) {
       try {
@@ -1031,15 +1050,27 @@ export const useAppStore = defineStore('app', () => {
         const conv = await createConversation('新对话')
         conversations.value.unshift(conv)
         activeConversationId.value = conv.id
-        // Don't reset chatMessages here — that's the UI being displayed!
       } catch (err: any) {
         console.error('Failed to auto-create conversation:', err)
         return
       }
     }
-    if (!activeConversationId.value) return
+
+    const convId = activeConversationId.value
+    if (!convId) return
+
+    // Use separate tracking for chat vs practice since they have independent message arrays
+    const modeKey = messages ? `practice:${convId}` : `chat:${convId}`
+
+    // Delta: only send messages that haven't been persisted yet
+    const alreadySaved = persistedCount[modeKey] || 0
+    const newMessages = msgs.slice(alreadySaved)
+    if (newMessages.length === 0) return
+
     try {
-      await appendConversationMessages(activeConversationId.value, msgs)
+      await appendConversationMessages(convId, newMessages)
+      // Update persisted count for this mode+conversation
+      persistedCount[modeKey] = msgs.length
       // Refresh conversation list to update title/time
       handleLoadConversations()
     } catch (err: any) {
@@ -1052,6 +1083,8 @@ export const useAppStore = defineStore('app', () => {
     try {
       await deleteConversation(conversationId)
       conversations.value = conversations.value.filter(c => c.id !== conversationId)
+      delete persistedCount[`chat:${conversationId}`]
+      delete persistedCount[`practice:${conversationId}`]
       if (activeConversationId.value === conversationId) {
         activeConversationId.value = null
         chatMessages.value = []
@@ -1138,8 +1171,10 @@ export const useAppStore = defineStore('app', () => {
         if (chatTimeoutId) { clearTimeout(chatTimeoutId); chatTimeoutId = null }
         chatStreamingActive.value = false
         chatLoading.value = false
-        chatMessages.value[aiMsgIndex].content = '❌ ' + (error || 'AI 请求失败，请稍后重试')
-        showToast(error || 'AI 请求失败', 'error')
+        const cleanError = (error || 'AI 请求失败，请稍后重试').replace(/^HTTP \d+: /, '')
+        chatMessages.value[aiMsgIndex].content = '❌ ' + cleanError
+        ;(chatMessages.value[aiMsgIndex] as any)._retryMessage = message
+        showToast(cleanError, 'error')
       },
       () => {
         if (chatTimeoutId) { clearTimeout(chatTimeoutId); chatTimeoutId = null }
@@ -1166,6 +1201,36 @@ export const useAppStore = defineStore('app', () => {
     chatStreamingContent.value = ''
     chatStreamingReasoning.value = ''
     chatStreamingActive.value = false
+  }
+
+  /** Retry a failed AI message — removes the error message and re-sends */
+  function handleRetryMessage(msgIndex: number, tab: 'chat' | 'practice') {
+    const messages = tab === 'chat' ? chatMessages.value : practiceMessages.value
+    const failedMsg = messages[msgIndex] as any
+    const retryText = failedMsg?._retryMessage
+    if (!retryText) return
+
+    // Remove the failed assistant message and the user message before it
+    const removed = msgIndex > 0 && messages[msgIndex - 1]?.role === 'user' ? 2 : 1
+    if (msgIndex > 0 && messages[msgIndex - 1]?.role === 'user') {
+      messages.splice(msgIndex - 1, 2)
+    } else {
+      messages.splice(msgIndex, 1)
+    }
+
+    // Adjust persisted count: removed messages are no longer in the array
+    const convId = activeConversationId.value
+    const modeKey = tab === 'practice' ? `practice:${convId}` : `chat:${convId}`
+    if (convId && persistedCount[modeKey] != null) {
+      persistedCount[modeKey] = Math.max(0, persistedCount[modeKey] - removed)
+    }
+
+    // Re-send
+    if (tab === 'chat') {
+      handleChatSend(retryText)
+    } else {
+      handlePracticeSend(retryText)
+    }
   }
 
   // ========== Practice (Question Generation) Actions ==========
@@ -1235,8 +1300,10 @@ export const useAppStore = defineStore('app', () => {
         if (practiceTimeoutId) { clearTimeout(practiceTimeoutId); practiceTimeoutId = null }
         practiceStreamingActive.value = false
         practSessionLoading.value = false
-        practiceMessages.value[aiMsgIndex].content = '❌ ' + (error || 'AI 请求失败，请稍后重试')
-        showToast(error || 'AI 请求失败', 'error')
+        const cleanError = (error || 'AI 请求失败，请稍后重试').replace(/^HTTP \d+: /, '')
+        practiceMessages.value[aiMsgIndex].content = '❌ ' + cleanError
+        ;(practiceMessages.value[aiMsgIndex] as any)._retryMessage = message
+        showToast(cleanError, 'error')
       },
       () => {
         if (practiceTimeoutId) { clearTimeout(practiceTimeoutId); practiceTimeoutId = null }
@@ -1470,6 +1537,7 @@ export const useAppStore = defineStore('app', () => {
     handleChatSend,
     handleChatStop,
     clearChatMessages,
+    handleRetryMessage,
 
     // Deep thinking toggle
     deepThinkingEnabled,

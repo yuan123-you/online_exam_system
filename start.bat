@@ -24,7 +24,15 @@ if %ERRORLEVEL% neq 0 (
 )
 
 :: 编译打包（跳过测试）
-echo [1/2] 正在编译打包...
+echo [1/3] 正在构建前端...
+call npx vite build
+if %ERRORLEVEL% neq 0 (
+    echo [错误] 前端构建失败，请检查错误信息。
+    pause
+    exit /b 1
+)
+
+echo [2/3] 正在编译后端...
 call mvn -s .mvn\settings.xml -f backend\pom.xml -DskipTests package -q
 if %ERRORLEVEL% neq 0 (
     echo [错误] 编译失败，请检查错误信息。
@@ -33,7 +41,7 @@ if %ERRORLEVEL% neq 0 (
 )
 
 :: 启动应用
-echo [2/2] 正在启动应用...
+echo [3/3] 正在启动应用...
 echo.
 echo   后端地址: http://localhost:8080
 echo   前端开发: npm run dev:web (另开终端)

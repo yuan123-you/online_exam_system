@@ -1,0 +1,282 @@
+$ git add -A && git commit -m "feat: 侧栏收起按钮始终显示上方+增大; 底部菜单折叠仅显图标; 前后端重构" && git push origin master
+[exit 0]
+warning: in the working copy of 'backend/pom.xml', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/src/main/java/com/onlineexam/StoreService.java', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/src/main/resources/application.yml', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/src/main/resources/schema.sql', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/src/main/resources/static/index.html', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/src/main/resources/static/styles.css', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'index.html', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'package-lock.json', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'package.json', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'public/styles.css', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src/App.vue', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src/api/client.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src/main.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src/types.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'tsconfig.json', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'vite.config.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'FRONTEND_RESTRUCTURING_SUMMARY.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/src/main/java/com/onlineexam/common/AuthHelper.java', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/src/main/java/com/onlineexam/common/JsonHelper.java', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/src/main/java/com/onlineexam/common/ResponseHelper.java', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/src/main/java/com/onlineexam/config/AuthInterceptor.java', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/src/main/java/com/onlineexam/config/RestTemplateConfig.java', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/src/main/java/com/onlineexam/config/SecurityHeadersFilter.java', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/src/main/java/com/onlineexam/config/WebConfig.java', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/src/main/java/com/onlineexam/controller/AdminController.java', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/src/main/java/com/onlineexam/controller/AiController.java', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/src/main/java/com/onlineexam/controller/AuthController.java', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/src/main/java/com/onlineexam/controller/BootstrapController.java', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/src/main/java/com/onlineexam/controller/ChatHistoryController.java', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/src/main/java/com/onlineexam/controller/ExamController.java', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/src/main/java/com/onlineexam/controller/QuotaController.java', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/src/main/java/com/onlineexam/controller/StudentController.java', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/src/main/java/com/onlineexam/controller/SubmissionController.java', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/src/main/java/com/onlineexam/controller/TeacherController.java', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/src/main/java/com/onlineexam/controller/WrongBookController.java', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/src/main/java/com/onlineexam/entity/ClassRoom.java', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/src/main/java/com/onlineexam/entity/Department.java', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/src/main/java/com/onlineexam/entity/Exam.java', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/src/main/java/com/onlineexam/entity/Paper.java', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/src/main/java/com/onlineexam/entity/Question.java', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/src/main/java/com/onlineexam/entity/Submission.java', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/src/main/java/com/onlineexam/entity/SystemLog.java', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/src/main/java/com/onlineexam/entity/User.java', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/src/main/java/com/onlineexam/entity/WrongBookEntry.java', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/src/main/java/com/onlineexam/repository/ClassRoomRepository.java', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/src/main/java/com/onlineexam/repository/DepartmentRepository.java', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/src/main/java/com/onlineexam/repository/ExamRepository.java', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/src/main/java/com/onlineexam/repository/PaperRepository.java', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/src/main/java/com/onlineexam/repository/QuestionRepository.java', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/src/main/java/com/onlineexam/repository/SubmissionRepository.java', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/src/main/java/com/onlineexam/repository/SystemLogRepository.java', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/src/main/java/com/onlineexam/repository/UserRepository.java', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/src/main/java/com/onlineexam/repository/WrongBookRepository.java', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/src/main/java/com/onlineexam/service/AiService.java', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/src/main/java/com/onlineexam/service/AnalysisService.java', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/src/main/java/com/onlineexam/service/AuthService.java', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/src/main/java/com/onlineexam/service/BootstrapService.java', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/src/main/java/com/onlineexam/service/ChatHistoryService.java', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/src/main/java/com/onlineexam/service/DataIsolationService.java', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/src/main/java/com/onlineexam/service/EntityCrudService.java', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/src/main/java/com/onlineexam/service/ExamService.java', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/src/main/java/com/onlineexam/service/PaperService.java', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/src/main/java/com/onlineexam/service/QuestionService.java', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/src/main/java/com/onlineexam/service/SubmissionService.java', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/src/main/java/com/onlineexam/service/SystemLogService.java', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/src/main/java/com/onlineexam/service/WrongBookService.java', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/src/main/resources/V2__data_isolation.sql', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/src/main/resources/static/assets/app-B5e6NeKS.js', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/src/main/resources/static/assets/app-BqgdhK5i.js', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/src/main/resources/static/assets/app-Btwk2SSD.js', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/src/main/resources/static/assets/app-C0OVG1TF.js', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/src/main/resources/static/assets/app-CEf-yAAJ.js', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/src/main/resources/static/assets/app-D0UwWYJC.js', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/src/main/resources/static/assets/app-ZrUfH9jZ.js', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/src/main/resources/static/assets/index-2peW3zZE.js', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/src/main/resources/static/assets/index-B1O_tvrf.js', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/src/main/resources/static/assets/index-B25p_uto.js', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/src/main/resources/static/assets/index-B9siRJ02.js', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/src/main/resources/static/assets/index-BV_a2u8U.js', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/src/main/resources/static/assets/index-CNefnT-_.js', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/src/main/resources/static/assets/index-CgZrUChV.js', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/src/main/resources/static/assets/index-DMqvuOty.js', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/src/main/resources/static/assets/index-DOT6bqXZ.js', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/src/main/resources/static/assets/index-DRn_Mr5H.css', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/src/main/resources/static/assets/index-DvVoMgXy.js', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/src/main/resources/static/assets/index-KsvQX3gU.js', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/src/main/resources/static/assets/index-e4v2Rmqs.js', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/src/main/resources/static/assets/router-148iZA0j.js', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/src/main/resources/static/assets/router-BT7vbSnm.css', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/src/main/resources/static/assets/router-BTST3uqz.css', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/src/main/resources/static/assets/router-BUw9AIUN.css', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/src/main/resources/static/assets/router-BVK9sRnJ.css', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/src/main/resources/static/assets/router-BWwznrw-.js', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/src/main/resources/static/assets/router-CaRJFVzt.js', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/src/main/resources/static/assets/router-CaeNUcWt.js', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/src/main/resources/static/assets/router-ChRt1-1h.css', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/src/main/resources/static/assets/router-CieqI8x1.js', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/src/main/resources/static/assets/router-Cpp7TcXP.css', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/src/main/resources/static/assets/router-D9U1jm98.js', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/src/main/resources/static/assets/router-D9_HXDsK.css', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/src/main/resources/static/assets/router-DJoE4Vwl.css', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/src/main/resources/static/assets/router-DMLBERuM.js', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/src/main/resources/static/assets/router-DVAmqOYU.js', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/src/main/resources/static/assets/router-Df1QavEJ.css', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/src/main/resources/static/assets/router-DgJH7sJ2.js', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/src/main/resources/static/assets/router-Dk8Ercy2.js', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/src/main/resources/static/assets/router-DnTaj25D.js', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/src/main/resources/static/assets/router-SfPToTQz.css', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/src/main/resources/static/assets/router-hp5Bwhh9.js', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'docs/08.安全审计报告.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'docs/08.测试报告.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'docs/09.八阶段交付总结.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'scripts/start-backend-ps.ps1', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'scripts/start-backend-with-ai-key.bat', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'scripts/start-backend.ps1', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src/components/auth/AuthLogin.vue', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src/components/common/BaseModal.vue', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src/components/common/BatchUserImportModal.vue', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src/components/common/ChartCard.vue', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src/components/common/EntityEditorModal.vue', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src/components/common/ProfilePanel.vue', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src/components/common/QuotaBar.vue', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src/components/layout/AppShell.vue', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src/components/student/ExamSessionModal.vue', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src/components/student/WrongBookRetryModal.vue', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src/components/teacher/AutoGenPaperModal.vue', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src/components/teacher/PaperFormModal.vue', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src/components/teacher/PaperPreviewModal.vue', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src/components/teacher/SubmissionReviewModal.vue', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src/composables/useDeviceType.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src/composables/usePlatformAdapter.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src/composables/useResponsiveLayout.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src/router/index.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src/stores/app.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src/styles/breakpoints.css', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src/utils/validation.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src/views/LoginView.vue', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src/views/ProfileView.vue', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src/views/admin/AdminOverview.vue', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src/views/admin/OrgManage.vue', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src/views/admin/StudentManage.vue', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src/views/admin/SystemLogs.vue', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src/views/admin/TeacherManage.vue', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src/views/student/AiPractice.vue', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src/views/student/AiPractice/ChatInput.vue', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src/views/student/AiPractice/ChatSidebar.vue', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src/views/student/AiPractice/MessageBubbles.vue', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src/views/student/AvailableExams.vue', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src/views/student/Grades.vue', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src/views/student/MyExams.vue', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src/views/student/PracticeRecords.vue', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src/views/student/WrongBook.vue', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src/views/teacher/AiQuestionGen.vue', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src/views/teacher/ExamManage.vue', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src/views/teacher/ExamMonitor.vue', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src/views/teacher/GradingCenter.vue', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src/views/teacher/PaperManage.vue', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src/views/teacher/QuestionBank.vue', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src/views/teacher/ScoreAnalysis.vue', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src/views/teacher/TeacherOverview.vue', LF will be replaced by CRLF the next time Git touches it
+[master f923357] feat: 侧栏收起按钮始终显示上方+增大; 底部菜单折叠仅显图标; 前后端重构
+ 180 files changed, 16505 insertions(+), 37656 deletions(-)
+ create mode 100644 .reasonix/truncated-results/1781353814068-77fa6eee-run_command.txt
+ create mode 100644 FRONTEND_RESTRUCTURING_SUMMARY.md
+ delete mode 100644 backend/src/main/java/com/onlineexam/ApiController.java
+ delete mode 100644 backend/src/main/java/com/onlineexam/WebConfig.java
+ create mode 100644 backend/src/main/java/com/onlineexam/common/AuthHelper.java
+ create mode 100644 backend/src/main/java/com/onlineexam/common/JsonHelper.java
+ create mode 100644 backend/src/main/java/com/onlineexam/common/ResponseHelper.java
+ create mode 100644 backend/src/main/java/com/onlineexam/config/AuthInterceptor.java
+ create mode 100644 backend/src/main/java/com/onlineexam/config/RestTemplateConfig.java
+ rename backend/src/main/java/com/onlineexam/{ => config}/SecurityHeadersFilter.java (84%)
+ create mode 100644 backend/src/main/java/com/onlineexam/config/WebConfig.java
+ create mode 100644 backend/src/main/java/com/onlineexam/controller/AdminController.java
+ create mode 100644 backend/src/main/java/com/onlineexam/controller/AiController.java
+ create mode 100644 backend/src/main/java/com/onlineexam/controller/AuthController.java
+ create mode 100644 backend/src/main/java/com/onlineexam/controller/BootstrapController.java
+ create mode 100644 backend/src/main/java/com/onlineexam/controller/ChatHistoryController.java
+ create mode 100644 backend/src/main/java/com/onlineexam/controller/ExamController.java
+ create mode 100644 backend/src/main/java/com/onlineexam/controller/QuotaController.java
+ create mode 100644 backend/src/main/java/com/onlineexam/controller/StudentController.java
+ create mode 100644 backend/src/main/java/com/onlineexam/controller/SubmissionController.java
+ create mode 100644 backend/src/main/java/com/onlineexam/controller/TeacherController.java
+ create mode 100644 backend/src/main/java/com/onlineexam/controller/WrongBookController.java
+ create mode 100644 backend/src/main/java/com/onlineexam/entity/ClassRoom.java
+ create mode 100644 backend/src/main/java/com/onlineexam/entity/Department.java
+ create mode 100644 backend/src/main/java/com/onlineexam/entity/Exam.java
+ create mode 100644 backend/src/main/java/com/onlineexam/entity/Paper.java
+ create mode 100644 backend/src/main/java/com/onlineexam/entity/Question.java
+ create mode 100644 backend/src/main/java/com/onlineexam/entity/Submission.java
+ create mode 100644 backend/src/main/java/com/onlineexam/entity/SystemLog.java
+ create mode 100644 backend/src/main/java/com/onlineexam/entity/User.java
+ create mode 100644 backend/src/main/java/com/onlineexam/entity/WrongBookEntry.java
+ create mode 100644 backend/src/main/java/com/onlineexam/repository/ClassRoomRepository.java
+ create mode 100644 backend/src/main/java/com/onlineexam/repository/DepartmentRepository.java
+ create mode 100644 backend/src/main/java/com/onlineexam/repository/ExamRepository.java
+ create mode 100644 backend/src/main/java/com/onlineexam/repository/PaperRepository.java
+ create mode 100644 backend/src/main/java/com/onlineexam/repository/QuestionRepository.java
+ create mode 100644 backend/src/main/java/com/onlineexam/repository/SubmissionRepository.java
+ create mode 100644 backend/src/main/java/com/onlineexam/repository/SystemLogRepository.java
+ create mode 100644 backend/src/main/java/com/onlineexam/repository/UserRepository.java
+ create mode 100644 backend/src/main/java/com/onlineexam/repository/WrongBookRepository.java
+ create mode 100644 backend/src/main/java/com/onlineexam/service/AiService.java
+ create mode 100644 backend/src/main/java/com/onlineexam/service/AnalysisService.java
+ create mode 100644 backend/src/main/java/com/onlineexam/service/AuthService.java
+ create mode 100644 backend/src/main/java/com/onlineexam/service/BootstrapService.java
+ create mode 100644 backend/src/main/java/com/onlineexam/service/ChatHistoryService.java
+ create mode 100644 backend/src/main/java/com/onlineexam/service/DataIsolationService.java
+ create mode 100644 backend/src/main/java/com/onlineexam/service/EntityCrudService.java
+ create mode 100644 backend/src/main/java/com/onlineexam/service/ExamService.java
+ create mode 100644 backend/src/main/java/com/onlineexam/service/PaperService.java
+ create mode 100644 backend/src/main/java/com/onlineexam/service/QuestionService.java
+ create mode 100644 backend/src/main/java/com/onlineexam/service/SubmissionService.java
+ create mode 100644 backend/src/main/java/com/onlineexam/service/SystemLogService.java
+ create mode 100644 backend/src/main/java/com/onlineexam/service/WrongBookService.java
+ create mode 100644 backend/src/main/resources/V2__data_isolation.sql
+ delete mode 100644 backend/src/main/resources/static/app.js
+ create mode 100644 backend/src/main/resources/static/assets/app-0AQYjUxV.js
+ create mode 100644 backend/src/main/resources/static/assets/app-B5e6NeKS.js
+ create mode 100644 backend/src/main/resources/static/assets/app-BqgdhK5i.js
+ create mode 100644 backend/src/main/resources/static/assets/app-Btwk2SSD.js
+ create mode 100644 backend/src/main/resources/static/assets/app-C0OVG1TF.js
+ create mode 100644 backend/src/main/resources/static/assets/app-C1oxmUAX.js
+ create mode 100644 backend/src/main/resources/static/assets/app-CEf-yAAJ.js
+ create mode 100644 backend/src/main/resources/static/assets/app-D0UwWYJC.js
+ create mode 100644 backend/src/main/resources/static/assets/app-DQfRknZ1.js
+ create mode 100644 backend/src/main/resources/static/assets/app-DltwmU2W.js
+ create mode 100644 backend/src/main/resources/static/assets/app-MjpbjZVi.js
+ create mode 100644 backend/src/main/resources/static/assets/app-ZrUfH9jZ.js
+ create mode 100644 backend/src/main/resources/static/assets/app-eJTVtcmQ.js
+ create mode 100644 backend/src/main/resources/static/assets/app-lSrWm60r.js
+ create mode 100644 backend/src/main/resources/static/assets/index-2peW3zZE.js
+ create mode 100644 backend/src/main/resources/static/assets/index-B1O_tvrf.js
+ create mode 100644 backend/src/main/resources/static/assets/index-B25p_uto.js
+ create mode 100644 backend/src/main/resources/static/assets/index-B9siRJ02.js
+ create mode 100644 backend/src/main/resources/static/assets/index-BV_a2u8U.js
+ create mode 100644 backend/src/main/resources/static/assets/index-CNefnT-_.js
+ create mode 100644 backend/src/main/resources/static/assets/index-CgZrUChV.js
+ create mode 100644 backend/src/main/resources/static/assets/index-DMqvuOty.js
+ create mode 100644 backend/src/main/resources/static/assets/index-DOT6bqXZ.js
+ create mode 100644 backend/src/main/resources/static/assets/index-DRn_Mr5H.css
+ create mode 100644 backend/src/main/resources/static/assets/index-DvVoMgXy.js
+ create mode 100644 backend/src/main/resources/static/assets/index-KsvQX3gU.js
+ create mode 100644 backend/src/main/resources/static/assets/index-e4v2Rmqs.js
+ create mode 100644 backend/src/main/resources/static/assets/router-148iZA0j.js
+ create mode 100644 backend/src/main/resources/static/assets/router-BT7vbSnm.css
+ create mode 100644 backend/src/main/resources/static/assets/router-BTST3uqz.css
+ create mode 100644 backend/src/main/resources/static/assets/router-BUw9AIUN.css
+ create mode 100644 backend/src/main/resources/static/assets/router-BVK9sRnJ.css
+ create mode 100644 backend/src/main/resources/static/assets/router-BWwznrw-.js
+ create mode 100644 backend/src/main/resources/static/assets/router-CaRJFVzt.js
+ create mode 100644 backend/src/main/resources/static/assets/router-CaeNUcWt.js
+ create mode 100644 backend/src/main/resources/static/assets/router-ChRt1-1h.css
+ create mode 100644 backend/src/main/resources/static/assets/router-CieqI8x1.js
+ create mode 100644 backend/src/main/resources/static/assets/router-Cpp7TcXP.css
+ create mode 100644 backend/src/main/resources/static/assets/router-D9U1jm98.js
+ create mode 100644 backend/src/main/resources/static/assets/router-D9_HXDsK.css
+ create mode 100644 backend/src/main/resources/static/assets/router-DJoE4Vwl.css
+ create mode 100644 backend/src/main/resources/static/assets/router-DMLBERuM.js
+ create mode 100644 backend/src/main/resources/static/assets/router-DVAmqOYU.js
+ create mode 100644 backend/src/main/resources/static/assets/router-Df1QavEJ.css
+ create mode 100644 backend/src/main/resources/static/assets/router-DgJH7sJ2.js
+ create mode 100644 backend/src/main/resources/static/assets/router-Dk8Ercy2.js
+ create mode 100644 backend/src/main/resources/static/assets/router-DnTaj25D.js
+ create mode 100644 backend/src/main/resources/static/assets/router-SfPToTQz.css
+ create mode 100644 backend/src/main/resources/static/assets/router-hp5Bwhh9.js
+ create mode 100644 "docs/08.\345\256\211\345\205\250\345\256\241\350\256\241\346\212\245\345\221\212.md"
+ create mode 100644 "docs/08.\346\265\213\350\257\225\346\212\245\345\221\212.md"
+ create mode 100644 "docs/09.\345\205\253\351\230\266\346\256\265\344\272\244\344\273\230\346\200\273\347\273\223.md"
+ delete mode 100644 legacy/.gitkeep
+ delete mode 100644 legacy/data/store.json
+ delete mode 100644 legacy/server.js
+ delete mode 100644 public/app.js
+ create mode 100644 scripts/start-backend-ps.ps1
+ create mode 100644 scripts/start-backend-with-ai-key.bat
+ create mode 100644 scripts/start-backend.ps1
+ delete mode 100644 src/components/AuthLogin.vue
+ delete mode 1
+
+[… truncated 2767 chars …]

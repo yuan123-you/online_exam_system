@@ -3,8 +3,8 @@
   "version": "1.0.0",
   "main": "backend/src/main/java/com/onlineexam/OnlineExamApplication.java",
   "scripts": {
-    "start": "mvn -s .mvn/settings.xml -f backend/pom.xml -DskipTests compile -q && mvn -s .mvn/settings.xml -f backend/pom.xml dependency:build-classpath -Dmdep.outputFile=target/cp.txt -q && node scripts/run-backend.js",
-    "dev": "mvn -s .mvn/settings.xml -f backend/pom.xml -DskipTests compile -q && mvn -s .mvn/settings.xml -f backend/pom.xml dependency:build-classpath -Dmdep.outputFile=target/cp.txt -q && node scripts/run-backend.js",
+    "start": "npm run build:web && mvn -s .mvn/settings.xml -f backend/pom.xml -DskipTests compile -q && mvn -s .mvn/settings.xml -f backend/pom.xml dependency:build-classpath -Dmdep.outputFile=target/cp.txt -q && node scripts/run-backend.js",
+    "dev": "npm run build:web && mvn -s .mvn/settings.xml -f backend/pom.xml -DskipTests compile -q && mvn -s .mvn/settings.xml -f backend/pom.xml dependency:build-classpath -Dmdep.outputFile=target/cp.txt -q && node scripts/run-backend.js",
     "backend:build": "mvn -s .mvn/settings.xml -f backend/pom.xml -DskipTests compile && mvn -s .mvn/settings.xml -f backend/pom.xml dependency:build-classpath -Dmdep.outputFile=target/cp.txt",
     "migrate:mysql": "node scripts/generate-mysql-migration.js",
     "dev:web": "vite --host",

@@ -35,7 +35,9 @@ public class ChatHistoryService {
     try {
       jdbc.execute("CREATE TABLE IF NOT EXISTS chat_conversation (id VARCHAR(64) PRIMARY KEY, user_id VARCHAR(64) NOT NULL, title VARCHAR(200) NOT NULL, role VARCHAR(20) NOT NULL DEFAULT 'student', created_at DATETIME(3) NOT NULL, updated_at DATETIME(3) NOT NULL, INDEX idx_chat_conv_user (user_id), INDEX idx_chat_conv_updated (updated_at)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
       jdbc.execute("CREATE TABLE IF NOT EXISTS chat_message (id VARCHAR(64) PRIMARY KEY, conversation_id VARCHAR(64) NOT NULL, role VARCHAR(20) NOT NULL, content TEXT NOT NULL, reasoning TEXT, created_at DATETIME(3) NOT NULL, INDEX idx_chat_msg_conv (conversation_id)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
-    } catch (Exception ignored) { }
+    } catch (Exception e) {
+      System.err.println("[ChatHistory] Failed to initialize tables: " + e.getMessage());
+    }
   }
 
   /** 获取用户的会话列表（按更新时间降序，最多 200） */
@@ -59,7 +61,7 @@ public class ChatHistoryService {
       }
       return ResponseEntity.ok(mapOf("conversations", conversations));
     } catch (Exception e) {
-      // Table not yet created — return empty list
+      System.err.println("[ChatHistory] Failed to list conversations: " + e.getMessage());
       return ResponseEntity.ok(mapOf("conversations", List.of()));
     }
   }
@@ -103,23 +105,24 @@ public class ChatHistoryService {
 
     String role = str(body, "role").isBlank() ? "student" : str(body, "role");
     String id = "conv-" + System.currentTimeMillis() + "-" + Integer.toHexString((int) (Math.random() * 0xffffff));
-    String now = Instant.now().toString();
+    String nowStr = now();
 
     try {
       jdbc.update(
         "INSERT INTO chat_conversation (id, user_id, title, role, created_at, updated_at) VALUES (?,?,?,?,?,?)",
-        id, userId, title, role, now, now);
+        id, userId, title, role, nowStr, nowStr);
       enforceLimit(userId);
     } catch (Exception e) {
-      // Table not yet created — return generated id anyway so frontend doesn't crash
+      System.err.println("[ChatHistory] Failed to insert conversation: " + e.getMessage());
+      return error(HttpStatus.INTERNAL_SERVER_ERROR, "Failed to create conversation.");
     }
 
     Map<String, Object> result = new LinkedHashMap<>();
     result.put("id", id);
     result.put("title", title);
     result.put("role", role);
-    result.put("createdAt", now);
-    result.put("updatedAt", now);
+    result.put("createdAt", nowStr);
+    result.put("updatedAt", nowStr);
     return ResponseEntity.ok(result);
   }
 
@@ -137,7 +140,7 @@ public class ChatHistoryService {
         "SELECT id FROM chat_conversation WHERE id = ? AND user_id = ?", conversationId, userId);
       if (conv.isEmpty()) return ResponseEntity.ok(mapOf("saved", 0));
 
-      String now = Instant.now().toString();
+      String nowStr = now();
       int saved = 0;
       for (Map<String, Object> msg : messages) {
         String msgId = "msg-" + System.currentTimeMillis() + "-" + saved + "-" + Integer.toHexString((int) (Math.random() * 0xffff));
@@ -147,7 +150,7 @@ public class ChatHistoryService {
           str(msg, "role"),
           str(msg, "content"),
           nullableStr(msg, "reasoning"),
-          now);
+          nowStr);
         saved++;
       }
 
@@ -164,15 +167,15 @@ public class ChatHistoryService {
           }
         }
         String title = generateSmartTitle(firstUserContent);
-        jdbc.update("UPDATE chat_conversation SET updated_at = ?, title = ? WHERE id = ?", now, title, conversationId);
+        jdbc.update("UPDATE chat_conversation SET updated_at = ?, title = ? WHERE id = ?", nowStr, title, conversationId);
       } else {
         // Just update the timestamp
-        jdbc.update("UPDATE chat_conversation SET updated_at = ? WHERE id = ?", now, conversationId);
+        jdbc.update("UPDATE chat_conversation SET updated_at = ? WHERE id = ?", nowStr, conversationId);
       }
 
       return ResponseEntity.ok(mapOf("saved", saved));
     } catch (Exception e) {
-      // Table not yet created — return success so frontend doesn't crash
+      System.err.println("[ChatHistory] Failed to append messages: " + e.getMessage());
       return ResponseEntity.ok(mapOf("saved", 0));
     }
   }
@@ -262,6 +265,11 @@ public class ChatHistoryService {
 
   private ResponseEntity<Map<String, Object>> error(HttpStatus status, String message) {
     return ResponseEntity.status(status).body(mapOf("message", message));
+  }
+
+  /** MySQL DATETIME(3) format: yyyy-MM-dd HH:mm:ss.SSS */
+  private String now() {
+    return java.time.LocalDateTime.now().format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSS"));
   }
 
   private String str(Object value) {

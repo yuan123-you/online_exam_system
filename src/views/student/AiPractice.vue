@@ -42,6 +42,7 @@
           :streaming-active="currentStreamingActive"
           :streaming-reasoning="currentStreamingReasoning"
           :loading="currentLoading"
+          :tab="activeTab === 0 ? 'chat' : 'practice'"
         />
       </div>
 
@@ -211,7 +212,7 @@ function autoResize() {
   }
 }
 
-// Scroll — smooth even during streaming
+// Scroll — smooth even during streaming, targeting the outer page scroll container
 let scrollRafId: number | null = null
 let scrollTarget = 0
 
@@ -219,8 +220,16 @@ watch(() => currentMessages.value.length, () => nextTick(() => smoothScrollToBot
 watch(() => activeTab.value === 'chat' ? store.chatStreamingContent : store.practiceStreamingContent,
   () => smoothScrollToBottom(250))
 
+/** Find the scrollable ancestor (content-panel) and scroll it smoothly */
+function getScrollContainer(): HTMLElement | null {
+  // Walk up from chat-layout to find .content-panel which has overflow:auto
+  const chatLayout = msgList.value?.closest('.chat-layout') as HTMLElement | null
+  if (!chatLayout) return null
+  return chatLayout.closest('.content-panel') as HTMLElement | null
+}
+
 function smoothScrollToBottom(duration: number) {
-  const el = msgList.value
+  const el = getScrollContainer()
   if (!el) return
   scrollTarget = el.scrollHeight
   // Cancel previous animation and start fresh from current position
@@ -260,40 +269,28 @@ function smoothScrollToBottom(duration: number) {
 /* ===== Layout ===== */
 .chat-layout {
   display: flex;
-  flex: 1;
-  height: calc(100vh - 140px);
-  max-height: 700px;
-  min-height: 420px;
+  flex-direction: column;
+  min-height: calc(100vh - 180px); /* ensure minimum height for welcome state */
   background: #fff;
   border: 1px solid #e5e7eb;
   border-radius: 12px;
-  overflow: hidden;
+  overflow: visible;
   position: relative;
 }
 
-/* Hide scrollbar on page level */
+/* Hide custom scrollbar from inner elements */
 .chat-layout::-webkit-scrollbar { display: none; }
 .chat-main::-webkit-scrollbar { display: none; }
 
 /* ===== Messages ===== */
 .msg-area {
   flex: 1;
-  overflow-y: auto;
+  overflow: visible; /* no inner scrollbar — page scrolls naturally */
   padding: 24px 16px;
   display: flex;
   flex-direction: column;
   gap: 14px;
-  scroll-behavior: smooth;
 }
-
-/* Smooth custom scrollbar */
-.msg-area::-webkit-scrollbar { width: 6px; }
-.msg-area::-webkit-scrollbar-track { background: transparent; }
-.msg-area::-webkit-scrollbar-thumb {
-  background: #d1d5db;
-  border-radius: 3px;
-}
-.msg-area::-webkit-scrollbar-thumb:hover { background: #9ca3af; }
 
 /* ===== Main ===== */
 .chat-main {
@@ -494,9 +491,7 @@ function smoothScrollToBottom(duration: number) {
     z-index: 25;
   }
   .chat-layout {
-    height: calc(100vh - 120px);
-    max-height: none;
-    min-height: 360px;
+    min-height: calc(100vh - 140px);
     border-radius: 0;
     border: none;
   }

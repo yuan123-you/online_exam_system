@@ -47,7 +47,7 @@ public class AiService {
   @Value("${ai.model:glm-4-flash}")
   private String model;
 
-  @Value("${ai.rate-limit-per-minute:10}")
+  @Value("${ai.rate-limit-per-minute:30}")
   private int rateLimitPerMinute;
 
   // Rate limiting: userId -> list of call timestamps
@@ -539,6 +539,8 @@ public class AiService {
     // Run in a separate thread so the controller can return the emitter immediately
     new Thread(() -> {
       java.io.BufferedReader reader = null;
+      int maxRetries = 3;
+      for (int attempt = 1; attempt <= maxRetries; attempt++) {
       try {
         java.net.URL url = new java.net.URL(apiUrl);
         java.net.HttpURLConnection conn = (java.net.HttpURLConnection) url.openConnection();
@@ -558,9 +560,8 @@ public class AiService {
           java.util.Map.of("role", "user", "content", userPrompt)
         ));
         reqBody.put("temperature", 0.9);
-        reqBody.put("max_tokens", 2048);  // fast chat, questions use 4096
+        reqBody.put("max_tokens", 4096);
         reqBody.put("stream", true);
-        // Deep thinking: only send when enabled; omitting = disabled (avoids API quirks)
         if (thinkingEnabled) {
           reqBody.put("thinking", java.util.Map.of("type", "enabled"));
         }
@@ -572,10 +573,21 @@ public class AiService {
         }
 
         int responseCode = conn.getResponseCode();
+
+        // Retry on 429 (rate limit) or 503 (service unavailable) with backoff
+        if ((responseCode == 429 || responseCode == 503) && attempt < maxRetries) {
+          conn.disconnect();
+          try { Thread.sleep(1000L * attempt * attempt); } catch (InterruptedException ie) { Thread.currentThread().interrupt(); }
+          continue;
+        }
+
         if (responseCode != 200) {
           java.io.InputStream errorStream = conn.getErrorStream();
           String errorBody = errorStream != null ? new String(errorStream.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8) : "";
           String friendlyMsg = friendlyAiError(responseCode, errorBody);
+          if (attempt >= maxRetries && responseCode == 429) {
+            friendlyMsg = friendlyMsg + "（已自动重试 " + maxRetries + " 次）";
+          }
           emitter.send(SseEmitter.event().name("error").data("{\"error\":\"" + escapeJson(friendlyMsg) + "\"}"));
           emitter.complete();
           return;
@@ -588,7 +600,6 @@ public class AiService {
         StringBuilder reasoningBuilder = new StringBuilder();
 
         while ((line = reader.readLine()) != null) {
-          // Handle both "data: " and "data:" (some SSE implementations omit the space)
           String data = null;
           if (line.startsWith("data: ")) {
             data = line.substring(6).trim();
@@ -597,7 +608,6 @@ public class AiService {
           }
           if (data != null) {
             if ("[DONE]".equals(data)) {
-              // Send the complete response event with full content
               java.util.Map<String, Object> donePayload = new java.util.LinkedHashMap<>();
               donePayload.put("content", contentBuilder.toString());
               donePayload.put("reasoning", reasoningBuilder.toString());
@@ -638,7 +648,6 @@ public class AiService {
                 }
               }
             } catch (Exception parseEx) {
-              // Log the parse failure for debugging — silently skipping hides real bugs
               System.err.println("[AiService SSE] Failed to parse chunk: " + data.substring(0, Math.min(200, data.length())));
             }
           }
@@ -650,16 +659,26 @@ public class AiService {
         donePayload.put("done", true);
         emitter.send(SseEmitter.event().name("complete").data(objectMapper.writeValueAsString(donePayload)));
         emitter.complete();
+        return; // success — exit retry loop
 
       } catch (Exception e) {
-        try {
-          emitter.send(SseEmitter.event().name("error")
-            .data("{\"error\":\"" + escapeJson(e.getMessage() != null ? e.getMessage() : "Unknown error") + "\"}"));
-          emitter.complete();
-        } catch (Exception ignored) {}
+        // On last attempt, send error to client
+        if (attempt >= maxRetries) {
+          try {
+            String errMsg = e.getMessage() != null ? e.getMessage() : "Unknown error";
+            emitter.send(SseEmitter.event().name("error")
+              .data("{\"error\":\"" + escapeJson(errMsg) + "\"}"));
+            emitter.complete();
+          } catch (Exception ignored) {}
+          return;
+        }
+        // Retry on transient errors
+        try { Thread.sleep(1000L * attempt); } catch (InterruptedException ie) { Thread.currentThread().interrupt(); }
       } finally {
         if (reader != null) try { reader.close(); } catch (Exception ignored) {}
+        reader = null;
       }
+      } // end retry loop
     }).start();
   }
 
@@ -948,54 +967,72 @@ public class AiService {
     ));
     requestBody.put("temperature", 0.9);
     requestBody.put("max_tokens", 4096);
-    // 非流式调用不开启深度思考
 
     HttpEntity<Map<String, Object>> entity = new HttpEntity<>(requestBody, headers);
 
-    try {
-      ResponseEntity<Map> response = restTemplate.exchange(apiUrl, HttpMethod.POST, entity, Map.class);
+    int maxRetries = 3;
+    for (int attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        ResponseEntity<Map> response = restTemplate.exchange(apiUrl, HttpMethod.POST, entity, Map.class);
 
-      if (response.getStatusCode() == HttpStatus.OK && response.getBody() != null) {
-        @SuppressWarnings("unchecked")
-        List<Map<String, Object>> choices = (List<Map<String, Object>>) response.getBody().get("choices");
-        if (choices != null && !choices.isEmpty()) {
+        if (response.getStatusCode() == HttpStatus.OK && response.getBody() != null) {
           @SuppressWarnings("unchecked")
-          Map<String, Object> message = (Map<String, Object>) choices.get(0).get("message");
-          String content = str(message, "content");
+          List<Map<String, Object>> choices = (List<Map<String, Object>>) response.getBody().get("choices");
+          if (choices != null && !choices.isEmpty()) {
+            @SuppressWarnings("unchecked")
+            Map<String, Object> message = (Map<String, Object>) choices.get(0).get("message");
+            String content = str(message, "content");
 
-          // Cache the response
-          responseCache.put(cacheKey, new CachedResponse(content, System.currentTimeMillis()));
+            // Cache the response
+            responseCache.put(cacheKey, new CachedResponse(content, System.currentTimeMillis()));
+            cleanCache();
 
-          // Clean old cache entries periodically
-          cleanCache();
-
-          return content;
+            return content;
+          }
         }
+        throw new RuntimeException("AI API 返回无效响应");
+
+      } catch (RestClientException e) {
+        String msg = e.getMessage() != null ? e.getMessage() : "";
+
+        // Retry on 429 (rate limit) with exponential backoff
+        if (msg.contains("429") && attempt < maxRetries) {
+          try { Thread.sleep(1000L * attempt * attempt); } catch (InterruptedException ie) { Thread.currentThread().interrupt(); }
+          continue;
+        }
+        // Retry on 503 (service unavailable) with shorter backoff
+        if (msg.contains("503") && attempt < maxRetries) {
+          try { Thread.sleep(800L * attempt); } catch (InterruptedException ie) { Thread.currentThread().interrupt(); }
+          continue;
+        }
+
+        // Non-retryable errors or all retries exhausted
+        if (msg.contains("401") || msg.contains("Unauthorized")) {
+          throw new RuntimeException("AI API 密钥无效或已过期，请联系管理员更新 AI_API_KEY");
+        }
+        if (msg.contains("429")) {
+          throw new RuntimeException("AI 服务当前访问繁忙，系统已自动重试 " + maxRetries + " 次仍然失败，请稍后再试");
+        }
+        if (msg.contains("503") || msg.contains("Service Unavailable")) {
+          throw new RuntimeException("AI 服务暂时不可用，请稍后重试");
+        }
+        throw new RuntimeException("AI 请求失败：" + (msg.length() > 100 ? msg.substring(0, 100) : msg));
       }
-      throw new RuntimeException("AI API 返回无效响应");
-    } catch (RestClientException e) {
-      String msg = e.getMessage() != null ? e.getMessage() : "";
-      if (msg.contains("401") || msg.contains("Unauthorized")) {
-        throw new RuntimeException("AI API 密钥无效或已过期，请联系管理员更新 AI_API_KEY");
-      }
-      if (msg.contains("429")) {
-        throw new RuntimeException("AI 服务当前访问繁忙，请稍后再试");
-      }
-      if (msg.contains("503") || msg.contains("Service Unavailable")) {
-        throw new RuntimeException("AI 服务暂时不可用，请稍后重试");
-      }
-      throw new RuntimeException("AI 请求失败，请稍后重试");
     }
+    throw new RuntimeException("AI 请求失败，请稍后重试");
   }
 
   /** Map raw AI API error codes to user-friendly Chinese messages */
   private String friendlyAiError(int httpCode, String errorBody) {
     return switch (httpCode) {
-      case 429 -> "AI 服务当前访问繁忙，请稍后再试";
+      case 429 -> "AI 服务当前访问繁忙，系统正在自动重试中，请稍候...";
       case 401 -> "AI API 密钥无效或已过期，请联系管理员更新";
-      case 503 -> "AI 服务暂时不可用，请稍后重试";
+      case 403 -> "AI 服务权限不足，请联系管理员";
+      case 503 -> "AI 服务暂时不可用，系统正在自动重试...";
       case 500 -> "AI 服务内部错误，请稍后重试";
-      default -> "AI 请求失败（" + httpCode + "），请稍后重试";
+      case 502 -> "AI 服务网关错误，请稍后重试";
+      case 504 -> "AI 服务响应超时，请稍后重试";
+      default -> "AI 请求失败（HTTP " + httpCode + "），请稍后重试";
     };
   }
 
