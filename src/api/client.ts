@@ -22,9 +22,9 @@ async function request<T>(url: string, options: RequestInit = {}): Promise<T> {
     if (apiMessage) {
       errorMessage = apiMessage;
     } else if (response.status === 429) {
-      errorMessage = "AI 服务繁忙，请求过于频繁，请稍后再试。";
+      errorMessage = "AI 服务当前请求过多，请稍等片刻再试";
     } else if (response.status === 503) {
-      errorMessage = "AI 服务暂时不可用，请稍后重试。";
+      errorMessage = "AI 服务暂时不可用，请稍后重试";
     } else if (response.status === 401) {
       errorMessage = "登录状态已失效，请重新登录。";
     } else {
@@ -397,8 +397,12 @@ function sseStream(
       });
 
       // Auto-retry on 429 (rate limit) or 503 (service unavailable)
+      // 增加抖动退避，避免雷群效应
       if (!response.ok && (response.status === 429 || response.status === 503) && attempt < maxRetries) {
-        const waitMs = 1500 * (attempt + 1) * (attempt + 1);
+        const baseWait = 2000 * Math.pow(2, attempt);
+        const jitter = baseWait * 0.5 * (Math.random() - 0.5);
+        const waitMs = Math.max(1000, baseWait + jitter);
+        console.log(`[SSE] 收到 ${response.status}，${Math.round(waitMs)}ms 后重试 (第${attempt + 1}次)`);
         await new Promise(r => setTimeout(r, waitMs));
         if (controller.signal.aborted) return;
         return doFetch(attempt + 1);
@@ -417,7 +421,8 @@ function sseStream(
           const clean = text.replace(/<[^>]+>/g, '').trim();
           if (clean && clean.length < 200) friendlyMsg = clean;
         }
-        if (response.status === 429) friendlyMsg = friendlyMsg + '（已自动重试，仍然繁忙，请稍后再试）';
+        if (response.status === 429) friendlyMsg = 'AI 服务当前请求过多，请稍等片刻再试';
+        else if (response.status === 503) friendlyMsg = 'AI 服务暂时不可用，请稍后重试';
         onError(friendlyMsg);
         onFinally?.();
         return;

@@ -12,6 +12,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Random;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
@@ -20,6 +21,7 @@ import java.util.concurrent.Executor;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -47,6 +49,12 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
  * - 会话隔离：每个用户的对话上下文独立存储，互不干扰
  * - SSE 连接生命周期管理：onCompletion/onTimeout/onError 自动释放信号量
  * - 定时任务清理过期缓存和速率限制数据，防止内存泄漏
+ *
+ * 高可用设计（v2 优化）：
+ * - 熔断器：连续失败达到阈值后快速失败，避免级联压垮上游API
+ * - 重试期间释放信号量：退避等待时不占用并发槽，让其他请求有机会执行
+ * - 抖动退避：重试间隔加入随机抖动，避免雷群效应
+ * - SSE 流式端点速率限制：防止流式请求绕过限流
  */
 @Service
 public class AiService {
@@ -54,6 +62,55 @@ public class AiService {
   private static final Logger log = LoggerFactory.getLogger(AiService.class);
 
   private static final Set<String> SUBJECTIVE_TYPES = Set.of("short", "coding");
+
+  // ========== 熔断器 ==========
+
+  /**
+   * 简易熔断器 - 当 AI API 连续失败达到阈值时进入开启状态，快速失败
+   * 避免在 API 不可用时继续发送请求，加剧上游压力
+   */
+  private static class CircuitBreaker {
+    private final int failureThreshold;
+    private final long resetTimeoutMs;
+    private final AtomicInteger consecutiveFailures = new AtomicInteger(0);
+    private final AtomicLong lastFailureTime = new AtomicLong(0);
+    private volatile boolean open = false;
+
+    CircuitBreaker(int failureThreshold, long resetTimeoutMs) {
+      this.failureThreshold = failureThreshold;
+      this.resetTimeoutMs = resetTimeoutMs;
+    }
+
+    /** 检查是否允许请求通过（CLOSED 或 HALF-OPEN 状态返回 true） */
+    boolean allowRequest() {
+      if (!open) return true;
+      // 半开状态：超过重置超时后允许一次试探请求
+      if (System.currentTimeMillis() - lastFailureTime.get() > resetTimeoutMs) {
+        log.info("[CircuitBreaker] 半开状态，允许试探请求");
+        return true;
+      }
+      return false;
+    }
+
+    /** 记录成功，重置熔断器 */
+    void recordSuccess() {
+      consecutiveFailures.set(0);
+      open = false;
+    }
+
+    /** 记录失败，达到阈值则开启熔断器 */
+    void recordFailure() {
+      int failures = consecutiveFailures.incrementAndGet();
+      lastFailureTime.set(System.currentTimeMillis());
+      if (failures >= failureThreshold && !open) {
+        open = true;
+        log.warn("[CircuitBreaker] 熔断器开启：连续失败 {} 次，{}ms 后允许试探", failures, resetTimeoutMs);
+      }
+    }
+
+    boolean isOpen() { return open; }
+    int getConsecutiveFailures() { return consecutiveFailures.get(); }
+  }
 
   /** 出题系统提示词（增强版，确保生成完整题目含选项） */
   private static final String QUESTION_SYSTEM_PROMPT =
@@ -88,13 +145,25 @@ public class AiService {
   @Value("${ai.rate-limit-per-minute:30}")
   private int rateLimitPerMinute;
 
-  @Value("${ai.concurrent-limit:4}")
+  @Value("${ai.concurrent-limit:8}")
   private int concurrentLimit;
+
+  @Value("${ai.circuit-breaker.failure-threshold:5}")
+  private int circuitBreakerThreshold;
+
+  @Value("${ai.circuit-breaker.reset-timeout-seconds:30}")
+  private int circuitBreakerResetSeconds;
 
   // ========== 并发控制 ==========
 
   /** 并发 AI API 调用信号量，防止过多请求触发 429 */
   private volatile Semaphore aiApiSemaphore;
+
+  /** 熔断器 - 连续失败达到阈值后快速失败 */
+  private volatile CircuitBreaker circuitBreaker;
+
+  /** 抖动退避随机数生成器 */
+  private final Random jitterRandom = new Random();
 
   /** 速率限制：userId -> 时间戳队列（线程安全） */
   private final ConcurrentHashMap<String, ConcurrentLinkedDeque<Long>> rateLimitMap = new ConcurrentHashMap<>();
@@ -152,7 +221,7 @@ public class AiService {
     }
   }
 
-  /** 延迟初始化信号量（@Value 注入后才能确定大小） */
+  /** 延迟初始化信号量和熔断器（@Value 注入后才能确定大小） */
   private Semaphore getSemaphore() {
     if (aiApiSemaphore == null) {
       synchronized (this) {
@@ -162,6 +231,28 @@ public class AiService {
       }
     }
     return aiApiSemaphore;
+  }
+
+  /** 延迟初始化熔断器 */
+  private CircuitBreaker getCircuitBreaker() {
+    if (circuitBreaker == null) {
+      synchronized (this) {
+        if (circuitBreaker == null) {
+          circuitBreaker = new CircuitBreaker(circuitBreakerThreshold, circuitBreakerResetSeconds * 1000L);
+        }
+      }
+    }
+    return circuitBreaker;
+  }
+
+  /**
+   * 带抖动的退避时间计算
+   * 基础退避 * (1 + jitter[-0.5, 0.5])，避免雷群效应
+   */
+  private long jitteredBackoff(long baseMs, int attempt) {
+    long backoff = (long) (baseMs * Math.pow(2, attempt - 1));
+    long jitter = (long) (backoff * 0.5 * (jitterRandom.nextDouble() - 0.5));
+    return Math.max(500, backoff + jitter);
   }
 
   // ========== 定时清理任务 ==========
@@ -748,6 +839,16 @@ public class AiService {
       return;
     }
 
+    // 熔断器检查：快速失败
+    if (!getCircuitBreaker().allowRequest()) {
+      log.warn("[AiService SSE] 熔断器开启，拒绝请求");
+      try {
+        emitter.send(SseEmitter.event().name("error").data("{\"error\":\"AI 服务当前不可用（熔断保护中），请稍后再试\"}"));
+        emitter.complete();
+      } catch (Exception ignored) {}
+      return;
+    }
+
     String threadId = Long.toHexString(Thread.currentThread().getId());
     log.info("[AiService SSE] [{}] 开始流式请求: model={}, temp={}, thinking={}, jsonMode={}, 活跃SSE连接={}",
       threadId, model, temperature, thinkingEnabled, jsonMode, activeSseConnections.get());
@@ -773,10 +874,11 @@ public class AiService {
     CompletableFuture.runAsync(() -> {
       // 获取信号量限制并发 AI API 调用
       try {
-        if (!semaphore.tryAcquire(60, TimeUnit.SECONDS)) {
-          log.error("[AiService SSE] [{}] 等待并发槽超时(60s)，拒绝请求", threadId);
+        if (!semaphore.tryAcquire(30, TimeUnit.SECONDS)) {
+          int queueSize = concurrentLimit - semaphore.availablePermits();
+          log.error("[AiService SSE] [{}] 等待并发槽超时(30s)，当前排队{}个请求", threadId, queueSize);
           try {
-            emitter.send(SseEmitter.event().name("error").data("{\"error\":\"AI 服务繁忙，请稍后再试\"}"));
+            emitter.send(SseEmitter.event().name("error").data("{\"error\":\"AI 服务繁忙，当前排队 " + queueSize + " 个请求，请稍后再试\"}"));
             emitter.complete();
           } catch (Exception ignored) {}
           return;
@@ -833,14 +935,28 @@ public class AiService {
         int responseCode = conn.getResponseCode();
         log.info("[AiService SSE] [{}] API响应码: {}", threadId, responseCode);
 
-        // 429/503 重试
+        // 429/503 重试：释放信号量后等待，再重新获取
         if ((responseCode == 429 || responseCode == 503) && attempt < maxRetries) {
-          long waitMs = responseCode == 429
-            ? (long) (3000 * Math.pow(3, attempt - 1))
-            : (long) (2000 * Math.pow(2.5, attempt - 1));
-          log.info("[AiService SSE] [{}] 收到{}，{}ms后重试", threadId, responseCode, waitMs);
+          // 关键优化：释放信号量，让其他请求执行
+          semaphore.release();
+          long waitMs = jitteredBackoff(responseCode == 429 ? 2000 : 1500, attempt);
+          log.info("[AiService SSE] [{}] 收到{}，释放信号量后等待{}ms再重试", threadId, responseCode, waitMs);
           conn.disconnect(); conn = null;
           try { Thread.sleep(waitMs); } catch (InterruptedException ie) { Thread.currentThread().interrupt(); }
+          // 重新获取信号量
+          try {
+            if (!semaphore.tryAcquire(30, TimeUnit.SECONDS)) {
+              log.error("[AiService SSE] [{}] 重试时获取并发槽超时", threadId);
+              try {
+                emitter.send(SseEmitter.event().name("error").data("{\"error\":\"AI 服务繁忙，重试时获取并发槽超时，请稍后再试\"}"));
+                emitter.complete();
+              } catch (Exception ignored) {}
+              return;
+            }
+          } catch (InterruptedException ie) {
+            Thread.currentThread().interrupt();
+            return;
+          }
           continue;
         }
 
@@ -853,6 +969,8 @@ public class AiService {
           if (attempt >= maxRetries && responseCode == 429) {
             friendlyMsg = friendlyMsg + "（已自动重试 " + maxRetries + " 次）";
           }
+          // 记录熔断器失败
+          getCircuitBreaker().recordFailure();
           emitter.send(SseEmitter.event().name("error").data("{\"error\":\"" + escapeJson(friendlyMsg) + "\"}"));
           emitter.complete();
           return;
@@ -884,6 +1002,8 @@ public class AiService {
               donePayload.put("done", true);
               emitter.send(SseEmitter.event().name("complete").data(objectMapper.writeValueAsString(donePayload)));
               emitter.complete();
+              // 成功：重置熔断器
+              getCircuitBreaker().recordSuccess();
               return;
             }
             try {
@@ -942,6 +1062,8 @@ public class AiService {
         donePayload.put("done", true);
         emitter.send(SseEmitter.event().name("complete").data(objectMapper.writeValueAsString(donePayload)));
         emitter.complete();
+        // 成功：重置熔断器
+        getCircuitBreaker().recordSuccess();
         return;
 
       } catch (Exception e) {
@@ -949,6 +1071,8 @@ public class AiService {
         log.error("[AiService SSE] [{}] 第{}次请求异常(耗时{}ms): {}: {}",
           threadId, attempt, elapsed, e.getClass().getSimpleName(), e.getMessage());
         if (attempt >= maxRetries) {
+          // 记录熔断器失败
+          getCircuitBreaker().recordFailure();
           try {
             String errMsg = e.getMessage() != null ? e.getMessage() : "Unknown error";
             emitter.send(SseEmitter.event().name("error")
@@ -959,9 +1083,25 @@ public class AiService {
           }
           return;
         }
-        long waitMs = (long) (2000 * Math.pow(2, attempt - 1));
-        log.info("[AiService SSE] [{}] {}ms后重试...", threadId, waitMs);
+        // 重试期间释放信号量
+        semaphore.release();
+        long waitMs = jitteredBackoff(1500, attempt);
+        log.info("[AiService SSE] [{}] 释放信号量后等待{}ms再重试...", threadId, waitMs);
         try { Thread.sleep(waitMs); } catch (InterruptedException ie) { Thread.currentThread().interrupt(); }
+        // 重新获取信号量
+        try {
+          if (!semaphore.tryAcquire(30, TimeUnit.SECONDS)) {
+            getCircuitBreaker().recordFailure();
+            try {
+              emitter.send(SseEmitter.event().name("error").data("{\"error\":\"AI 服务繁忙，重试时获取并发槽超时，请稍后再试\"}"));
+              emitter.complete();
+            } catch (Exception ignored) {}
+            return;
+          }
+        } catch (InterruptedException ie) {
+          Thread.currentThread().interrupt();
+          return;
+        }
       } finally {
         if (reader != null) try { reader.close(); } catch (Exception ignored) {}
         reader = null;
@@ -993,6 +1133,14 @@ public class AiService {
     if (!isRole(user, "student")) {
       try {
         emitter.send(SseEmitter.event().name("error").data("{\"error\":\"Forbidden\"}"));
+        emitter.complete();
+      } catch (Exception ex) {}
+      return;
+    }
+
+    if (!checkRateLimit(userId)) {
+      try {
+        emitter.send(SseEmitter.event().name("error").data("{\"error\":\"AI 调用频率过高，请稍后再试（每分钟最多 " + rateLimitPerMinute + " 次）\"}"));
         emitter.complete();
       } catch (Exception ex) {}
       return;
@@ -1044,6 +1192,14 @@ public class AiService {
     if (!isRole(user, "teacher")) {
       try {
         emitter.send(SseEmitter.event().name("error").data("{\"error\":\"Forbidden\"}"));
+        emitter.complete();
+      } catch (Exception ex) {}
+      return;
+    }
+
+    if (!checkRateLimit(userId)) {
+      try {
+        emitter.send(SseEmitter.event().name("error").data("{\"error\":\"AI 调用频率过高，请稍后再试（每分钟最多 " + rateLimitPerMinute + " 次）\"}"));
         emitter.complete();
       } catch (Exception ex) {}
       return;
@@ -1137,6 +1293,14 @@ public class AiService {
     if (user == null) {
       try {
         emitter.send(SseEmitter.event().name("error").data("{\"error\":\"Not authenticated\"}"));
+        emitter.complete();
+      } catch (Exception ex) {}
+      return;
+    }
+
+    if (!checkRateLimit(userId)) {
+      try {
+        emitter.send(SseEmitter.event().name("error").data("{\"error\":\"AI 调用频率过高，请稍后再试（每分钟最多 " + rateLimitPerMinute + " 次）\"}"));
         emitter.complete();
       } catch (Exception ex) {}
       return;
@@ -1262,6 +1426,11 @@ public class AiService {
       throw new RuntimeException("AI API 密钥未配置，请联系管理员设置 AI_API_KEY 环境变量");
     }
 
+    // 熔断器检查：快速失败
+    if (!getCircuitBreaker().allowRequest()) {
+      throw new RuntimeException("AI 服务当前不可用（熔断保护中），请稍后再试");
+    }
+
     // 检查缓存
     String cacheKey = String.valueOf((systemPrompt + userPrompt).hashCode());
     CachedResponse cached = responseCache.get(cacheKey);
@@ -1273,8 +1442,9 @@ public class AiService {
     // 获取信号量
     Semaphore semaphore = getSemaphore();
     try {
-      if (!semaphore.tryAcquire(60, TimeUnit.SECONDS)) {
-        throw new RuntimeException("AI 服务繁忙，请稍后再试");
+      if (!semaphore.tryAcquire(30, TimeUnit.SECONDS)) {
+        int queueSize = concurrentLimit - semaphore.availablePermits();
+        throw new RuntimeException("AI 服务繁忙，当前排队 " + queueSize + " 个请求，请稍后再试");
       }
     } catch (InterruptedException ie) {
       Thread.currentThread().interrupt();
@@ -1313,6 +1483,9 @@ public class AiService {
             // 缓存响应
             responseCache.put(cacheKey, new CachedResponse(content, System.currentTimeMillis()));
 
+            // 成功：重置熔断器
+            getCircuitBreaker().recordSuccess();
+
             return content;
           }
         }
@@ -1320,19 +1493,29 @@ public class AiService {
 
       } catch (RestClientException e) {
         String msg = e.getMessage() != null ? e.getMessage() : "";
+        boolean shouldRetry = (msg.contains("429") || msg.contains("503")) && attempt < maxRetries;
 
-        if (msg.contains("429") && attempt < maxRetries) {
-          long waitMs = (long) (3000 * Math.pow(3, attempt - 1));
-          log.info("[AiService] 非流式请求429，{}ms后重试(第{}次)", waitMs, attempt);
+        if (shouldRetry) {
+          // 关键优化：重试期间释放信号量，让其他请求有机会执行
+          semaphore.release();
+          long waitMs = jitteredBackoff(msg.contains("429") ? 2000 : 1500, attempt);
+          log.info("[AiService] 非流式请求{}，释放信号量后等待{}ms再重试(第{}次)",
+            msg.contains("429") ? "429" : "503", waitMs, attempt);
           try { Thread.sleep(waitMs); } catch (InterruptedException ie) { Thread.currentThread().interrupt(); }
+          // 重新获取信号量
+          try {
+            if (!semaphore.tryAcquire(30, TimeUnit.SECONDS)) {
+              throw new RuntimeException("AI 服务繁忙，重试时获取并发槽超时，请稍后再试");
+            }
+          } catch (InterruptedException ie) {
+            Thread.currentThread().interrupt();
+            throw new RuntimeException("请求被中断");
+          }
           continue;
         }
-        if (msg.contains("503") && attempt < maxRetries) {
-          long waitMs = (long) (2000 * Math.pow(2.5, attempt - 1));
-          log.info("[AiService] 非流式请求503，{}ms后重试(第{}次)", waitMs, attempt);
-          try { Thread.sleep(waitMs); } catch (InterruptedException ie) { Thread.currentThread().interrupt(); }
-          continue;
-        }
+
+        // 不可重试的错误：记录熔断器失败
+        getCircuitBreaker().recordFailure();
 
         if (msg.contains("401") || msg.contains("Unauthorized")) {
           throw new RuntimeException("AI API 密钥无效或已过期，请联系管理员更新 AI_API_KEY");
@@ -1346,6 +1529,8 @@ public class AiService {
         throw new RuntimeException("AI 请求失败：" + (msg.length() > 100 ? msg.substring(0, 100) : msg));
       }
     }
+    // 重试耗尽：记录熔断器失败
+    getCircuitBreaker().recordFailure();
     throw new RuntimeException("AI 请求失败，请稍后重试");
     } finally {
       semaphore.release();

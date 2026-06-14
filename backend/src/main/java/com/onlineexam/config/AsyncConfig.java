@@ -13,19 +13,25 @@ import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
  * 异步任务与线程池配置
  * - 为 AI 流式请求、后台评分、题目导入等提供受管理的线程池
  * - 启用 @Async 和 @Scheduled 支持
+ *
+ * 线程池调优说明：
+ * - 核心线程数与 concurrent-limit 对齐，确保信号量获取后有线程可用
+ * - 最大线程数为核心的4倍，应对突发流量
+ * - 队列容量充裕，避免 CallerRunsPolicy 频繁触发阻塞请求线程
+ * - CallerRunsPolicy：队列满时由调用线程执行，提供背压而非丢弃任务
  */
 @Configuration
 @EnableAsync
 @EnableScheduling
 public class AsyncConfig {
 
-  @Value("${ai.thread-pool.core-size:4}")
+  @Value("${ai.thread-pool.core-size:8}")
   private int coreSize;
 
-  @Value("${ai.thread-pool.max-size:16}")
+  @Value("${ai.thread-pool.max-size:32}")
   private int maxSize;
 
-  @Value("${ai.thread-pool.queue-capacity:100}")
+  @Value("${ai.thread-pool.queue-capacity:200}")
   private int queueCapacity;
 
   @Value("${ai.thread-pool.keep-alive-seconds:60}")
@@ -33,10 +39,10 @@ public class AsyncConfig {
 
   /**
    * AI 操作专用线程池
-   * - 核心线程 4：满足日常并发需求
-   * - 最大线程 16：应对突发流量
-   * - 队列容量 100：缓冲等待中的任务
-   * - CallerRunsPolicy：队列满时由调用线程执行，防止任务丢失
+   * - 核心线程 8：与 concurrent-limit 对齐，保证信号量获取后有线程执行
+   * - 最大线程 32：应对突发流量，避免任务排队过长
+   * - 队列容量 200：缓冲等待中的任务，减少 CallerRunsPolicy 触发
+   * - CallerRunsPolicy：队列满时由调用线程执行，提供背压而非丢弃任务
    */
   @Bean("aiTaskExecutor")
   public Executor aiTaskExecutor() {
