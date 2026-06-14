@@ -858,3 +858,28 @@ export function deleteConversation(conversationId: string) {
     method: 'DELETE',
   });
 }
+
+/** 搜索历史对话 */
+export interface SearchResultConversation extends Conversation {
+  snippets?: string[];
+}
+
+export function searchConversations(keyword: string) {
+  return request<{ conversations: SearchResultConversation[]; keyword: string }>(
+    `/api/chat/conversations/search?keyword=${encodeURIComponent(keyword)}`
+  );
+}
+
+/** 获取用户学习偏好分析 */
+export interface UserPreference {
+  subjects: Array<{ name: string; score: number }>;
+  interests: string[];
+  suggestions: Array<{ text: string; category: string; type: string }>;
+  practiceTopics: Array<{ icon: string; label: string; prompt: string }>;
+  recentThemes: string[];
+  messageCount: number;
+}
+
+export function getUserPreferences() {
+  return request<UserPreference>('/api/chat/preferences');
+}

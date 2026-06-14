@@ -49,6 +49,8 @@ import {
   createConversation,
   appendConversationMessages,
   deleteConversation,
+  searchConversations,
+  getUserPreferences,
 } from '@/api/client'
 import type {
   MonitorResult,
@@ -66,6 +68,8 @@ import type {
   Conversation,
   ChatMessage,
   ChatResult,
+  UserPreference,
+  SearchResultConversation,
 } from '@/api/client'
 
 export interface Toast {
@@ -163,6 +167,10 @@ export const useAppStore = defineStore('app', () => {
   const conversations = ref<Conversation[]>([])
   const activeConversationId = ref<string | null>(null)
   const conversationsLoading = ref(false)
+
+  // User preference state (personalized recommendations)
+  const userPreferences = ref<UserPreference | null>(null)
+  const preferencesLoading = ref(false)
 
   // Deep thinking toggle
   const deepThinkingEnabled = ref(false)
@@ -444,6 +452,7 @@ export const useAppStore = defineStore('app', () => {
       try {
         bootstrap.value = await apiLoadBootstrap()
         handleLoadConversations() // load conversation history in background
+        handleLoadPreferences()   // load user preferences for personalization
       } catch {
         setCurrentAuthToken('')
         localStorage.removeItem('auth_token')
@@ -520,6 +529,9 @@ export const useAppStore = defineStore('app', () => {
     conversations.value = []
     activeConversationId.value = null
     conversationsLoading.value = false
+    userPreferences.value = null
+    preferencesLoading.value = false
+    deepThinkingEnabled.value = false
   }
 
   function openEditor(kind: typeof editorState.value.kind, model: any) {
@@ -945,6 +957,33 @@ export const useAppStore = defineStore('app', () => {
     }
   }
 
+  /** Load user preferences for personalized recommendations */
+  async function handleLoadPreferences() {
+    if (!currentUser.value || preferencesLoading.value) return
+    preferencesLoading.value = true
+    try {
+      userPreferences.value = await getUserPreferences()
+    } catch (err) {
+      console.warn('[Preferences] Failed to load user preferences:', err)
+    } finally {
+      preferencesLoading.value = false
+    }
+  }
+
+  /** Search conversations by keyword */
+  async function handleSearchConversations(keyword: string): Promise<SearchResultConversation[]> {
+    if (!keyword.trim()) {
+      await handleLoadConversations()
+      return conversations.value as SearchResultConversation[]
+    }
+    try {
+      const result = await searchConversations(keyword.trim())
+      return result.conversations
+    } catch {
+      return []
+    }
+  }
+
   /** Create a new conversation and switch to it */
   async function handleNewConversation() {
     if (!currentUser.value) return
@@ -1043,6 +1082,17 @@ export const useAppStore = defineStore('app', () => {
     chatStreamingActive.value = true
     chatLoading.value = true
 
+    // Build context: include recent practice messages as cross-tab context
+    let contextMessages = chatMessages.value.slice(0, -1)
+    const recentPractice = practiceMessages.value.filter(m => m.content).slice(-4)
+    if (recentPractice.length > 0) {
+      const practiceContext: ChatMessage[] = [
+        { role: 'assistant', content: '[以下是该学生最近的练题记录，供参考了解其学习方向]' },
+        ...recentPractice,
+      ]
+      contextMessages = [...practiceContext, ...contextMessages]
+    }
+
     // Timeout warning: if no output after 20s, show slow hint
     if (chatTimeoutId) clearTimeout(chatTimeoutId)
     chatTimeoutId = setTimeout(() => {
@@ -1052,7 +1102,7 @@ export const useAppStore = defineStore('app', () => {
     }, 8000)
 
     chatAbortController = apiAiChatStream(
-      { message, messages: chatMessages.value.slice(0, -1), deepThinking: deepThinkingEnabled.value },
+      { message, messages: contextMessages, deepThinking: deepThinkingEnabled.value },
       (chunk) => {
         if (chunk.type === 'reasoning') {
           chatStreamingReasoning.value += chunk.text
@@ -1133,6 +1183,14 @@ export const useAppStore = defineStore('app', () => {
     practiceStreamingActive.value = true
     practSessionLoading.value = true
 
+    // Build enriched prompt: include recent chat context for smarter question generation
+    const recentChat = chatMessages.value.filter(m => m.content && m.role === 'user').slice(-3)
+    let enrichedPrompt = message
+    if (recentChat.length > 0) {
+      const chatTopics = recentChat.map(m => m.content).join('; ')
+      enrichedPrompt = `${message}\n\n[学生最近学习方向参考: ${chatTopics}]`
+    }
+
     if (practiceTimeoutId) clearTimeout(practiceTimeoutId)
     practiceTimeoutId = setTimeout(() => {
       if (practiceStreamingActive.value && !practiceStreamingContent.value && !practiceStreamingReasoning.value) {
@@ -1142,7 +1200,7 @@ export const useAppStore = defineStore('app', () => {
 
     practiceAbortController = aiPracticeQuestionsStream(
       {
-        customPrompt: message,
+        customPrompt: enrichedPrompt,
         subject: '',
         type: 'single',
         difficulty: 'medium',
@@ -1425,6 +1483,12 @@ export const useAppStore = defineStore('app', () => {
     handleSwitchConversation,
     handleSaveMessages,
     handleDeleteConversation,
+    handleSearchConversations,
+
+    // User preferences (personalized recommendations)
+    userPreferences,
+    preferencesLoading,
+    handleLoadPreferences,
 
     // Practice (separate question generation session)
     practiceMessages,

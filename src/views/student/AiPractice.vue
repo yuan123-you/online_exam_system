@@ -47,6 +47,17 @@
 
       <!-- Bottom input area -->
       <div class="bottom-area">
+        <!-- Follow-up suggestion chips based on user preferences (shown during active conversation) -->
+        <div v-if="currentMessages.length > 0 && recentThemes.length > 0 && !currentLoading" class="quick-chips">
+          <button
+            v-for="theme in recentThemes"
+            :key="theme"
+            @click="send(activeTab === 'practice' ? `帮我出关于「${theme}」的练习题，附详细解析` : `请深入讲解「${theme}」`)"
+          >
+            {{ theme }}
+          </button>
+        </div>
+
         <!-- Input with inline send/stop button -->
         <div class="input-row">
           <div class="input-wrapper">
@@ -109,7 +120,8 @@ const currentLoading = computed(() => activeTab.value === 'chat' ? store.chatLoa
 const currentStreamingActive = computed(() => activeTab.value === 'chat' ? store.chatStreamingActive : store.practiceStreamingActive)
 const currentStreamingReasoning = computed(() => activeTab.value === 'chat' ? store.chatStreamingReasoning : store.practiceStreamingReasoning)
 
-const practiceQuickChips = [
+// Personalized suggestions from user preferences (with defaults as fallback)
+const defaultPracticeQuickChips = [
   { icon: '📐', label: '高等数学', prompt: '帮我出5道高等数学单选题，涵盖微积分、线性代数，难度较难，附详细解析' },
   { icon: '📖', label: '大学语文', prompt: '帮我出5道大学语文单选题，涵盖诗词鉴赏、文言文阅读、文学常识，附详细解析' },
   { icon: '🏛️', label: '马克思主义', prompt: '帮我出5道马克思主义基本原理单选题，涵盖唯物辩证法、剩余价值理论、科学社会主义，附详细解析' },
@@ -120,7 +132,7 @@ const practiceQuickChips = [
   { icon: '💻', label: '计算机基础', prompt: '帮我出5道计算机基础单选题，涵盖数据结构、操作系统、计算机网络，附详细解析' },
 ]
 
-const suggestions = [
+const defaultSuggestions = [
   '光合作用的基本原理是什么？',
   '如何提高学习效率？',
   '什么是勾股定理？',
@@ -128,6 +140,36 @@ const suggestions = [
   '中国有多少个省份？',
   '怎样写好一篇作文？',
 ]
+
+// Use personalized data from store, falling back to defaults
+const practiceQuickChips = computed(() => {
+  const prefs = store.userPreferences
+  if (prefs && prefs.practiceTopics && prefs.practiceTopics.length > 0) {
+    return prefs.practiceTopics.map(t => ({
+      icon: t.icon || '📚',
+      label: t.label,
+      prompt: t.prompt,
+    }))
+  }
+  return defaultPracticeQuickChips
+})
+
+const suggestions = computed(() => {
+  const prefs = store.userPreferences
+  if (prefs && prefs.suggestions && prefs.suggestions.length > 0) {
+    return prefs.suggestions.map(s => s.text)
+  }
+  return defaultSuggestions
+})
+
+// Recent themes for follow-up suggestions (shown during conversation)
+const recentThemes = computed(() => {
+  const prefs = store.userPreferences
+  if (prefs && prefs.recentThemes && prefs.recentThemes.length > 0) {
+    return prefs.recentThemes.slice(0, 4)
+  }
+  return []
+})
 
 function switchTab(tab: 'chat' | 'practice') {
   activeTab.value = tab
@@ -196,6 +238,7 @@ function smoothScrollToBottom(duration: number) {
   const cappedTarget = Math.min(scrollTarget, start + 200)
   const startTime = performance.now()
   function animate(now: number) {
+    if (!el) return
     const elapsed = now - startTime
     const progress = Math.min(elapsed / duration, 1)
     // easeOutQuad — gentler deceleration

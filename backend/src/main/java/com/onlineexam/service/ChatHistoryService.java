@@ -151,16 +151,24 @@ public class ChatHistoryService {
         saved++;
       }
 
-      String firstUserContent = "";
-      for (Map<String, Object> msg : messages) {
-        if ("user".equals(str(msg, "role"))) {
-          firstUserContent = str(msg, "content");
-          break;
+      // Smart title generation: only update title if it's still the default "新对话"
+      // This preserves the original topic title across multiple exchanges
+      String currentTitle = jdbc.queryForObject(
+        "SELECT title FROM chat_conversation WHERE id = ?", String.class, conversationId);
+      if (currentTitle == null || currentTitle.equals("新对话")) {
+        String firstUserContent = "";
+        for (Map<String, Object> msg : messages) {
+          if ("user".equals(str(msg, "role"))) {
+            firstUserContent = str(msg, "content");
+            break;
+          }
         }
+        String title = generateSmartTitle(firstUserContent);
+        jdbc.update("UPDATE chat_conversation SET updated_at = ?, title = ? WHERE id = ?", now, title, conversationId);
+      } else {
+        // Just update the timestamp
+        jdbc.update("UPDATE chat_conversation SET updated_at = ? WHERE id = ?", now, conversationId);
       }
-      String title = firstUserContent.isBlank() ? "新对话" : firstUserContent;
-      if (title.length() > 50) title = title.substring(0, 50);
-      jdbc.update("UPDATE chat_conversation SET updated_at = ?, title = ? WHERE id = ?", now, title, conversationId);
 
       return ResponseEntity.ok(mapOf("saved", saved));
     } catch (Exception e) {
@@ -181,6 +189,56 @@ public class ChatHistoryService {
       // Table not yet created
     }
     return ResponseEntity.ok(mapOf("deleted", true));
+  }
+
+  /** 搜索历史对话 — 按关键词匹配标题和消息内容 */
+  public ResponseEntity<?> searchConversations(String userId, String keyword) {
+    if (userId == null || userId.isBlank()) return error(HttpStatus.UNAUTHORIZED, "Not authenticated.");
+    if (keyword == null || keyword.isBlank()) return listConversations(userId);
+
+    try {
+      String pattern = "%" + keyword + "%";
+      // Search in both conversation titles and message content
+      List<Map<String, Object>> rows = jdbc.queryForList(
+        "SELECT DISTINCT c.id, c.title, c.role, c.created_at, c.updated_at " +
+        "FROM chat_conversation c " +
+        "LEFT JOIN chat_message m ON m.conversation_id = c.id " +
+        "WHERE c.user_id = ? AND (c.title LIKE ? OR m.content LIKE ?) " +
+        "ORDER BY c.updated_at DESC LIMIT ?",
+        userId, pattern, pattern, MAX_CONVERSATIONS);
+
+      List<Map<String, Object>> conversations = new ArrayList<>();
+      for (Map<String, Object> row : rows) {
+        Map<String, Object> conv = new LinkedHashMap<>();
+        conv.put("id", str(row.get("id")));
+        conv.put("title", str(row.get("title")));
+        conv.put("role", str(row.get("role")));
+        conv.put("createdAt", str(row.get("created_at")));
+        conv.put("updatedAt", str(row.get("updated_at")));
+
+        // Include matching message snippets for context
+        List<Map<String, Object>> matches = jdbc.queryForList(
+          "SELECT content FROM chat_message WHERE conversation_id = ? AND content LIKE ? LIMIT 3",
+          str(row.get("id")), pattern);
+        List<String> snippets = new ArrayList<>();
+        for (Map<String, Object> m : matches) {
+          String content = str(m.get("content"));
+          // Extract snippet around keyword
+          int idx = content.toLowerCase().indexOf(keyword.toLowerCase());
+          if (idx >= 0) {
+            int start = Math.max(0, idx - 30);
+            int end = Math.min(content.length(), idx + keyword.length() + 30);
+            String snippet = (start > 0 ? "..." : "") + content.substring(start, end) + (end < content.length() ? "..." : "");
+            snippets.add(snippet);
+          }
+        }
+        conv.put("snippets", snippets);
+        conversations.add(conv);
+      }
+      return ResponseEntity.ok(mapOf("conversations", conversations, "keyword", keyword));
+    } catch (Exception e) {
+      return ResponseEntity.ok(mapOf("conversations", List.of(), "keyword", keyword));
+    }
   }
 
   // ========== helpers ==========
@@ -224,5 +282,37 @@ public class ChatHistoryService {
     Map<String, Object> map = new LinkedHashMap<>();
     for (int i = 0; i < pairs.length; i += 2) map.put(String.valueOf(pairs[i]), pairs[i + 1]);
     return map;
+  }
+
+  /**
+   * 智能标题生成 — 从用户首条消息中提取关键主题作为会话标题
+   * 策略：提取「」《》引号内容、问号前的主题、或截取核心语义片段
+   */
+  private String generateSmartTitle(String content) {
+    if (content == null || content.isBlank()) return "新对话";
+
+    String text = content.trim();
+
+    // Try extracting quoted content first: 「...」 or 《...》
+    java.util.regex.Matcher m = java.util.regex.Pattern.compile("[「《]([^」》]+)[」》]").matcher(text);
+    if (m.find()) {
+      String quoted = m.group(1);
+      if (quoted.length() <= 30) return quoted;
+      return quoted.substring(0, 27) + "...";
+    }
+
+    // If it's a question, extract the core part before ？ or ?
+    if (text.contains("？") || text.contains("?")) {
+      String questionPart = text.split("[？?]", 2)[0];
+      // Remove common question prefixes
+      questionPart = questionPart.replaceAll("^(请|帮我|请问|帮我看看|我想了解|怎么|如何|什么是|什么叫做)", "").trim();
+      if (!questionPart.isBlank() && questionPart.length() <= 30) return questionPart + "？";
+      if (!questionPart.isBlank()) return questionPart.substring(0, 27) + "...？";
+    }
+
+    // For commands/requests, extract the key action
+    text = text.replaceAll("^(帮我|请|我想|给我|能不能|可以)", "").trim();
+    if (text.length() <= 30) return text;
+    return text.substring(0, 27) + "...";
   }
 }

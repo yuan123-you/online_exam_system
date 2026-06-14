@@ -25,13 +25,13 @@
           </details>
         </div>
 
-        <!-- Reasoning block — after streaming: collapsed, preserved for review -->
+        <!-- Reasoning block — after streaming: open by default for transparency -->
         <div
           v-if="msg.role === 'assistant' && msg.reasoning && !(isLast(idx) && streamingActive)"
           class="reasoning-block reasoning-saved"
         >
-          <details>
-            <summary>🤔 深度思考</summary>
+          <details open>
+            <summary>🤔 AI 思考过程（原始输出）</summary>
             <div class="reasoning-text">{{ msg.reasoning }}</div>
           </details>
         </div>
@@ -136,6 +136,14 @@
           >
             <span v-if="results[idx][qi]">✅ 回答正确</span>
             <span v-else>❌ 回答错误，正确答案：{{ (q.answer || []).join('，') }}</span>
+            <!-- Enhanced explanation display -->
+            <div v-if="q.explanation" class="eq-explanation">
+              <div class="eq-expl-header" @click="toggleExplanation(idx, qi)">
+                <span>💡 查看解析</span>
+                <span class="eq-expl-arrow">{{ explanationsOpen[idx]?.[qi] ? '▼' : '▶' }}</span>
+              </div>
+              <div v-if="explanationsOpen[idx]?.[qi]" class="eq-expl-body" v-html="renderExplanation(q.explanation)"></div>
+            </div>
           </div>
         </div>
       </div>
@@ -151,7 +159,7 @@ import { typeLabel } from '@/utils/format'
 import type { AiQuestion } from '@/api/client'
 
 const props = defineProps<{
-  messages: Array<{ role: string; content: string }>
+  messages: Array<{ role: string; content: string; reasoning?: string; duration?: number }>
   streamingActive: boolean
   streamingReasoning: string
   loading: boolean
@@ -173,9 +181,31 @@ const answers = reactive<Record<number, Record<number, string[]>>>({})
 const textAnswers = reactive<Record<number, Record<number, string>>>({})
 const results = reactive<Record<number, Record<number, boolean>>>({})
 const submitted = reactive<Record<number, boolean>>({})
+const explanationsOpen = reactive<Record<number, Record<number, boolean>>>({})
 
 function isLast(idx: number) {
   return idx === props.messages.length - 1
+}
+
+// Toggle explanation visibility
+function toggleExplanation(msgIdx: number, qi: number) {
+  if (!explanationsOpen[msgIdx]) explanationsOpen[msgIdx] = {}
+  explanationsOpen[msgIdx][qi] = !explanationsOpen[msgIdx][qi]
+}
+
+// Render explanation text with basic markdown
+function renderExplanation(text: string): string {
+  if (!text) return ''
+  let html = escapeHtml(text)
+  // Bold
+  html = html.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+  // Section headers like 【答案】【解析】
+  html = html.replace(/【([^】]+)】/g, '<strong class="expl-section">【$1】</strong>')
+  // Inline code
+  html = html.replace(/`([^`]+)`/g, '<code class="md-inline">$1</code>')
+  // Line breaks
+  html = html.replace(/\n/g, '<br>')
+  return html
 }
 
 // ---- Copy Plain Text (strip markdown) ----
@@ -580,6 +610,48 @@ function escapeHtml(s: string) {
 }
 .eq-result.correct { background: #f0fdf4; color: #166534; }
 .eq-result.wrong { background: #fef2f2; color: #991b1b; }
+
+/* Explanation collapsible */
+.eq-explanation {
+  margin-top: 8px;
+  border-top: 1px solid rgba(0,0,0,0.06);
+  padding-top: 6px;
+}
+
+.eq-expl-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 500;
+  color: #6366f1;
+  padding: 4px 0;
+  user-select: none;
+}
+.eq-expl-header:hover { color: #4f46e5; }
+
+.eq-expl-arrow {
+  font-size: 10px;
+  transition: transform 0.15s;
+}
+
+.eq-expl-body {
+  margin-top: 6px;
+  padding: 8px 10px;
+  background: #f8fafc;
+  border-radius: 6px;
+  font-size: 12px;
+  line-height: 1.7;
+  color: #374151;
+  border: 1px solid #e5e7eb;
+}
+
+.eq-expl-body :deep(.expl-section) {
+  color: #6366f1;
+  display: inline-block;
+  margin: 4px 0 2px;
+}
 
 /* ===== Meta row (duration + copy) — outside bubble body ===== */
 .msg-meta {

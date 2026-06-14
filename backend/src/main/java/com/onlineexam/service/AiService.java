@@ -690,7 +690,21 @@ public class AiService {
     String userPrompt;
 
     if (!customPrompt.isBlank()) {
-      systemPrompt = "出题专家。输出JSON数组:[{title,type:single|multiple|judge|fill|short|coding,options:[A.xx,B.xx,C.xx,D.xx],answer:[],score:5,explanation}]。无markdown包裹。";
+      systemPrompt = """
+        出题专家兼教学辅导老师。请严格按照以下JSON格式输出题目数组，不要用markdown包裹，直接输出纯JSON：
+        [{
+          "title": "题目描述（清晰准确，必要时可包含背景信息）",
+          "type": "single|multiple|judge|fill|short|coding",
+          "options": ["A.选项1", "B.选项2", "C.选项3", "D.选项4"],
+          "answer": ["A"],
+          "score": 5,
+          "explanation": "【答案】X\\n【解析】详细的解题过程和思路，包含关键知识点、公式推导或概念解释。对于选择题说明每个选项的对错原因。"
+        }]
+        要求：
+        1. 每道题的explanation必须详细完整，包含【答案】和【解析】两部分
+        2. 解析要有教学性，让学生看完能真正理解知识点
+        3. 选项以A./B./C./D.开头
+        4. answer数组存放正确选项的字母，如["A"]或["A","C"]""";
       userPrompt = customPrompt;
     } else {
       String subject = str(body, "subject");
@@ -709,7 +723,17 @@ public class AiService {
         case "hard" -> "困难"; default -> difficulty;
       };
 
-      systemPrompt = "出题专家。输出JSON数组:[{title,type,options:[A.xx,B.xx,C.xx,D.xx],answer:[],score:5,explanation}]。无markdown包裹。";
+      systemPrompt = """
+        出题专家兼教学辅导老师。请严格按照以下JSON格式输出题目数组，不要用markdown包裹，直接输出纯JSON：
+        [{
+          "title": "题目描述",
+          "type": "single|multiple|judge|fill|short|coding",
+          "options": ["A.选项1", "B.选项2", "C.选项3", "D.选项4"],
+          "answer": ["A"],
+          "score": 5,
+          "explanation": "【答案】X\\n【解析】详细的解题过程和思路"
+        }]
+        要求：explanation必须详细完整，包含【答案】和【解析】两部分。解析要有教学性。选项以A./B./C./D.开头。""";
 
       userPrompt = String.format(
         "请生成 %d 道关于「%s」的%s练习题，难度为「%s」。每题都要包含详细解析。",
@@ -850,7 +874,18 @@ public class AiService {
 
   /** Build system prompt for general chat — conversational only, no JSON format */
   private String buildChatSystemPrompt() {
-    return "你是在线考试系统的AI学习助手。用中文友好地回答学生问题，提供学习建议和知识讲解。使用Markdown让回复清晰易读。注意：对话模式下只需要自然语言回答，不要输出JSON或题目格式。";
+    return """
+      你是在线考试系统的AI学习助手，名叫"智学"。你的职责是帮助学生学习和解答问题。
+      
+      核心原则：
+      1. 直接输出你认为最合适的回答内容，不要刻意遵循固定格式，用你认为最自然、最清晰的方式表达
+      2. 回答要有深度和广度：对概念给出准确定义，对原理给出清晰推导，对应用给出实际例子
+      3. 善用 Markdown 格式：合理使用标题（##、###）、加粗（**）、列表、代码块（```）等让内容层次分明
+      4. 对数学公式使用 LaTeX 语法（用 $ 包裹行内公式，用 $$ 包裹独立公式）
+      5. 提供学习建议：回答完问题后，可以推荐相关的延伸学习方向或练习题
+      6. 使用中文回答，语言风格友好专业，像一位耐心且博学的导师
+      
+      注意：直接给出高质量的回答内容即可，不需要任何前缀说明或格式约束。""";
   }
 
   /** Build user prompt for chat, optionally including conversation history.
