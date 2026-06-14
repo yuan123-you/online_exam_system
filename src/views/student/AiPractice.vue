@@ -8,20 +8,6 @@
 
     <!-- Main chat area -->
     <div class="chat-main">
-      <!-- Top bar -->
-      <header class="top-bar">
-        <div class="tb-left">
-          <span class="tb-title">{{ activeTab === 'chat' ? 'AI 对话' : 'AI 练题' }}</span>
-        </div>
-        <div class="tb-right">
-          <!-- Tab switcher -->
-          <div class="tab-switcher">
-            <button :class="{ active: activeTab === 'chat' }" @click="switchTab('chat')">💬 对话</button>
-            <button :class="{ active: activeTab === 'practice' }" @click="switchTab('practice')">📝 练题</button>
-          </div>
-        </div>
-      </header>
-
       <!-- Messages area -->
       <div ref="msgList" class="msg-area">
         <!-- Welcome -->
@@ -33,6 +19,47 @@
           </div>
           <div class="welcome-chips" v-if="activeTab === 'practice'">
             <button v-for="c in practiceQuickChips" :key="c.label" class="wc-chip" @click="send(c.prompt)">{{ c.icon }} {{ c.label }}</button>
+          </div>
+
+          <!-- 个性化推荐面板 -->
+          <div v-if="personalizedRecommendations.length > 0" class="recommendations-panel">
+            <div class="rec-header">
+              <span class="rec-title">🎯 为你推荐</span>
+              <button class="rec-refresh" @click="refreshRecommendations" :disabled="store.recommendationsLoading" title="刷新推荐">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" :class="{ spinning: store.recommendationsLoading }">
+                  <path d="M21 2v6h-6M3 12a9 9 0 0 1 15-6.7L21 8M3 22v-6h6M21 12a9 9 0 0 1-15 6.7L3 16"/>
+                </svg>
+              </button>
+            </div>
+            <div class="rec-list">
+              <div
+                v-for="(rec, idx) in personalizedRecommendations"
+                :key="idx"
+                class="rec-card"
+                :class="'rec-' + rec.priority"
+                @click="handleRecommendationClick(rec)"
+              >
+                <div class="rec-card-header">
+                  <span class="rec-type-badge" :class="'badge-' + rec.type">{{ recTypeLabel(rec.type) }}</span>
+                  <span class="rec-priority-dot" :class="'dot-' + rec.priority"></span>
+                </div>
+                <div class="rec-card-title">{{ rec.title }}</div>
+                <div class="rec-card-desc">{{ rec.description }}</div>
+                <div class="rec-card-actions">
+                  <button class="rec-action-btn" @click.stop="handleRecommendationClick(rec)">
+                    {{ rec.action === 'wrongbook' ? '去重练' : rec.action === 'chat' ? '开始对话' : '开始练习' }}
+                  </button>
+                  <div class="rec-feedback">
+                    <button class="fb-btn fb-helpful" @click.stop="giveFeedback(rec, 'helpful')" title="有帮助">
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3H14z"/><path d="M7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3"/></svg>
+                    </button>
+                    <button class="fb-btn fb-nothelpful" @click.stop="giveFeedback(rec, 'not_helpful')" title="没帮助">
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 15v4a3 3 0 0 0 3 3l4-9V2H5.72a2 2 0 0 0-2 1.7l-1.38 9a2 2 0 0 0 2 2.3H10z"/><path d="M17 2h2.67A2.31 2.31 0 0 1 22 4v7a2.31 2.31 0 0 1-2.33 2H17"/></svg>
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -48,6 +75,14 @@
 
       <!-- Bottom input area -->
       <div class="bottom-area">
+        <!-- Tab switcher -->
+        <div class="tab-switcher-row">
+          <div class="tab-switcher">
+            <button :class="{ active: activeTab === 'chat' }" @click="switchTab('chat')">💬 对话</button>
+            <button :class="{ active: activeTab === 'practice' }" @click="switchTab('practice')">📝 练题</button>
+          </div>
+        </div>
+
         <!-- Follow-up suggestion chips based on user preferences (shown during active conversation) -->
         <div v-if="currentMessages.length > 0 && recentThemes.length > 0 && !currentLoading" class="quick-chips">
           <button
@@ -90,7 +125,7 @@
               @click="stopStreaming"
               title="停止生成"
             >
-              <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
                 <rect x="4" y="4" width="16" height="16" rx="2"/>
               </svg>
             </button>
@@ -104,6 +139,7 @@
 <script setup lang="ts">
 import { ref, computed, watch, nextTick, onMounted, onUnmounted } from 'vue'
 import { useAppStore } from '@/stores/app'
+import type { RecommendationItem } from '@/api/client'
 import MessageBubbles from './AiPractice/MessageBubbles.vue'
 import ChatSidebar from './AiPractice/ChatSidebar.vue'
 
@@ -174,6 +210,11 @@ const recentThemes = computed(() => {
   return []
 })
 
+// 个性化推荐列表
+const personalizedRecommendations = computed(() => {
+  return store.recommendations || []
+})
+
 function switchTab(tab: 'chat' | 'practice') {
   activeTab.value = tab
   nextTick(() => scrollToBottom(300))
@@ -181,6 +222,8 @@ function switchTab(tab: 'chat' | 'practice') {
 
 function send(text: string) {
   if (!text.trim()) return
+  // 记录行为日志
+  store.trackBehavior(activeTab.value === 'chat' ? 'chat' : 'practice', 'conversation', undefined, { message: text.trim() })
   if (activeTab.value === 'chat') {
     store.handleChatSend(text.trim())
   } else {
@@ -214,9 +257,54 @@ function autoResize() {
   }
 }
 
+// 推荐相关方法
+function recTypeLabel(type: string): string {
+  const labels: Record<string, string> = {
+    knowledge_gap: '薄弱强化',
+    subject_review: '巩固提升',
+    study_plan: '学习建议',
+    chat: '对话推荐',
+    wrongbook_retry: '错题重练',
+    explore: '探索新知',
+    practice: '练习推荐',
+  }
+  return labels[type] || '推荐'
+}
+
+function handleRecommendationClick(rec: RecommendationItem) {
+  // 记录推荐点击行为
+  store.trackBehavior('recommendation_click', 'recommendation', undefined, { type: rec.type, title: rec.title })
+
+  if (rec.action === 'wrongbook') {
+    // 跳转到错题本页面
+    window.location.hash = '#/wrong-book'
+    return
+  }
+
+  if (rec.prompt) {
+    // 根据推荐类型切换到对应tab
+    if (rec.action === 'chat') {
+      if (activeTab.value !== 'chat') switchTab('chat')
+      store.handleChatSend(rec.prompt)
+    } else if (rec.action === 'practice') {
+      if (activeTab.value !== 'practice') switchTab('practice')
+      store.handlePracticeSend(rec.prompt)
+    }
+  }
+}
+
+function giveFeedback(rec: RecommendationItem, feedbackType: string) {
+  store.submitFeedback(rec.type, feedbackType)
+}
+
+function refreshRecommendations() {
+  store.loadRecommendations()
+}
+
 // Smart auto-scroll: pauses when user scrolls up, resumes on new message
 const userScrolledUp = ref(false)
 const nearBottomThreshold = 80 // px from bottom considered "at bottom"
+let scrollRafId = 0
 
 function onChatScroll() {
   const el = getScrollContainer()
@@ -243,21 +331,59 @@ function getScrollContainer(): HTMLElement | null {
 function scrollToBottom(duration: number) {
   const el = getScrollContainer()
   if (!el) return
+  // Cancel any pending scroll animation
+  if (scrollRafId) cancelAnimationFrame(scrollRafId)
+
   if (duration <= 0) {
     el.scrollTop = el.scrollHeight
     return
   }
-  el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' })
+
+  // Use requestAnimationFrame for smooth, jank-free scrolling
+  const startTop = el.scrollTop
+  const targetTop = el.scrollHeight - el.clientHeight
+  const distance = targetTop - startTop
+  if (distance <= 0) return
+
+  const startTime = performance.now()
+  function animate(now: number) {
+    const elapsed = now - startTime
+    const progress = Math.min(elapsed / duration, 1)
+    // Ease-out cubic for natural deceleration
+    const eased = 1 - Math.pow(1 - progress, 3)
+    if (el) el.scrollTop = startTop + distance * eased
+    if (progress < 1) {
+      scrollRafId = requestAnimationFrame(animate)
+    } else {
+      scrollRafId = 0
+    }
+  }
+  scrollRafId = requestAnimationFrame(animate)
 }
+
+// 行为自动采集：页面停留时间
+let pageEnterTime = 0
 
 // Attach/detach scroll listener
 onMounted(() => {
+  pageEnterTime = Date.now()
   nextTick(() => {
     getScrollContainer()?.addEventListener('scroll', onChatScroll, { passive: true })
   })
+  // 记录页面访问行为
+  store.trackBehavior('page_view', 'page', undefined, { page: 'ai-practice' })
 })
 onUnmounted(() => {
   getScrollContainer()?.removeEventListener('scroll', onChatScroll)
+  if (scrollRafId) cancelAnimationFrame(scrollRafId)
+  // 记录页面停留时长
+  if (pageEnterTime > 0) {
+    const durationMs = Date.now() - pageEnterTime
+    store.trackBehavior('page_leave', 'page', undefined, { page: 'ai-practice' }, durationMs)
+  }
+  // Stop any ongoing AI streaming requests to prevent AbortError
+  store.handleChatStop()
+  store.handlePracticeStop()
 })
 </script>
 
@@ -266,12 +392,13 @@ onUnmounted(() => {
 .chat-layout {
   display: flex;
   flex-direction: row;
-  height: calc(100vh - 180px);
+  height: 100%;
   background: #fff;
-  border: 1px solid #e5e7eb;
-  border-radius: 12px;
+  border: none;
+  border-radius: 0;
   overflow: hidden;
   position: relative;
+  gap: 0;
 }
 
 /* Hide custom scrollbar from inner elements — outer .content-panel handles scrolling */
@@ -283,10 +410,10 @@ onUnmounted(() => {
 .msg-area {
   flex: 1;
   overflow: visible; /* no inner scrollbar — page scrolls naturally */
-  padding: 24px 16px;
+  padding: 18px 12px;
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 10px;
 }
 
 /* ===== Main ===== */
@@ -298,68 +425,71 @@ onUnmounted(() => {
   background: #fff;
   overflow-y: auto;
   overflow-x: hidden;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
+  scrollbar-color: #d1d5db transparent;
 }
 
-/* ===== Top bar ===== */
-.top-bar {
+/* ===== Tab switcher (moved to bottom area) ===== */
+.tab-switcher-row {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 10px 20px;
-  border-bottom: 1px solid #f3f4f6;
-  background: #fafbfc;
-  flex-shrink: 0;
+  justify-content: center;
+  padding: 6px 16px 0;
 }
-
-.tb-left { display: flex; align-items: center; gap: 8px; }
-.tb-title { font-size: 14px; font-weight: 600; color: #111827; }
-.tb-right { display: flex; align-items: center; gap: 12px; }
 
 /* Tab switcher */
 .tab-switcher {
   display: flex;
-  border-radius: 8px;
+  border-radius: 10px;
   overflow: hidden;
   border: 1px solid #e5e7eb;
+  background: #f9fafb;
 }
 .tab-switcher button {
-  padding: 5px 14px;
+  padding: 6px 16px;
   border: none;
-  background: #fff;
+  background: transparent;
   color: #6b7280;
   font-size: 12px;
+  font-weight: 500;
   cursor: pointer;
-  transition: all 0.12s;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  position: relative;
 }
 .tab-switcher button.active {
   background: #1e1b4b;
   color: #fff;
   font-weight: 600;
-  box-shadow: inset 0 1px 3px rgba(0,0,0,0.2);
+  box-shadow: 0 1px 4px rgba(0,0,0,0.2);
+  border-radius: 8px;
 }
-.tab-switcher button:not(.active):hover { background: #f3f4f6; }
+.tab-switcher button:not(.active):hover {
+  background: #f3f4f6;
+  color: #374151;
+}
 
 /* Welcome */
 .welcome {
   text-align: center;
-  padding: 40px 20px;
+  padding: 30px 16px;
   margin: auto;
 }
 
-.welcome-icon { font-size: 40px; margin-bottom: 12px; }
-.welcome h3 { font-size: 18px; color: #111827; margin: 0 0 16px; font-weight: 600; }
+.welcome-icon { font-size: 36px; margin-bottom: 10px; }
+.welcome h3 { font-size: 17px; color: #111827; margin: 0 0 12px; font-weight: 600; }
 
 .welcome-chips {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: 5px;
   justify-content: center;
   max-width: 560px;
   margin: 0 auto;
 }
 
 .wc-chip {
-  padding: 6px 14px;
+  padding: 5px 12px;
   border: 1px solid #e5e7eb;
   border-radius: 16px;
   background: #fff;
@@ -369,6 +499,140 @@ onUnmounted(() => {
   transition: all 0.12s;
 }
 .wc-chip:hover { border-color: #9ca3af; background: #f9fafb; }
+
+/* ===== Recommendations Panel ===== */
+.recommendations-panel {
+  max-width: 640px;
+  margin: 14px auto 0;
+  text-align: left;
+}
+.rec-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+  padding: 0 4px;
+}
+.rec-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: #374151;
+}
+.rec-refresh {
+  background: none;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 4px 8px;
+  cursor: pointer;
+  color: #6b7280;
+  display: flex;
+  align-items: center;
+  transition: all 0.15s;
+}
+.rec-refresh:hover { background: #f3f4f6; color: #374151; }
+.rec-refresh:disabled { opacity: 0.5; cursor: not-allowed; }
+.spinning { animation: spin 1s linear infinite; }
+@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+
+.rec-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 260px), 1fr));
+  gap: 8px;
+}
+.rec-card {
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  padding: 12px;
+  cursor: pointer;
+  transition: all 0.15s;
+  background: #fff;
+  position: relative;
+}
+.rec-card:hover { border-color: #a5b4fc; box-shadow: 0 2px 8px rgba(99,102,241,0.1); transform: translateY(-1px); }
+.rec-card.rec-high { border-left: 3px solid #ef4444; }
+.rec-card.rec-medium { border-left: 3px solid #f59e0b; }
+.rec-card.rec-low { border-left: 3px solid #10b981; }
+
+.rec-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+.rec-type-badge {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.badge-knowledge_gap { background: #fef2f2; color: #dc2626; }
+.badge-subject_review { background: #fffbeb; color: #d97706; }
+.badge-study_plan { background: #eff6ff; color: #2563eb; }
+.badge-chat { background: #f0fdf4; color: #16a34a; }
+.badge-wrongbook_retry { background: #fef2f2; color: #dc2626; }
+.badge-explore { background: #faf5ff; color: #9333ea; }
+.badge-practice { background: #f0fdf4; color: #16a34a; }
+
+.rec-priority-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+.dot-high { background: #ef4444; }
+.dot-medium { background: #f59e0b; }
+.dot-low { background: #10b981; }
+
+.rec-card-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #111827;
+  margin-bottom: 4px;
+  line-height: 1.4;
+}
+.rec-card-desc {
+  font-size: 11px;
+  color: #6b7280;
+  line-height: 1.5;
+  margin-bottom: 8px;
+}
+.rec-card-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.rec-action-btn {
+  font-size: 11px;
+  font-weight: 500;
+  padding: 4px 12px;
+  border: 1px solid #6366f1;
+  border-radius: 8px;
+  background: #fff;
+  color: #6366f1;
+  cursor: pointer;
+  transition: all 0.12s;
+}
+.rec-action-btn:hover { background: #6366f1; color: #fff; }
+
+.rec-feedback {
+  display: flex;
+  gap: 4px;
+}
+.fb-btn {
+  background: none;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  padding: 3px 6px;
+  cursor: pointer;
+  color: #9ca3af;
+  display: flex;
+  align-items: center;
+  transition: all 0.12s;
+}
+.fb-btn:hover { border-color: #d1d5db; }
+.fb-helpful:hover { color: #10b981; border-color: #10b981; background: #f0fdf4; }
+.fb-nothelpful:hover { color: #ef4444; border-color: #ef4444; background: #fef2f2; }
 
 /* ===== Bottom area ===== */
 .bottom-area {
@@ -398,28 +662,29 @@ onUnmounted(() => {
 
 /* Input row */
 .input-row {
-  padding: 10px 16px;
+  padding: 8px 12px;
 }
 
 .input-wrapper {
   position: relative;
   display: flex;
   align-items: flex-end;
+  overflow: hidden;
 }
 
 .msg-input {
   width: 100%;
-  padding: 14px 52px 14px 18px;  /* right padding for button */
+  padding: 12px 48px 12px 14px;  /* right padding for button */
   border: 2px solid #e5e7eb;
   border-radius: 14px;
-  font-size: 15px;
+  font-size: 14px;
   font-family: inherit;
   line-height: 1.6;
   resize: none;
   outline: none;
   background: #f9fafb;
   color: #111827;
-  min-height: 48px;
+  min-height: 44px;
   max-height: 200px;
   transition: border-color 0.15s, box-shadow 0.15s, background 0.15s;
 }
@@ -453,7 +718,7 @@ onUnmounted(() => {
 }
 .send-action:hover:not(:disabled) {
   background: #4f46e5;
-  transform: scale(1.06);
+  transform: translateY(-50%) scale(1.06);
   box-shadow: 0 2px 8px rgba(99,102,241,0.35);
 }
 .send-action:disabled {
@@ -468,7 +733,7 @@ onUnmounted(() => {
 }
 .stop-action:hover {
   background: #dc2626;
-  transform: scale(1.06);
+  transform: translateY(-50%) scale(1.06);
   box-shadow: 0 2px 8px rgba(239,68,68,0.35);
 }
 @keyframes stop-pulse {
@@ -491,18 +756,8 @@ onUnmounted(() => {
     z-index: 25;
   }
   .chat-layout {
-    min-height: calc(100vh - 140px);
-    border-radius: 0;
-    border: none;
+    height: 100%;
   }
-
-  .top-bar {
-    padding: 8px 12px;
-    flex-wrap: wrap;
-    gap: 8px;
-  }
-  .tb-right { gap: 6px; }
-  .tb-title { font-size: 13px; }
 
   .tab-switcher button {
     padding: 4px 10px;
@@ -510,27 +765,52 @@ onUnmounted(() => {
   }
 
   .msg-area {
-    padding: 16px 10px;
-    gap: 10px;
+    padding: 12px 8px;
+    gap: 8px;
   }
 
-  .welcome { padding: 24px 12px; }
+  .welcome { padding: 20px 10px; }
   .welcome h3 { font-size: 15px; }
-  .wc-chip { font-size: 11px; padding: 5px 10px; }
+  .wc-chip { font-size: 11px; padding: 4px 8px; }
 
-  .quick-chips { padding: 6px 10px 0; gap: 4px; }
+  .quick-chips { padding: 4px 8px 0; gap: 4px; }
   .quick-chips button { font-size: 10px; padding: 3px 8px; }
 
-  .input-row { padding: 8px 10px; }
+  .input-row { padding: 6px 8px; }
   .msg-input {
-    padding: 10px 44px 10px 12px;
+    padding: 10px 40px 10px 12px;
     font-size: 13px;
     border-radius: 12px;
   }
   .action-btn {
-    width: 38px; height: 38px;
+    width: 36px; height: 36px;
     right: 6px;
     border-radius: 10px;
+  }
+
+  .rec-list {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ===== Responsive — Landscape on mobile ===== */
+@media (max-width: 1023px) and (orientation: landscape) {
+  .welcome {
+    padding: 16px 10px;
+  }
+  .welcome-icon {
+    font-size: 28px;
+    margin-bottom: 6px;
+  }
+  .welcome h3 {
+    font-size: 14px;
+    margin-bottom: 8px;
+  }
+  .msg-area {
+    padding: 8px 8px;
+  }
+  .input-row {
+    padding: 4px 8px;
   }
 }
 </style>

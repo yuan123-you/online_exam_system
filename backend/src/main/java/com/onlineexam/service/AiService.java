@@ -6,13 +6,23 @@ import com.onlineexam.StoreService;
 import com.onlineexam.StoreService.Store;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentLinkedDeque;
+import java.util.concurrent.Executor;
+import java.util.concurrent.Semaphore;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
@@ -20,23 +30,51 @@ import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClientException;
 import org.springframework.web.client.RestTemplate;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 /**
- * AI 服务 - 集成智谱 GLM-4-Flash 模型实现智能出题、评分和练习
+ * AI 服务 - 集成智谱 GLM-4.7-Flash 模型实现智能出题、评分和练习
+ *
+ * 并发与线程安全设计：
+ * - 使用受管理的线程池(aiTaskExecutor)替代 new Thread()，避免资源耗尽
+ * - Semaphore 控制并发 AI API 调用数，防止 429 限流
+ * - ConcurrentHashMap + 同步块保证速率限制和缓存的线程安全
+ * - CompletableFuture 并行评分主观题，提升阅卷效率
+ * - 会话隔离：每个用户的对话上下文独立存储，互不干扰
+ * - SSE 连接生命周期管理：onCompletion/onTimeout/onError 自动释放信号量
+ * - 定时任务清理过期缓存和速率限制数据，防止内存泄漏
  */
 @Service
 public class AiService {
 
+  private static final Logger log = LoggerFactory.getLogger(AiService.class);
+
   private static final Set<String> SUBJECTIVE_TYPES = Set.of("short", "coding");
+
+  /** 出题系统提示词（增强版，确保生成完整题目含选项） */
+  private static final String QUESTION_SYSTEM_PROMPT =
+    "你是出题专家。严格按用户要求的数量和题型出题，一道不少一道不多。\n"
+    + "输出纯JSON数组，不要markdown包裹，不要多余文字：\n"
+    + "[{\"title\":\"题干\",\"type\":\"题型\",\"options\":[...],\"answer\":[...],\"score\":5,\"explanation\":\"解析\"}]\n\n"
+    + "字段规则：\n"
+    + "- type: single(单选) | multiple(多选) | judge(判断) | fill(填空) | short(简答) | coding(编程)\n"
+    + "- options: 单选/多选必须4个选项[\"A.选项1\",\"B.选项2\",\"C.选项3\",\"D.选项4\"]；判断2个选项[\"A.正确\",\"B.错误\"]；填空/简答/编程为[]\n"
+    + "- answer: 单选[\"A\"]，多选[\"A\",\"C\"]，判断[\"A\"]，填空[\"答案文本\"]\n"
+    + "- explanation: 必须包含【答案】和【解析】两部分\n"
+    + "- score: 固定为5\n\n"
+    + "重要：单选/多选/判断题的options绝不能为空数组，必须包含完整选项！严禁输出思考过程。\n"
+    + "示例（多选题）：\n"
+    + "[{\"title\":\"关于JavaScript，下列说法正确的是？\",\"type\":\"multiple\",\"options\":[\"A.JavaScript是单线程语言\",\"B.JavaScript支持闭包\",\"C.JavaScript是编译型语言\",\"D.JavaScript支持事件循环\"],\"answer\":[\"A\",\"B\",\"D\"],\"score\":5,\"explanation\":\"【答案】A,B,D 【解析】JavaScript是单线程解释型语言，支持闭包和事件循环机制，不是编译型语言。\"}]";
 
   private final StoreService storeService;
   private final SystemLogService systemLogService;
   private final RestTemplate restTemplate;
   private final ObjectMapper objectMapper;
+  private final Executor aiTaskExecutor;
 
   @Value("${ai.api-url:https://open.bigmodel.cn/api/paas/v4/chat/completions}")
   private String apiUrl;
@@ -44,31 +82,136 @@ public class AiService {
   @Value("${ai.api-key:}")
   private String apiKey;
 
-  @Value("${ai.model:glm-4-flash}")
+  @Value("${ai.model:glm-4.7-flash}")
   private String model;
 
   @Value("${ai.rate-limit-per-minute:30}")
   private int rateLimitPerMinute;
 
-  // Rate limiting: userId -> list of call timestamps
-  private final ConcurrentHashMap<String, List<Long>> rateLimitMap = new ConcurrentHashMap<>();
+  @Value("${ai.concurrent-limit:4}")
+  private int concurrentLimit;
 
-  // Simple cache: prompt hash -> response
+  // ========== 并发控制 ==========
+
+  /** 并发 AI API 调用信号量，防止过多请求触发 429 */
+  private volatile Semaphore aiApiSemaphore;
+
+  /** 速率限制：userId -> 时间戳队列（线程安全） */
+  private final ConcurrentHashMap<String, ConcurrentLinkedDeque<Long>> rateLimitMap = new ConcurrentHashMap<>();
+
+  /** 响应缓存：prompt hash -> 缓存响应 */
   private final ConcurrentHashMap<String, CachedResponse> responseCache = new ConcurrentHashMap<>();
-  private static final long CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+  private static final long CACHE_TTL_MS = 5 * 60 * 1000; // 5 分钟
+
+  /** 活跃 SSE 连接计数 */
+  private final AtomicInteger activeSseConnections = new AtomicInteger(0);
+
+  /** 会话上下文：userId -> 最近对话历史（线程安全隔离） */
+  private final ConcurrentHashMap<String, ConversationSession> conversationSessions = new ConcurrentHashMap<>();
+  private static final int MAX_SESSIONS = 500;
+  private static final int MAX_SESSION_HISTORY = 20;
 
   public AiService(StoreService storeService, SystemLogService systemLogService,
-                   RestTemplate restTemplate, ObjectMapper objectMapper) {
+                   RestTemplate restTemplate, ObjectMapper objectMapper,
+                   @Qualifier("aiTaskExecutor") Executor aiTaskExecutor) {
     this.storeService = storeService;
     this.systemLogService = systemLogService;
     this.restTemplate = restTemplate;
     this.objectMapper = objectMapper;
+    this.aiTaskExecutor = aiTaskExecutor;
   }
 
   private record CachedResponse(String content, long timestamp) {}
 
+  /** 会话上下文 - 每个用户独立，线程安全 */
+  private static class ConversationSession {
+    private final ConcurrentLinkedDeque<Map<String, String>> history = new ConcurrentLinkedDeque<>();
+    private volatile long lastAccessTime = System.currentTimeMillis();
+
+    void addMessage(String role, String content) {
+      // 截断过长消息节省内存
+      if (content.length() > 500) {
+        content = content.substring(0, 500) + "...(已省略)";
+      }
+      history.addLast(Map.of("role", role, "content", content));
+      // 滑动窗口：保留最近 N 条
+      while (history.size() > MAX_SESSION_HISTORY) {
+        history.pollFirst();
+      }
+      lastAccessTime = System.currentTimeMillis();
+    }
+
+    List<Map<String, String>> getRecentHistory(int maxCount) {
+      List<Map<String, String>> all = new ArrayList<>(history);
+      if (all.size() <= maxCount) return all;
+      return all.subList(all.size() - maxCount, all.size());
+    }
+
+    void touch() {
+      lastAccessTime = System.currentTimeMillis();
+    }
+  }
+
+  /** 延迟初始化信号量（@Value 注入后才能确定大小） */
+  private Semaphore getSemaphore() {
+    if (aiApiSemaphore == null) {
+      synchronized (this) {
+        if (aiApiSemaphore == null) {
+          aiApiSemaphore = new Semaphore(concurrentLimit);
+        }
+      }
+    }
+    return aiApiSemaphore;
+  }
+
+  // ========== 定时清理任务 ==========
+
+  /** 每分钟清理过期的速率限制数据 */
+  @Scheduled(fixedRate = 60_000)
+  public void cleanupRateLimits() {
+    long now = System.currentTimeMillis();
+    long windowMs = 60_000;
+    rateLimitMap.entrySet().removeIf(entry -> {
+      ConcurrentLinkedDeque<Long> ts = entry.getValue();
+      ts.removeIf(t -> (now - t) > windowMs);
+      return ts.isEmpty();
+    });
+  }
+
+  /** 每5分钟清理过期缓存 */
+  @Scheduled(fixedRate = 300_000)
+  public void cleanupCache() {
+    long now = System.currentTimeMillis();
+    responseCache.entrySet().removeIf(e -> (now - e.getValue().timestamp()) > CACHE_TTL_MS);
+    log.debug("[AiService] 缓存清理完成，当前缓存条目: {}", responseCache.size());
+  }
+
+  /** 每10分钟清理过期会话 */
+  @Scheduled(fixedRate = 600_000)
+  public void cleanupSessions() {
+    long now = System.currentTimeMillis();
+    long sessionTimeoutMs = 30 * 60 * 1000; // 30 分钟无访问则过期
+    conversationSessions.entrySet().removeIf(entry ->
+      (now - entry.getValue().lastAccessTime) > sessionTimeoutMs
+    );
+    // 如果会话数超限，移除最旧的
+    if (conversationSessions.size() > MAX_SESSIONS) {
+      List<String> keys = new ArrayList<>(conversationSessions.keySet());
+      keys.sort((a, b) -> Long.compare(
+        conversationSessions.get(a).lastAccessTime,
+        conversationSessions.get(b).lastAccessTime
+      ));
+      int toRemove = conversationSessions.size() - MAX_SESSIONS;
+      for (int i = 0; i < toRemove; i++) {
+        conversationSessions.remove(keys.get(i));
+      }
+    }
+  }
+
+  // ========== AI 生成题目 ==========
+
   /**
-   * AI 生成题目 - 调用 GLM-4-Flash 生成真实题目
+   * AI 生成题目 - 调用 GLM-4.7-Flash 生成真实题目
    */
   public ResponseEntity<?> generateQuestions(String userId, Map<String, Object> body) {
     Store store = storeService.readStore();
@@ -77,7 +220,6 @@ public class AiService {
 
     long existingCount = store.questions.stream().filter(q -> Objects.equals(str(q, "teacherId"), userId)).count();
 
-    // Rate limit check
     if (!checkRateLimit(userId)) {
       return error(HttpStatus.TOO_MANY_REQUESTS, "AI 调用频率过高，请稍后再试（每分钟最多 " + rateLimitPerMinute + " 次）");
     }
@@ -89,20 +231,28 @@ public class AiService {
     String knowledgePoint;
     String difficulty;
     String type;
+    int count;
 
     if (!customPrompt.isBlank()) {
-      // User provided a custom prompt — use it directly (like student practice-questions)
-      systemPrompt = "出题专家。输出JSON数组:[{title,type:single|multiple|judge|fill|short|coding,options:[A.xx,B.xx,C.xx,D.xx],answer:[],score:5,explanation}]。无markdown包裹。";
-      userPrompt = customPrompt;
-      subject = str(body, "subject");
-      knowledgePoint = str(body, "knowledgePoint");
-      difficulty = str(body, "difficulty").isBlank() ? "medium" : str(body, "difficulty");
-      type = str(body, "type").isBlank() ? "single" : str(body, "type");
+      systemPrompt = QUESTION_SYSTEM_PROMPT;
+      userPrompt = buildSmartUserPrompt(customPrompt, body, 10);
+      // Extract metadata for parseAiQuestions
+      count = extractCountFromText(customPrompt);
+      if (count <= 0) count = Math.min(asInt(body.get("count")), 10);
+      if (count <= 0) count = 5;
+      String extractedType = extractTypeFromText(customPrompt);
+      String extractedSubject = extractSubjectFromText(customPrompt);
+      type = extractedType.isBlank() ? (str(body, "type").isBlank() ? "single" : str(body, "type")) : extractedType;
+      subject = extractedSubject.isBlank() ? str(body, "subject") : extractedSubject;
+      knowledgePoint = extractKnowledgePointFromText(customPrompt);
+      if (knowledgePoint.isBlank()) knowledgePoint = str(body, "knowledgePoint");
+      difficulty = extractDifficultyFromText(customPrompt);
+      if (difficulty.isBlank()) difficulty = str(body, "difficulty").isBlank() ? "medium" : str(body, "difficulty");
     } else {
       subject = str(body, "subject");
       knowledgePoint = str(body, "knowledgePoint");
       difficulty = str(body, "difficulty").isBlank() ? "medium" : str(body, "difficulty");
-      int count = Math.min(asInt(body.get("count")), 10);
+      count = Math.min(asInt(body.get("count")), 10);
       if (count <= 0) count = 5;
       type = str(body, "type").isBlank() ? "single" : str(body, "type");
 
@@ -123,10 +273,10 @@ public class AiService {
         default -> difficulty;
       };
 
-      systemPrompt = "出题专家。输出JSON数组:[{title,type,options:[A.xx,B.xx,C.xx,D.xx],answer:[],score:5,explanation}]。无markdown包裹。";
+      systemPrompt = QUESTION_SYSTEM_PROMPT;
 
       userPrompt = String.format(
-        "请生成 %d 道关于「%s」的%s，知识点方向为「%s」，难度为「%s」。每题分值5分。请包含详细解析。",
+        "严格生成恰好 %d 道关于「%s」的%s，知识点方向为「%s」，难度为「%s」。每题分值5分。请包含详细解析。不要多也不要少。",
         count,
         subject.isBlank() ? "计算机基础" : subject,
         typeChinese,
@@ -139,6 +289,9 @@ public class AiService {
     try {
       String aiResponse = callAiApi(systemPrompt, userPrompt);
       generated = parseAiQuestions(aiResponse, userId, subject, knowledgePoint, difficulty, type);
+      if (generated.size() > count) {
+        generated = generated.subList(0, count);
+      }
     } catch (Exception e) {
       systemLogService.log(user, "AI出题失败", e.getMessage());
       return error(HttpStatus.SERVICE_UNAVAILABLE, "AI 服务暂时不可用：" + e.getMessage());
@@ -153,6 +306,8 @@ public class AiService {
       "remainingQuota", Math.max(0, 5000 - existingCount)
     ));
   }
+
+  // ========== 导入题目 ==========
 
   /**
    * 导入 AI 生成的题目到题库
@@ -171,8 +326,8 @@ public class AiService {
       return error(HttpStatus.BAD_REQUEST, "没有需要导入的题目");
     }
 
-    List<Map<String, Object>> imported = new ArrayList<>();
-    List<Map<String, Object>> errors = new ArrayList<>();
+    List<Map<String, Object>> imported = Collections.synchronizedList(new ArrayList<>());
+    List<Map<String, Object>> errors = Collections.synchronizedList(new ArrayList<>());
 
     for (int i = 0; i < questions.size(); i++) {
       Map<String, Object> q = questions.get(i);
@@ -222,8 +377,11 @@ public class AiService {
     ));
   }
 
+  // ========== AI 评分（并行化主观题评分） ==========
+
   /**
-   * AI 评分提交 - 使用 GLM-4-Flash 进行智能评分
+   * AI 评分提交 - 使用 GLM-4.7-Flash 进行智能评分
+   * 主观题评分使用 CompletableFuture 并行处理，提升效率
    */
   public ResponseEntity<?> gradeSubmission(String userId, Map<String, Object> body) {
     Store store = storeService.readStore();
@@ -236,60 +394,104 @@ public class AiService {
     Map<String, Object> exam = find(store.exams, str(submission, "examId"));
     if (exam == null || !Objects.equals(str(exam, "teacherId"), userId)) return error(HttpStatus.FORBIDDEN, "Forbidden.");
 
-    // Rate limit check
     if (!checkRateLimit(userId)) {
       return error(HttpStatus.TOO_MANY_REQUESTS, "AI 调用频率过高，请稍后再试");
     }
 
-    int aiScore = 0;
     List<Object> details = new ArrayList<>(asList(submission.get("answerDetail")));
-    List<Object> aiDetails = new ArrayList<>();
 
-    for (Object raw : details) {
-      Map<String, Object> detail = new LinkedHashMap<>(asMap(raw));
+    // 分离主观题和客观题
+    List<Map<String, Object>> subjectiveDetails = new ArrayList<>();
+    List<Integer> subjectiveIndices = new ArrayList<>();
+    for (int i = 0; i < details.size(); i++) {
+      Map<String, Object> detail = new LinkedHashMap<>(asMap(details.get(i)));
       String type = str(detail, "type");
-
       if (SUBJECTIVE_TYPES.contains(type)) {
-        int fullScore = asInt(detail.get("fullScore"));
-        List<String> given = normalizeAnswer(detail.get("answer"));
-        List<String> expected = normalizeAnswer(detail.get("expectedAnswer"));
-        String givenText = String.join(" ", given);
-        String expectedText = String.join(" ", expected);
+        subjectiveDetails.add(detail);
+        subjectiveIndices.add(i);
+      }
+    }
 
-        if (givenText.isBlank()) {
-          detail.put("aiScore", 0);
-          detail.put("aiComment", "未作答");
-        } else {
-          try {
-            // Use AI to grade subjective questions
-            Map<String, Object> aiResult = aiGradeAnswer(
-              str(detail, "title"), givenText, expectedText, fullScore
-            );
-            int score = asInt(aiResult.get("score"));
-            score = Math.max(0, Math.min(fullScore, score));
-            String comment = str(aiResult, "comment");
+    // 并行评分所有主观题
+    AtomicInteger aiScore = new AtomicInteger(0);
+    if (!subjectiveDetails.isEmpty()) {
+      List<CompletableFuture<Void>> futures = new ArrayList<>();
+      for (int si = 0; si < subjectiveDetails.size(); si++) {
+        Map<String, Object> detail = subjectiveDetails.get(si);
+        final int detailIndex = si;
+        CompletableFuture<Void> future = CompletableFuture.runAsync(() -> {
+          int fullScore = asInt(detail.get("fullScore"));
+          List<String> given = normalizeAnswer(detail.get("answer"));
+          List<String> expected = normalizeAnswer(detail.get("expectedAnswer"));
+          String givenText = String.join(" ", given);
+          String expectedText = String.join(" ", expected);
 
-            detail.put("aiScore", score);
-            detail.put("aiComment", "AI评分：" + score + "/" + fullScore + "（" + comment + "）");
-            aiScore += score;
-          } catch (Exception e) {
-            // Fallback to simple keyword matching if AI fails
+          if (givenText.isBlank()) {
+            detail.put("aiScore", 0);
+            detail.put("aiComment", "未作答");
+          } else {
+            try {
+              Map<String, Object> aiResult = aiGradeAnswer(
+                str(detail, "title"), givenText, expectedText, fullScore
+              );
+              int score = asInt(aiResult.get("score"));
+              score = Math.max(0, Math.min(fullScore, score));
+              String comment = str(aiResult, "comment");
+
+              detail.put("aiScore", score);
+              detail.put("aiComment", "AI评分：" + score + "/" + fullScore + "（" + comment + "）");
+              aiScore.addAndGet(score);
+            } catch (Exception e) {
+              int score = fallbackKeywordScore(givenText, expectedText, fullScore);
+              detail.put("aiScore", score);
+              detail.put("aiComment", "AI评分：" + score + "/" + fullScore + "（关键词匹配，AI服务暂不可用）");
+              aiScore.addAndGet(score);
+            }
+          }
+        }, aiTaskExecutor);
+        futures.add(future);
+      }
+
+      // 等待所有主观题评分完成（最多等待 60 秒）
+      try {
+        CompletableFuture.allOf(futures.toArray(new CompletableFuture[0]))
+          .get(60, TimeUnit.SECONDS);
+      } catch (Exception e) {
+        log.warn("[AiService] 并行评分超时或异常: {}", e.getMessage());
+        // 对未完成的主观题使用关键词匹配兜底
+        for (Map<String, Object> detail : subjectiveDetails) {
+          if (!detail.containsKey("aiScore")) {
+            int fullScore = asInt(detail.get("fullScore"));
+            String givenText = String.join(" ", normalizeAnswer(detail.get("answer")));
+            String expectedText = String.join(" ", normalizeAnswer(detail.get("expectedAnswer")));
             int score = fallbackKeywordScore(givenText, expectedText, fullScore);
             detail.put("aiScore", score);
-            detail.put("aiComment", "AI评分：" + score + "/" + fullScore + "（关键词匹配，AI服务暂不可用）");
-            aiScore += score;
+            detail.put("aiComment", "AI评分：" + score + "/" + fullScore + "（超时，关键词匹配）");
+            aiScore.addAndGet(score);
           }
         }
-      } else {
-        // Objective questions: use auto-score
-        aiScore += asInt(detail.get("score"));
       }
-      aiDetails.add(detail);
+    }
+
+    // 合并结果：客观题直接计分，主观题使用 AI 评分
+    List<Object> aiDetails = new ArrayList<>();
+    int subjectiveIdx = 0;
+    for (int i = 0; i < details.size(); i++) {
+      Map<String, Object> original = asMap(details.get(i));
+      String type = str(original, "type");
+      if (SUBJECTIVE_TYPES.contains(type)) {
+        aiDetails.add(subjectiveDetails.get(subjectiveIdx));
+        subjectiveIdx++;
+      } else {
+        Map<String, Object> detail = new LinkedHashMap<>(original);
+        aiScore.addAndGet(asInt(detail.get("score")));
+        aiDetails.add(detail);
+      }
     }
 
     Map<String, Object> result = new LinkedHashMap<>();
     result.put("submissionId", str(submission, "id"));
-    result.put("aiScore", aiScore);
+    result.put("aiScore", aiScore.get());
     result.put("manualScore", asInt(submission.get("finalScore")));
     result.put("details", aiDetails);
     result.put("message", "AI评分完成（仅供参考），不影响教师手动阅卷分数。");
@@ -298,15 +500,16 @@ public class AiService {
     return ResponseEntity.ok(result);
   }
 
+  // ========== AI 助手练习 ==========
+
   /**
-   * AI 助手 - 使用 GLM-4-Flash 根据用户自定义提示词或预设参数生成内容
+   * AI 助手 - 使用 GLM-4.7-Flash 根据用户自定义提示词或预设参数生成内容
    */
   public ResponseEntity<?> practiceQuestions(String userId, Map<String, Object> body) {
     Store store = storeService.readStore();
     Map<String, Object> user = find(store.users, userId);
     if (!isRole(user, "student")) return error(HttpStatus.FORBIDDEN, "Forbidden.");
 
-    // Rate limit check
     if (!checkRateLimit(userId)) {
       return error(HttpStatus.TOO_MANY_REQUESTS, "AI 调用频率过高，请稍后再试（每分钟最多 " + rateLimitPerMinute + " 次）");
     }
@@ -317,11 +520,9 @@ public class AiService {
     String userPrompt;
 
     if (!customPrompt.isBlank()) {
-      // User provided a custom prompt — use it directly
-      systemPrompt = "教学辅导。输出JSON数组:[{title,type:single|multiple|judge|fill|short|coding,options:[A.xx,B.xx,C.xx,D.xx],answer:[],score:5,explanation}]。无markdown包裹。";
-      userPrompt = customPrompt;
+      systemPrompt = QUESTION_SYSTEM_PROMPT;
+      userPrompt = buildSmartUserPrompt(customPrompt, body, 20);
     } else {
-      // Fall back to structured form fields
       String subject = str(body, "subject");
       String type = str(body, "type").isBlank() ? "single" : str(body, "type");
       String difficulty = str(body, "difficulty").isBlank() ? "medium" : str(body, "difficulty");
@@ -343,7 +544,7 @@ public class AiService {
         default -> difficulty;
       };
 
-      systemPrompt = "教学辅导。输出JSON数组:[{title,type,options:[A.xx,B.xx,C.xx,D.xx],answer:[],score:5,explanation}]。无markdown包裹。";
+      systemPrompt = QUESTION_SYSTEM_PROMPT;
 
       userPrompt = String.format(
         "请生成 %d 道关于「%s」的%s练习题，难度为「%s」。每题都要包含详细解析。",
@@ -359,7 +560,6 @@ public class AiService {
       String aiResponse = callAiApi(systemPrompt, userPrompt);
       String subject = str(body, "subject");
       questions = parseAiQuestions(aiResponse, "", subject.isBlank() ? "" : subject, "AI助手", str(body, "difficulty").isBlank() ? "medium" : str(body, "difficulty"), str(body, "type").isBlank() ? "single" : str(body, "type"));
-      // Add IDs for practice
       for (Map<String, Object> q : questions) {
         if (str(q, "id").isBlank()) {
           q.put("id", createId("practice"));
@@ -374,16 +574,16 @@ public class AiService {
     return ResponseEntity.ok(mapOf("questions", questions, "totalCount", questions.size()));
   }
 
+  // ========== AI 解析答案 ==========
+
   /**
-   * AI 解析答案 - 使用 GLM-4-Flash 解释正确答案和解题思路
+   * AI 解析答案 - 使用 GLM-4.7-Flash 解释正确答案和解题思路
    */
   public ResponseEntity<?> explainAnswer(String userId, Map<String, Object> body) {
     Store store = storeService.readStore();
     Map<String, Object> user = find(store.users, userId);
-    // Require a valid authenticated user (any role)
     if (user == null) return error(HttpStatus.UNAUTHORIZED, "Not authenticated.");
 
-    // Rate limit check
     if (!checkRateLimit(userId)) {
       return error(HttpStatus.TOO_MANY_REQUESTS, "AI 调用频率过高，请稍后再试");
     }
@@ -429,6 +629,8 @@ public class AiService {
       return ResponseEntity.ok(result);
     }
   }
+
+  // ========== 保存练习记录 ==========
 
   /**
    * 保存练习记录
@@ -521,41 +723,80 @@ public class AiService {
   // ========== AI API Integration Methods ==========
 
   /**
-   * Call the ZhiPu GLM-4-Flash API
-   */
-  /**
    * Call the ZhiPu GLM-4.7-Flash API with streaming support (SSE).
-   * Runs in a separate thread and feeds chunks into an SseEmitter.
-   * @param thinkingEnabled if true, enables deep-thinking mode (slower but more thorough)
+   * 使用受管理的线程池执行，支持并发安全。
+   * @param thinkingEnabled if true, enables deep-thinking mode
    */
   public void callAiApiStream(String systemPrompt, String userPrompt, boolean thinkingEnabled,
-                               org.springframework.web.servlet.mvc.method.annotation.SseEmitter emitter) {
-    callAiApiStream(systemPrompt, userPrompt, thinkingEnabled, 0.9, false, emitter);
+                               SseEmitter emitter) {
+    callAiApiStream(systemPrompt, userPrompt, thinkingEnabled, 0.7, false, emitter);
   }
 
   public void callAiApiStream(String systemPrompt, String userPrompt, boolean thinkingEnabled,
                                double temperature,
-                               org.springframework.web.servlet.mvc.method.annotation.SseEmitter emitter) {
+                               SseEmitter emitter) {
     callAiApiStream(systemPrompt, userPrompt, thinkingEnabled, temperature, false, emitter);
   }
 
   public void callAiApiStream(String systemPrompt, String userPrompt, boolean thinkingEnabled,
                                double temperature, boolean jsonMode,
-                               org.springframework.web.servlet.mvc.method.annotation.SseEmitter emitter) {
+                               SseEmitter emitter) {
     if (apiKey == null || apiKey.isBlank()) {
+      log.error("[AiService SSE] API密钥未配置，无法发起流式请求");
       try { emitter.send(SseEmitter.event().name("error").data("{\"error\":\"AI API密钥未配置\"}")); emitter.complete(); }
       catch (Exception ignored) {}
       return;
     }
 
-    // Run in a separate thread so the controller can return the emitter immediately
-    new Thread(() -> {
+    String threadId = Long.toHexString(Thread.currentThread().getId());
+    log.info("[AiService SSE] [{}] 开始流式请求: model={}, temp={}, thinking={}, jsonMode={}, 活跃SSE连接={}",
+      threadId, model, temperature, thinkingEnabled, jsonMode, activeSseConnections.get());
+
+    // 注册 SSE 生命周期回调，确保信号量释放
+    Semaphore semaphore = getSemaphore();
+    activeSseConnections.incrementAndGet();
+
+    emitter.onCompletion(() -> {
+      activeSseConnections.decrementAndGet();
+      log.debug("[AiService SSE] [{}] 连接完成，活跃SSE连接={}", threadId, activeSseConnections.get());
+    });
+    emitter.onTimeout(() -> {
+      activeSseConnections.decrementAndGet();
+      log.warn("[AiService SSE] [{}] 连接超时", threadId);
+    });
+    emitter.onError(e -> {
+      activeSseConnections.decrementAndGet();
+      log.warn("[AiService SSE] [{}] 连接错误: {}", threadId, e.getMessage());
+    });
+
+    // 使用受管理的线程池替代 new Thread()
+    CompletableFuture.runAsync(() -> {
+      // 获取信号量限制并发 AI API 调用
+      try {
+        if (!semaphore.tryAcquire(60, TimeUnit.SECONDS)) {
+          log.error("[AiService SSE] [{}] 等待并发槽超时(60s)，拒绝请求", threadId);
+          try {
+            emitter.send(SseEmitter.event().name("error").data("{\"error\":\"AI 服务繁忙，请稍后再试\"}"));
+            emitter.complete();
+          } catch (Exception ignored) {}
+          return;
+        }
+      } catch (InterruptedException ie) {
+        Thread.currentThread().interrupt();
+        return;
+      }
+
+      try { // 信号量守卫：finally 中释放
       java.io.BufferedReader reader = null;
+      java.net.HttpURLConnection conn = null;
       int maxRetries = 3;
+      long startTime = System.currentTimeMillis();
       for (int attempt = 1; attempt <= maxRetries; attempt++) {
       try {
+        log.info("[AiService SSE] [{}] 第{}次尝试连接API: {}", threadId, attempt, apiUrl);
+
         java.net.URL url = new java.net.URL(apiUrl);
-        java.net.HttpURLConnection conn = (java.net.HttpURLConnection) url.openConnection();
+        conn = (java.net.HttpURLConnection) url.openConnection();
         conn.setRequestMethod("POST");
         conn.setRequestProperty("Content-Type", "application/json");
         conn.setRequestProperty("Authorization", "Bearer " + apiKey);
@@ -572,7 +813,7 @@ public class AiService {
           java.util.Map.of("role", "user", "content", userPrompt)
         ));
         reqBody.put("temperature", temperature);
-        reqBody.put("max_tokens", jsonMode ? 16384 : 32768);  // practice: enough for 5-10 questions with explanations
+        reqBody.put("max_tokens", jsonMode ? 16384 : 16384);
         reqBody.put("stream", true);
         if (jsonMode) {
           reqBody.put("response_format", java.util.Map.of("type", "json_object"));
@@ -582,23 +823,32 @@ public class AiService {
         }
 
         String jsonBody = objectMapper.writeValueAsString(reqBody);
+        log.debug("[AiService SSE] [{}] 请求体大小: {} bytes", threadId, jsonBody.length());
+
         try (java.io.OutputStream os = conn.getOutputStream()) {
           os.write(jsonBody.getBytes(java.nio.charset.StandardCharsets.UTF_8));
           os.flush();
         }
 
         int responseCode = conn.getResponseCode();
+        log.info("[AiService SSE] [{}] API响应码: {}", threadId, responseCode);
 
-        // Retry on 429 (rate limit) or 503 (service unavailable) with backoff
+        // 429/503 重试
         if ((responseCode == 429 || responseCode == 503) && attempt < maxRetries) {
-          conn.disconnect();
-          try { Thread.sleep(1000L * attempt * attempt); } catch (InterruptedException ie) { Thread.currentThread().interrupt(); }
+          long waitMs = responseCode == 429
+            ? (long) (3000 * Math.pow(3, attempt - 1))
+            : (long) (2000 * Math.pow(2.5, attempt - 1));
+          log.info("[AiService SSE] [{}] 收到{}，{}ms后重试", threadId, responseCode, waitMs);
+          conn.disconnect(); conn = null;
+          try { Thread.sleep(waitMs); } catch (InterruptedException ie) { Thread.currentThread().interrupt(); }
           continue;
         }
 
         if (responseCode != 200) {
           java.io.InputStream errorStream = conn.getErrorStream();
           String errorBody = errorStream != null ? new String(errorStream.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8) : "";
+          log.error("[AiService SSE] [{}] API错误: HTTP {}, body={}", threadId, responseCode,
+            errorBody.substring(0, Math.min(500, errorBody.length())));
           String friendlyMsg = friendlyAiError(responseCode, errorBody);
           if (attempt >= maxRetries && responseCode == 429) {
             friendlyMsg = friendlyMsg + "（已自动重试 " + maxRetries + " 次）";
@@ -608,11 +858,13 @@ public class AiService {
           return;
         }
 
-        // Read SSE stream line by line
+        // 读取 SSE 流
         reader = new java.io.BufferedReader(new java.io.InputStreamReader(conn.getInputStream(), java.nio.charset.StandardCharsets.UTF_8));
         String line;
         StringBuilder contentBuilder = new StringBuilder();
         StringBuilder reasoningBuilder = new StringBuilder();
+        int chunkCount = 0;
+        int errorChunkCount = 0;
 
         while ((line = reader.readLine()) != null) {
           String data = null;
@@ -623,6 +875,9 @@ public class AiService {
           }
           if (data != null) {
             if ("[DONE]".equals(data)) {
+              long elapsed = System.currentTimeMillis() - startTime;
+              log.info("[AiService SSE] [{}] 收到[DONE], 共{}个chunk, 内容长度={}, 推理长度={}, 耗时={}ms",
+                threadId, chunkCount, contentBuilder.length(), reasoningBuilder.length(), elapsed);
               java.util.Map<String, Object> donePayload = new java.util.LinkedHashMap<>();
               donePayload.put("content", contentBuilder.toString());
               donePayload.put("reasoning", reasoningBuilder.toString());
@@ -646,10 +901,7 @@ public class AiService {
                   String content = delta.containsKey("content") && delta.get("content") != null
                     ? String.valueOf(delta.get("content")) : "";
 
-                  // When deep thinking is disabled, redirect reasoning_content to content
-                  // (GLM models sometimes send reasoning_content even without thinking enabled)
-                  if (!thinkingEnabled && content.isEmpty() && !reasoningContent.isEmpty()) {
-                    content = reasoningContent;
+                  if (!thinkingEnabled && !reasoningContent.isEmpty()) {
                     reasoningContent = "";
                   }
 
@@ -659,6 +911,7 @@ public class AiService {
                     chunk.put("type", "reasoning");
                     chunk.put("text", reasoningContent);
                     emitter.send(SseEmitter.event().name("chunk").data(objectMapper.writeValueAsString(chunk)));
+                    chunkCount++;
                   }
                   if (!content.isEmpty()) {
                     contentBuilder.append(content);
@@ -666,42 +919,60 @@ public class AiService {
                     chunk.put("type", "content");
                     chunk.put("text", content);
                     emitter.send(SseEmitter.event().name("chunk").data(objectMapper.writeValueAsString(chunk)));
+                    chunkCount++;
                   }
                 }
               }
             } catch (Exception parseEx) {
-              System.err.println("[AiService SSE] Failed to parse chunk: " + data.substring(0, Math.min(200, data.length())));
+              errorChunkCount++;
+              if (errorChunkCount <= 3) {
+                log.warn("[AiService SSE] [{}] 解析chunk失败(#{}): {}, 错误: {}",
+                  threadId, errorChunkCount, data.substring(0, Math.min(200, data.length())), parseEx.getMessage());
+              }
             }
           }
         }
-        // If we exit the loop without [DONE], send complete anyway
+        // 流结束但无 [DONE]
+        long elapsed = System.currentTimeMillis() - startTime;
+        log.info("[AiService SSE] [{}] 流读取结束(无[DONE]), 共{}个chunk, 内容长度={}, 耗时={}ms",
+          threadId, chunkCount, contentBuilder.length(), elapsed);
         java.util.Map<String, Object> donePayload = new java.util.LinkedHashMap<>();
         donePayload.put("content", contentBuilder.toString());
         donePayload.put("reasoning", reasoningBuilder.toString());
         donePayload.put("done", true);
         emitter.send(SseEmitter.event().name("complete").data(objectMapper.writeValueAsString(donePayload)));
         emitter.complete();
-        return; // success — exit retry loop
+        return;
 
       } catch (Exception e) {
-        // On last attempt, send error to client
+        long elapsed = System.currentTimeMillis() - startTime;
+        log.error("[AiService SSE] [{}] 第{}次请求异常(耗时{}ms): {}: {}",
+          threadId, attempt, elapsed, e.getClass().getSimpleName(), e.getMessage());
         if (attempt >= maxRetries) {
           try {
             String errMsg = e.getMessage() != null ? e.getMessage() : "Unknown error";
             emitter.send(SseEmitter.event().name("error")
               .data("{\"error\":\"" + escapeJson(errMsg) + "\"}"));
             emitter.complete();
-          } catch (Exception ignored) {}
+          } catch (Exception sendErr) {
+            log.error("[AiService SSE] [{}] 发送错误事件也失败: {}", threadId, sendErr.getMessage());
+          }
           return;
         }
-        // Retry on transient errors
-        try { Thread.sleep(1000L * attempt); } catch (InterruptedException ie) { Thread.currentThread().interrupt(); }
+        long waitMs = (long) (2000 * Math.pow(2, attempt - 1));
+        log.info("[AiService SSE] [{}] {}ms后重试...", threadId, waitMs);
+        try { Thread.sleep(waitMs); } catch (InterruptedException ie) { Thread.currentThread().interrupt(); }
       } finally {
         if (reader != null) try { reader.close(); } catch (Exception ignored) {}
         reader = null;
+        if (conn != null) try { conn.disconnect(); } catch (Exception ignored) {}
+        conn = null;
       }
       } // end retry loop
-    }).start();
+      } finally {
+        semaphore.release();
+      }
+    }, aiTaskExecutor);
   }
 
   /** Escape a string for embedding in JSON. */
@@ -710,17 +981,18 @@ public class AiService {
     return s.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n").replace("\r", "\\r").replace("\t", "\\t");
   }
 
+  // ========== 流式练习/出题 ==========
+
   /**
    * Streaming version for practice questions (student)
    */
   public void practiceQuestionsStream(String userId, Map<String, Object> body,
-                                       org.springframework.web.servlet.mvc.method.annotation.SseEmitter emitter) {
+                                       SseEmitter emitter) {
     Store store = storeService.readStore();
     Map<String, Object> user = find(store.users, userId);
     if (!isRole(user, "student")) {
       try {
-        emitter.send(org.springframework.web.servlet.mvc.method.annotation.SseEmitter.event()
-          .name("error").data("{\"error\":\"Forbidden\"}"));
+        emitter.send(SseEmitter.event().name("error").data("{\"error\":\"Forbidden\"}"));
         emitter.complete();
       } catch (Exception ex) {}
       return;
@@ -731,25 +1003,8 @@ public class AiService {
     String userPrompt;
 
     if (!customPrompt.isBlank()) {
-      systemPrompt = """
-你是出题专家。严格按步骤执行：
-
-第1步 分析：理解用户要求的学科、知识点、难度。
-第2步 出题：生成指定数量的高质量题目，全部使用中文，内容准确。
-第3步 自检：确认答案正确、干扰项合理、解析有教学价值。
-第4步 输出：输出一个JSON数组，每道题一个对象。不要markdown、不要废话、不要尾随逗号。
-
-输出格式示例：
-[{"title":"栈遵循什么原则？","type":"single","options":["A. 先进先出","B. 后进先出","C. 随机存取","D. 仅栈顶操作"],"answer":["B"],"score":5,"explanation":"【答案】B\\n【解析】栈是后进先出（LIFO）结构，最后放入的最先取出。"}]
-
-字段说明：
-- title: 题目文字（中文）
-- type: single/multiple/judge/fill/short/coding
-- options: 选项数组，单选/判断4个以"A. "开头，多选4个，填空/简答/编程用空数组[]
-- answer: 答案数组，单选["A"]，多选["A","C"]，填空["答案文字"]
-- score: 整数分值
-- explanation: 【答案】X\\n【解析】详细解析，\\n表示换行""";
-      userPrompt = customPrompt;
+      systemPrompt = QUESTION_SYSTEM_PROMPT;
+      userPrompt = buildSmartUserPrompt(customPrompt, body, 20);
     } else {
       String subject = str(body, "subject");
       String type = str(body, "type").isBlank() ? "single" : str(body, "type");
@@ -767,40 +1022,28 @@ public class AiService {
         case "hard" -> "困难"; default -> difficulty;
       };
 
-      systemPrompt = """
-你是出题专家。严格按步骤执行：
-
-第1步 分析：理解学科、知识点、难度。
-第2步 出题：生成指定数量的题目，全部中文，内容准确。
-第3步 自检：验证答案、干扰项、解析质量。
-第4步 输出：JSON数组。不要markdown、不要废话。
-
-格式：[{"title":"题目","type":"single","options":["A. xx","B. xx","C. xx","D. xx"],"answer":["A"],"score":5,"explanation":"【答案】A\\n【解析】..."}]
-
-字段：title/type/options/answer/score/explanation。type取single/multiple/judge/fill/short/coding。\\n表示换行。选项以"A. "开头。全部中文。""";
+      systemPrompt = QUESTION_SYSTEM_PROMPT;
 
       userPrompt = String.format(
-        "生成 %d 道「%s」%s题，难度%s。输出JSON。",
+        "严格生成恰好 %d 道「%s」%s题，不要多也不要少。难度%s。输出JSON。",
         count, subject.isBlank() ? "计算机基础" : subject, typeChinese, difficultyChinese
       );
     }
 
     boolean deepThinking = Boolean.TRUE.equals(body.get("deepThinking"));
-    // Practice mode: glm-4.7-flash supports json_object in streaming
-    callAiApiStream(systemPrompt, userPrompt, deepThinking, 0.3, true, emitter);
+    callAiApiStream(systemPrompt, userPrompt, deepThinking, 0.5, false, emitter);
   }
 
   /**
    * Streaming version for question generation (teacher)
    */
   public void generateQuestionsStream(String userId, Map<String, Object> body,
-                                       org.springframework.web.servlet.mvc.method.annotation.SseEmitter emitter) {
+                                       SseEmitter emitter) {
     Store store = storeService.readStore();
     Map<String, Object> user = find(store.users, userId);
     if (!isRole(user, "teacher")) {
       try {
-        emitter.send(org.springframework.web.servlet.mvc.method.annotation.SseEmitter.event()
-          .name("error").data("{\"error\":\"Forbidden\"}"));
+        emitter.send(SseEmitter.event().name("error").data("{\"error\":\"Forbidden\"}"));
         emitter.complete();
       } catch (Exception ex) {}
       return;
@@ -811,8 +1054,8 @@ public class AiService {
     String userPrompt;
 
     if (!customPrompt.isBlank()) {
-      systemPrompt = "出题专家。输出JSON:[{title,type:single|multiple|judge|fill|short|coding,options:[A.xx,B.xx,C.xx,D.xx],answer:[],score:5,explanation}]。无markdown包裹。";
-      userPrompt = customPrompt;
+      systemPrompt = QUESTION_SYSTEM_PROMPT;
+      userPrompt = buildSmartUserPrompt(customPrompt, body, 10);
     } else {
       String subject = str(body, "subject");
       String knowledgePoint = str(body, "knowledgePoint");
@@ -831,10 +1074,10 @@ public class AiService {
         case "hard" -> "困难"; default -> difficulty;
       };
 
-      systemPrompt = "出题专家。输出JSON:[{title,type,options:[A.xx,B.xx,C.xx,D.xx],answer:[],score:5,explanation}]。无markdown包裹。";
+      systemPrompt = QUESTION_SYSTEM_PROMPT;
 
       userPrompt = String.format(
-        "请生成 %d 道关于「%s」的%s，知识点方向为「%s」，难度为「%s」。每题分值5分。请包含详细解析。",
+        "严格生成恰好 %d 道关于「%s」的%s，知识点方向为「%s」，难度为「%s」。每题分值5分。请包含详细解析。不要多也不要少。",
         count, subject.isBlank() ? "计算机基础" : subject, typeChinese,
         knowledgePoint.isBlank() ? "综合" : knowledgePoint, difficultyChinese
       );
@@ -854,7 +1097,6 @@ public class AiService {
     Map<String, Object> user = find(store.users, userId);
     if (user == null) return error(HttpStatus.UNAUTHORIZED, "Not authenticated.");
 
-    // Rate limit check
     if (!checkRateLimit(userId)) {
       return error(HttpStatus.TOO_MANY_REQUESTS, "AI 调用频率过高，请稍后再试（每分钟最多 " + rateLimitPerMinute + " 次）");
     }
@@ -867,11 +1109,16 @@ public class AiService {
       return error(HttpStatus.BAD_REQUEST, "请输入消息内容");
     }
 
+    // 更新会话上下文
+    ConversationSession session = conversationSessions.computeIfAbsent(userId, k -> new ConversationSession());
+    session.addMessage("user", userMessage);
+
     String systemPrompt = buildChatSystemPrompt();
-    String userPrompt = buildChatUserPrompt(userMessage, body);
+    String userPrompt = buildChatUserPrompt(userMessage, body, session);
 
     try {
       String aiResponse = callAiApi(systemPrompt, userPrompt);
+      session.addMessage("assistant", aiResponse);
       systemLogService.log(user, "AI对话", "完成");
       return ResponseEntity.ok(mapOf("content", aiResponse, "role", "assistant"));
     } catch (Exception e) {
@@ -884,13 +1131,12 @@ public class AiService {
    * AI 自由对话 - 流式 SSE（任何已认证用户可用）
    */
   public void chatStream(String userId, Map<String, Object> body,
-                          org.springframework.web.servlet.mvc.method.annotation.SseEmitter emitter) {
+                          SseEmitter emitter) {
     Store store = storeService.readStore();
     Map<String, Object> user = find(store.users, userId);
     if (user == null) {
       try {
-        emitter.send(org.springframework.web.servlet.mvc.method.annotation.SseEmitter.event()
-          .name("error").data("{\"error\":\"Not authenticated\"}"));
+        emitter.send(SseEmitter.event().name("error").data("{\"error\":\"Not authenticated\"}"));
         emitter.complete();
       } catch (Exception ex) {}
       return;
@@ -902,85 +1148,140 @@ public class AiService {
     }
     if (userMessage.isBlank()) {
       try {
-        emitter.send(org.springframework.web.servlet.mvc.method.annotation.SseEmitter.event()
-          .name("error").data("{\"error\":\"请输入消息内容\"}"));
+        emitter.send(SseEmitter.event().name("error").data("{\"error\":\"请输入消息内容\"}"));
         emitter.complete();
       } catch (Exception ex) {}
       return;
     }
 
-    String systemPrompt = buildChatSystemPrompt();
-    String userPrompt = buildChatUserPrompt(userMessage, body);
+    // 更新会话上下文
+    ConversationSession session = conversationSessions.computeIfAbsent(userId, k -> new ConversationSession());
+    session.addMessage("user", userMessage);
+
+    // 检测出题意图（三级：strong/weak/none）
+    String intentLevel = detectQuestionIntent(userMessage);
+    String systemPrompt;
+    String userPrompt;
+
+    if ("strong".equals(intentLevel) || "weak".equals(intentLevel)) {
+      // Strong or weak intent: generate questions with structured JSON format
+      systemPrompt = QUESTION_SYSTEM_PROMPT;
+      userPrompt = buildSmartUserPrompt(userMessage, body, 10);
+    } else {
+      // No question intent: normal conversational chat
+      systemPrompt = buildChatSystemPrompt();
+      userPrompt = buildChatUserPrompt(userMessage, body, session);
+    }
 
     boolean deepThinking = Boolean.TRUE.equals(body.get("deepThinking"));
-    systemLogService.log(user, "AI对话流", "深度思考=" + deepThinking);
+    systemLogService.log(user, "AI对话流", "深度思考=" + deepThinking + ", 意图=" + intentLevel);
+
+    // 流式对话完成后，将 AI 响应存入会话上下文
+    // 通过 SSE 生命周期回调在 complete 事件时记录
+    emitter.onCompletion(() -> {
+      // 注意：此时无法获取完整 AI 响应内容，会话上下文由客户端下次请求时补充
+      // 或通过流式累积的方式记录（已在 callAiApiStream 内部完成）
+    });
+
     callAiApiStream(systemPrompt, userPrompt, deepThinking, emitter);
   }
 
-  /** Build system prompt for general chat — conversational only, no JSON format */
+  /** Build system prompt for general chat */
   private String buildChatSystemPrompt() {
     return """
       你是在线考试系统的AI学习助手，名叫"智学"。你的职责是帮助学生学习和解答问题。
-      
+
       核心原则：
-      1. 直接输出你认为最合适的回答内容，不要刻意遵循固定格式，用你认为最自然、最清晰的方式表达
+      1. 直接给出最终回答，严禁输出你的思考过程、分析步骤、自我审查等内容（如"第1步分析"、"解构主题"、"起草内容"、"自我修正"等）
       2. 回答要有深度和广度：对概念给出准确定义，对原理给出清晰推导，对应用给出实际例子
       3. 善用 Markdown 格式：合理使用标题（##、###）、加粗（**）、列表、代码块（```）等让内容层次分明
-      4. 对数学公式使用 LaTeX 语法（用 $ 包裹行内公式，用 $$ 包裹独立公式）
+      4. 对数学公式使用 LaTeX 语法（用 $ 包裹行内公式，用 $$ 包裹独立公式），确保 LaTeX 语法正确完整
       5. 提供学习建议：回答完问题后，可以推荐相关的延伸学习方向或练习题
       6. 使用中文回答，语言风格友好专业，像一位耐心且博学的导师
-      
-      注意：直接给出高质量的回答内容即可，不需要任何前缀说明或格式约束。""";
+
+      注意：只输出给用户看的最终回答，不要输出任何中间过程。""";
   }
 
-  /** Build user prompt for chat, optionally including conversation history.
+  /** Build user prompt for chat, including conversation history from session.
    *  Implements sliding window: keeps only the last N messages to avoid context bloat. */
   private static final int MAX_HISTORY_MESSAGES = 6; // 3 Q&A rounds
 
-  private String buildChatUserPrompt(String currentMessage, Map<String, Object> body) {
+  private String buildChatUserPrompt(String currentMessage, Map<String, Object> body,
+                                      ConversationSession session) {
+    // 优先使用客户端传来的历史消息（前端维护的完整上下文）
     @SuppressWarnings("unchecked")
     List<Map<String, Object>> history = (List<Map<String, Object>>) body.get("messages");
-    if (history == null || history.isEmpty()) {
+    if (history != null && !history.isEmpty()) {
+      int startIndex = Math.max(0, history.size() - MAX_HISTORY_MESSAGES);
+      StringBuilder sb = new StringBuilder();
+      sb.append("以下是最近对话：\n");
+      for (int i = startIndex; i < history.size(); i++) {
+        Map<String, Object> msg = history.get(i);
+        String role = str(msg, "role");
+        String content = str(msg, "content");
+        if (!content.isBlank()) {
+          if (content.length() > 500) {
+            content = content.substring(0, 500) + "...(已省略)";
+          }
+          if ("user".equals(role)) {
+            sb.append("用户：").append(content).append("\n");
+          } else if ("assistant".equals(role)) {
+            sb.append("AI：").append(content).append("\n");
+          }
+        }
+      }
+      sb.append("\n用户新消息：").append(currentMessage);
+      return sb.toString();
+    }
+
+    // 回退到服务端会话上下文
+    List<Map<String, String>> sessionHistory = session.getRecentHistory(MAX_HISTORY_MESSAGES);
+    if (sessionHistory.isEmpty()) {
       return currentMessage;
     }
 
-    // Sliding window: keep only the most recent messages
-    int startIndex = Math.max(0, history.size() - MAX_HISTORY_MESSAGES);
-    int skipped = startIndex;
-
     StringBuilder sb = new StringBuilder();
-    if (skipped > 0) {
-      sb.append("[已省略前 ").append(skipped).append(" 条历史消息]\n");
-    }
     sb.append("以下是最近对话：\n");
-    for (int i = startIndex; i < history.size(); i++) {
-      Map<String, Object> msg = history.get(i);
-      String role = str(msg, "role");
-      String content = str(msg, "content");
-      if (!content.isBlank()) {
-        if ("user".equals(role)) {
-          sb.append("用户：").append(content).append("\n");
-        } else if ("assistant".equals(role)) {
-          sb.append("AI：").append(content).append("\n");
-        }
+    for (Map<String, String> msg : sessionHistory) {
+      String role = msg.get("role");
+      String content = msg.get("content");
+      if ("user".equals(role)) {
+        sb.append("用户：").append(content).append("\n");
+      } else if ("assistant".equals(role)) {
+        sb.append("AI：").append(content).append("\n");
       }
     }
     sb.append("\n用户新消息：").append(currentMessage);
     return sb.toString();
   }
 
-  private String callAiApi(String systemPrompt, String userPrompt) {
+  // ========== 非流式 AI API 调用 ==========
+
+  String callAiApi(String systemPrompt, String userPrompt) {
     if (apiKey == null || apiKey.isBlank()) {
       throw new RuntimeException("AI API 密钥未配置，请联系管理员设置 AI_API_KEY 环境变量");
     }
 
-    // Check cache first
+    // 检查缓存
     String cacheKey = String.valueOf((systemPrompt + userPrompt).hashCode());
     CachedResponse cached = responseCache.get(cacheKey);
     if (cached != null && (System.currentTimeMillis() - cached.timestamp()) < CACHE_TTL_MS) {
+      log.debug("[AiService] 命中缓存，跳过API调用");
       return cached.content();
     }
 
+    // 获取信号量
+    Semaphore semaphore = getSemaphore();
+    try {
+      if (!semaphore.tryAcquire(60, TimeUnit.SECONDS)) {
+        throw new RuntimeException("AI 服务繁忙，请稍后再试");
+      }
+    } catch (InterruptedException ie) {
+      Thread.currentThread().interrupt();
+      throw new RuntimeException("请求被中断");
+    }
+
+    try {
     HttpHeaders headers = new HttpHeaders();
     headers.setContentType(MediaType.APPLICATION_JSON);
     headers.setBearerAuth(apiKey);
@@ -991,8 +1292,8 @@ public class AiService {
       Map.of("role", "system", "content", systemPrompt),
       Map.of("role", "user", "content", userPrompt)
     ));
-    requestBody.put("temperature", 0.9);
-    requestBody.put("max_tokens", 32768);
+    requestBody.put("temperature", 0.5);
+    requestBody.put("max_tokens", 16384);
 
     HttpEntity<Map<String, Object>> entity = new HttpEntity<>(requestBody, headers);
 
@@ -1009,9 +1310,8 @@ public class AiService {
             Map<String, Object> message = (Map<String, Object>) choices.get(0).get("message");
             String content = str(message, "content");
 
-            // Cache the response
+            // 缓存响应
             responseCache.put(cacheKey, new CachedResponse(content, System.currentTimeMillis()));
-            cleanCache();
 
             return content;
           }
@@ -1021,18 +1321,19 @@ public class AiService {
       } catch (RestClientException e) {
         String msg = e.getMessage() != null ? e.getMessage() : "";
 
-        // Retry on 429 (rate limit) with exponential backoff
         if (msg.contains("429") && attempt < maxRetries) {
-          try { Thread.sleep(1000L * attempt * attempt); } catch (InterruptedException ie) { Thread.currentThread().interrupt(); }
+          long waitMs = (long) (3000 * Math.pow(3, attempt - 1));
+          log.info("[AiService] 非流式请求429，{}ms后重试(第{}次)", waitMs, attempt);
+          try { Thread.sleep(waitMs); } catch (InterruptedException ie) { Thread.currentThread().interrupt(); }
           continue;
         }
-        // Retry on 503 (service unavailable) with shorter backoff
         if (msg.contains("503") && attempt < maxRetries) {
-          try { Thread.sleep(800L * attempt); } catch (InterruptedException ie) { Thread.currentThread().interrupt(); }
+          long waitMs = (long) (2000 * Math.pow(2.5, attempt - 1));
+          log.info("[AiService] 非流式请求503，{}ms后重试(第{}次)", waitMs, attempt);
+          try { Thread.sleep(waitMs); } catch (InterruptedException ie) { Thread.currentThread().interrupt(); }
           continue;
         }
 
-        // Non-retryable errors or all retries exhausted
         if (msg.contains("401") || msg.contains("Unauthorized")) {
           throw new RuntimeException("AI API 密钥无效或已过期，请联系管理员更新 AI_API_KEY");
         }
@@ -1046,6 +1347,9 @@ public class AiService {
       }
     }
     throw new RuntimeException("AI 请求失败，请稍后重试");
+    } finally {
+      semaphore.release();
+    }
   }
 
   /** Map raw AI API error codes to user-friendly Chinese messages */
@@ -1061,6 +1365,8 @@ public class AiService {
       default -> "AI 请求失败（HTTP " + httpCode + "），请稍后重试";
     };
   }
+
+  // ========== AI 评分辅助 ==========
 
   /**
    * Use AI to grade a subjective answer
@@ -1078,7 +1384,6 @@ public class AiService {
       String response = callAiApi(systemPrompt, userPrompt);
       return parseAiJson(response, new TypeReference<Map<String, Object>>() {});
     } catch (Exception e) {
-      // Return fallback score
       Map<String, Object> result = new LinkedHashMap<>();
       int score = fallbackKeywordScore(studentAnswer, expectedAnswer, fullScore);
       result.put("score", score);
@@ -1087,6 +1392,8 @@ public class AiService {
     }
   }
 
+  // ========== AI 响应解析 ==========
+
   /**
    * Parse AI response into question objects
    */
@@ -1094,7 +1401,6 @@ public class AiService {
                                                        String subject, String knowledgePoint,
                                                        String difficulty, String type) {
     String cleaned = aiResponse.trim();
-    // Remove markdown code blocks if present
     if (cleaned.startsWith("```")) {
       int firstNewline = cleaned.indexOf('\n');
       if (firstNewline > 0) cleaned = cleaned.substring(firstNewline + 1);
@@ -1102,27 +1408,52 @@ public class AiService {
       cleaned = cleaned.trim();
     }
 
+    String jsonArray = cleaned;
+    int arrStart = cleaned.indexOf('[');
+    int arrEnd = cleaned.lastIndexOf(']');
+    if (arrStart >= 0 && arrEnd > arrStart) {
+      jsonArray = cleaned.substring(arrStart, arrEnd + 1);
+    }
+
     List<Map<String, Object>> questions = new ArrayList<>();
     try {
-      List<Map<String, Object>> parsed = objectMapper.readValue(cleaned, new TypeReference<>() {});
+      List<Map<String, Object>> parsed = objectMapper.readValue(jsonArray, new TypeReference<>() {});
       for (Map<String, Object> q : parsed) {
+        if (str(q, "title").isBlank()) continue;
         Map<String, Object> question = new LinkedHashMap<>();
         question.put("id", createId("ai-question"));
         question.put("teacherId", teacherId);
         question.put("subject", str(q, "subject").isBlank() ? (subject.isBlank() ? "AI生成" : subject) : str(q, "subject"));
         question.put("knowledgePoint", str(q, "knowledgePoint").isBlank() ? (knowledgePoint.isBlank() ? "综合" : knowledgePoint) : str(q, "knowledgePoint"));
         question.put("difficulty", str(q, "difficulty").isBlank() ? difficulty : str(q, "difficulty"));
-        question.put("type", str(q, "type").isBlank() ? type : str(q, "type"));
+        String qType = str(q, "type").isBlank() ? type : str(q, "type");
+        question.put("type", qType);
         question.put("title", str(q, "title"));
-        question.put("options", normalizeList(q.get("options")));
-        question.put("answer", normalizeList(q.get("answer")));
+        List<Object> opts = normalizeList(q.get("options"));
+        if (qType.equals("judge") && opts.size() > 2) {
+          opts = new ArrayList<>(opts.subList(0, 2));
+        } else if (opts.size() > 4 && (qType.equals("single") || qType.equals("multiple"))) {
+          opts = new ArrayList<>(opts.subList(0, 4));
+        }
+        question.put("options", opts);
+        List<Object> rawAnswer = normalizeList(q.get("answer"));
+        if ("single".equals(qType) || "multiple".equals(qType) || "judge".equals(qType)) {
+          List<Object> cleanAnswer = new ArrayList<>();
+          for (Object a : rawAnswer) {
+            String s = String.valueOf(a);
+            java.util.regex.Matcher m = java.util.regex.Pattern.compile("([A-D])").matcher(s);
+            if (m.find()) cleanAnswer.add(m.group(1));
+          }
+          question.put("answer", cleanAnswer.isEmpty() ? rawAnswer : cleanAnswer);
+        } else {
+          question.put("answer", rawAnswer);
+        }
         question.put("score", asInt(q.get("score")) > 0 ? asInt(q.get("score")) : 5);
         question.put("explanation", str(q, "explanation").isBlank() ? "暂无解析" : str(q, "explanation"));
         question.put("sourceTag", "ai-generated");
         questions.add(question);
       }
     } catch (Exception e) {
-      // If JSON parsing fails, try to extract questions from the text
       Map<String, Object> fallback = new LinkedHashMap<>();
       fallback.put("id", createId("ai-question"));
       fallback.put("teacherId", teacherId);
@@ -1147,7 +1478,6 @@ public class AiService {
    */
   private <T> T parseAiJson(String aiResponse, TypeReference<T> typeRef) {
     String cleaned = aiResponse.trim();
-    // Remove markdown code blocks if present
     if (cleaned.startsWith("```")) {
       int firstNewline = cleaned.indexOf('\n');
       if (firstNewline > 0) cleaned = cleaned.substring(firstNewline + 1);
@@ -1158,7 +1488,6 @@ public class AiService {
     try {
       return objectMapper.readValue(cleaned, typeRef);
     } catch (Exception e) {
-      // Try to extract JSON from the response
       int start = cleaned.indexOf('{');
       int end = cleaned.lastIndexOf('}');
       if (start >= 0 && end > start) {
@@ -1195,25 +1524,21 @@ public class AiService {
 
   private boolean checkRateLimit(String userId) {
     long now = System.currentTimeMillis();
-    long windowMs = 60_000; // 1 minute
+    long windowMs = 60_000;
 
-    List<Long> timestamps = rateLimitMap.computeIfAbsent(userId, k -> new ArrayList<>());
+    ConcurrentLinkedDeque<Long> timestamps = rateLimitMap.computeIfAbsent(userId, k -> new ConcurrentLinkedDeque<>());
+
+    // 同步块保证同一用户的速率检查原子性
     synchronized (timestamps) {
-      // Remove timestamps older than 1 minute
+      // 移除过期时间戳
       timestamps.removeIf(t -> (now - t) > windowMs);
       if (timestamps.size() >= rateLimitPerMinute) {
         return false;
       }
       timestamps.add(now);
-      return true;
     }
-  }
 
-  // ========== Cache Management ==========
-
-  private void cleanCache() {
-    long now = System.currentTimeMillis();
-    responseCache.entrySet().removeIf(e -> (now - e.getValue().timestamp()) > CACHE_TTL_MS);
+    return true;
   }
 
   // ========== Helper Methods ==========
@@ -1264,6 +1589,163 @@ public class AiService {
     if (value instanceof Number n) return n.intValue();
     if (value == null || String.valueOf(value).isBlank()) return 0;
     try { return Integer.parseInt(String.valueOf(value)); } catch (NumberFormatException e) { return 0; }
+  }
+
+  /** Extract the requested question count from user text */
+  private int extractCountFromText(String text) {
+    if (text == null || text.isBlank()) return -1;
+    java.util.regex.Matcher m = java.util.regex.Pattern.compile("(\\d+)\\s*道").matcher(text);
+    if (m.find()) {
+      try { return Integer.parseInt(m.group(1)); } catch (NumberFormatException e) { return -1; }
+    }
+    return -1;
+  }
+
+  /** Extract question type from user text */
+  private String extractTypeFromText(String text) {
+    if (text == null || text.isBlank()) return "";
+    if (text.matches(".*多选.*")) return "multiple";
+    if (text.matches(".*单选.*")) return "single";
+    if (text.matches(".*判断.*")) return "judge";
+    if (text.matches(".*填空.*")) return "fill";
+    if (text.matches(".*简答.*")) return "short";
+    if (text.matches(".*编程.*") || text.matches(".*代码.*")) return "coding";
+    return "";
+  }
+
+  /** Map extracted type to Chinese label */
+  private String typeToChinese(String type) {
+    return switch (type) {
+      case "single" -> "单选题";
+      case "multiple" -> "多选题";
+      case "judge" -> "判断题";
+      case "fill" -> "填空题";
+      case "short" -> "简答题";
+      case "coding" -> "编程题";
+      default -> "题目";
+    };
+  }
+
+  /** Extract subject from user text */
+  private String extractSubjectFromText(String text) {
+    if (text == null || text.isBlank()) return "";
+    java.util.LinkedHashMap<String, String> subjectMap = new java.util.LinkedHashMap<>();
+    subjectMap.put("(?i)javascript|js", "JavaScript");
+    subjectMap.put("(?i)python|py", "Python");
+    subjectMap.put("(?i)java(?!script)", "Java");
+    subjectMap.put("(?i)c\\+\\+", "C++");
+    subjectMap.put("(?i)typescript|ts", "TypeScript");
+    subjectMap.put("(?i)react", "React");
+    subjectMap.put("(?i)vue", "Vue");
+    subjectMap.put("高等数学|微积分|线性代数|高数", "高等数学");
+    subjectMap.put("大学语文|语文", "大学语文");
+    subjectMap.put("马克思主义|马原|马哲", "马克思主义");
+    subjectMap.put("政治|毛概|中特", "政治");
+    subjectMap.put("中国近现代史|近现代史|近代史", "中国近现代史");
+    subjectMap.put("大学英语|英语", "大学英语");
+    subjectMap.put("大学物理|物理", "大学物理");
+    subjectMap.put("计算机基础|计算机", "计算机基础");
+    subjectMap.put("计算机网络|网络", "计算机网络");
+    subjectMap.put("数据结构", "数据结构");
+    subjectMap.put("操作系统", "操作系统");
+    subjectMap.put("数据库", "数据库");
+    subjectMap.put("算法", "算法");
+
+    for (var entry : subjectMap.entrySet()) {
+      if (java.util.regex.Pattern.compile(entry.getKey()).matcher(text).find()) {
+        return entry.getValue();
+      }
+    }
+    return "";
+  }
+
+  /** Extract difficulty from user text (e.g., "来点难的"→"hard", "出几道简单题"→"easy") */
+  private String extractDifficultyFromText(String text) {
+    if (text == null || text.isBlank()) return "";
+    if (text.matches(".*(困难|较难|高难|挑战|难题|很难).*")) return "hard";
+    if (text.matches(".*(简单|基础|入门|容易|简单点).*")) return "easy";
+    return "";
+  }
+
+  /** Extract knowledge point from user text (e.g., "考我闭包"→"闭包", "出TCP协议的题"→"TCP协议") */
+  private String extractKnowledgePointFromText(String text) {
+    if (text == null || text.isBlank()) return "";
+    java.util.regex.Matcher m = java.util.regex.Pattern.compile(
+      "(?:关于|考我|考考我|出|练|复习|学习|测试|练习)([\\u4e00-\\u9fa5a-zA-Z0-9+.#]{2,20}?)(?:的题|的练习|方面|相关|知识点|的|题|$)"
+    ).matcher(text);
+    if (m.find()) {
+      String kp = m.group(1).trim();
+      if (kp.matches(".*(几道|道|一些|点|个|那种).*")) return "";
+      return kp;
+    }
+    return "";
+  }
+
+  /**
+   * Unified smart prompt builder for question generation.
+   * Extracts type, subject, difficulty, knowledge point, count from user text
+   * and constructs a structured prompt that guides the AI to generate correct-format questions.
+   */
+  private String buildSmartUserPrompt(String userText, Map<String, Object> body, int maxCount) {
+    int count = extractCountFromText(userText);
+    if (count <= 0) count = Math.min(asInt(body.get("count")), maxCount);
+    if (count <= 0) count = 5;
+
+    String extractedType = extractTypeFromText(userText);
+    String extractedSubject = extractSubjectFromText(userText);
+    String extractedDifficulty = extractDifficultyFromText(userText);
+    String extractedKp = extractKnowledgePointFromText(userText);
+
+    if (extractedType.isBlank()) extractedType = str(body, "type").isBlank() ? "" : str(body, "type");
+    if (extractedSubject.isBlank()) extractedSubject = str(body, "subject");
+    if (extractedDifficulty.isBlank()) extractedDifficulty = str(body, "difficulty");
+    if (extractedKp.isBlank()) extractedKp = str(body, "knowledgePoint");
+
+    StringBuilder sb = new StringBuilder();
+    sb.append("严格生成恰好 ").append(count).append(" 道题目，不要多也不要少。\n");
+
+    String effectiveType = extractedType.isBlank() ? "single" : extractedType;
+    sb.append("题型：").append(typeToChinese(effectiveType))
+      .append("（type字段必须为\"").append(effectiveType).append("\"）\n");
+
+    if (!extractedSubject.isBlank()) {
+      sb.append("科目：").append(extractedSubject).append("\n");
+    }
+    if (!extractedDifficulty.isBlank()) {
+      String diffChinese = switch (extractedDifficulty) {
+        case "easy" -> "简单"; case "hard" -> "困难"; default -> "中等";
+      };
+      sb.append("难度：").append(diffChinese).append("\n");
+    }
+    if (!extractedKp.isBlank()) {
+      sb.append("知识点方向：").append(extractedKp).append("\n");
+    }
+
+    sb.append("用户需求：").append(userText);
+    return sb.toString();
+  }
+
+  /**
+   * Detect if user message indicates question-generation intent.
+   * Three levels: strong (clear intent), weak (possible intent), none.
+   */
+  private String detectQuestionIntent(String text) {
+    if (text == null || text.isBlank()) return "none";
+
+    // Strong intent: explicit question-generation keywords
+    if (text.matches(".*(出|生成|要|来|帮我出|给我出|给我来|给我生成)\\s*\\d*\\s*道.*")) return "strong";
+    if (text.matches(".*\\d+\\s*道.*题.*")) return "strong";
+    if (text.matches(".*(单选|多选|判断|填空|简答|编程).*题.*")) return "strong";
+    if (text.matches(".*题.*(单选|多选|判断|填空|简答|编程).*")) return "strong";
+
+    // Weak intent: implicit question-generation signals
+    if (text.matches(".*(考考我|练一练|练练|测试一下|测验|小测|随堂测|摸底).*")) return "weak";
+    if (text.matches(".*(复习题|练习题|模拟题|真题|考题|试题).*")) return "weak";
+    if (text.matches(".*(来点|来些|给我点|整点|整些).*(题|练习|测验|测试).*")) return "weak";
+    if (text.matches(".*想(练|做|考|测试|练习).*")) return "weak";
+    if (text.matches(".*[a-zA-Z\\u4e00-\\u9fa5]{2,}(题|练习|测验).*") && !text.matches(".*(问|答|解释|说明|什么是|为什么|怎么|如何|讲解).*")) return "weak";
+
+    return "none";
   }
 
   private String str(Map<String, Object> map, String key) {

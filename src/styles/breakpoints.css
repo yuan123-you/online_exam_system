@@ -39,15 +39,15 @@
 /* Responsive grid: auto-fits columns that shrink gracefully */
 .r-grid {
   display: grid;
-  gap: 14px;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr));
+  gap: 10px;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr));
 }
 
 /* Responsive stack: vertical on mobile, horizontal above */
 .r-stack {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 10px;
 }
 
 @media (min-width: 768px) {
@@ -90,7 +90,25 @@
   .hide-desktop { display: none; }
 }
 
-/* Responsive text sizing */
+/* ============================================
+   Orientation helpers
+   ============================================ */
+.show-portrait { display: none; }
+.show-landscape { display: none; }
+
+@media (orientation: portrait) {
+  .show-portrait { display: block; }
+  .hide-portrait { display: none; }
+}
+
+@media (orientation: landscape) {
+  .show-landscape { display: block; }
+  .hide-landscape { display: none; }
+}
+
+/* ============================================
+   Responsive text sizing
+   ============================================ */
 .r-text-sm {
   font-size: clamp(0.8rem, 0.75rem + 0.25vw, 0.875rem);
 }
@@ -103,11 +121,39 @@
   font-size: clamp(1rem, 0.9rem + 0.5vw, 1.25rem);
 }
 
-/* Responsive spacing */
-.r-gap-sm { gap: clamp(8px, 1vw, 14px); }
-.r-gap-md { gap: clamp(12px, 2vw, 20px); }
-.r-gap-lg { gap: clamp(16px, 3vw, 28px); }
+/* ============================================
+   Responsive spacing
+   ============================================ */
+.r-gap-sm { gap: clamp(6px, 1vw, 12px); }
+.r-gap-md { gap: clamp(8px, 1.5vw, 16px); }
+.r-gap-lg { gap: clamp(12px, 2.5vw, 24px); }
 
-.r-pad-sm { padding: clamp(8px, 1vw, 14px); }
-.r-pad-md { padding: clamp(12px, 2vw, 20px); }
-.r-pad-lg { padding: clamp(16px, 3vw, 28px); }
+.r-pad-sm { padding: clamp(6px, 1vw, 12px); }
+.r-pad-md { padding: clamp(8px, 1.5vw, 16px); }
+.r-pad-lg { padding: clamp(12px, 2.5vw, 24px); }
+
+.r-margin-sm { margin: clamp(4px, 0.5vw, 8px); }
+.r-margin-md { margin: clamp(6px, 1vw, 12px); }
+
+/* ============================================
+   Responsive width constraints
+   ============================================ */
+.r-container {
+  width: 100%;
+  max-width: var(--bp-desktop);
+  margin: 0 auto;
+}
+
+/* ============================================
+   Overflow protection
+   ============================================ */
+.r-overflow-safe {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.r-no-shrink {
+  flex-shrink: 0;
+  min-width: 0;
+}

@@ -1,4 +1,4 @@
-﻿import type { BootstrapData, ExamDetail, SubmissionReview, User, WrongBookEntry } from "../types";
+import type { BootstrapData, ExamDetail, SubmissionReview, User, WrongBookEntry } from "../types";
 import { normalizeApiData } from "../utils/text";
 
 let currentAuthToken = "";
@@ -473,23 +473,26 @@ function sseStream(
           }
         }
       } catch (err: unknown) {
-        if ((err as Error)?.name !== 'AbortError') {
-          onError(String(err));
-        }
+        // Silently ignore abort errors (e.g., user navigated away or clicked stop)
+        if ((err as Error)?.name === 'AbortError') return;
+        onError(String(err));
       } finally {
-        reader.releaseLock();
+        try { reader.releaseLock(); } catch { /* ignore */ }
         onFinally?.();
       }
     } catch (err: unknown) {
-      if ((err as Error)?.name !== 'AbortError') {
-        // Retry on network errors
-        if (attempt < maxRetries) {
-          const waitMs = 1000 * (attempt + 1);
-          await new Promise(r => setTimeout(r, waitMs));
-          if (!controller.signal.aborted) return doFetch(attempt + 1);
-        }
-        onError('网络连接失败，请检查网络后重试');
+      // Silently ignore abort errors from fetch() itself
+      if ((err as Error)?.name === 'AbortError') {
+        onFinally?.();
+        return;
       }
+      // Retry on network errors
+      if (attempt < maxRetries) {
+        const waitMs = 1000 * (attempt + 1);
+        await new Promise(r => setTimeout(r, waitMs));
+        if (!controller.signal.aborted) return doFetch(attempt + 1);
+      }
+      onError('网络连接失败，请检查网络后重试');
       onFinally?.();
     }
   };
@@ -757,8 +760,98 @@ export interface UserPreference {
   practiceTopics: Array<{ icon: string; label: string; prompt: string }>;
   recentThemes: string[];
   messageCount: number;
+  knowledgeGaps?: Array<{ knowledgePoint: string; wrongCount: number; severity: string }>;
+  learningPreferences?: {
+    difficultyPreference: string;
+    learningStyle: string;
+    activityLevel: string;
+    preferredTypes?: string[];
+  };
+  aiSummary?: string;
 }
 
 export function getUserPreferences() {
   return request<UserPreference>('/api/chat/preferences');
+}
+
+// ========== 个性化推荐 API ==========
+
+/** 推荐项 */
+export interface RecommendationItem {
+  type: string; // knowledge_gap | subject_review | study_plan | chat | wrongbook_retry | explore
+  priority: string; // high | medium | low
+  title: string;
+  description: string;
+  action: string; // practice | chat | wrongbook
+  prompt?: string;
+  knowledgePoint?: string;
+  severity?: string;
+  subject?: string;
+  trend?: string;
+  category?: string;
+}
+
+/** 获取个性化推荐列表 */
+export function getRecommendations() {
+  return request<{ recommendations: RecommendationItem[]; cached: boolean }>('/api/recommendations');
+}
+
+/** 用户画像 */
+export interface UserProfile {
+  userId: string;
+  generatedAt: string;
+  subjectAffinity: Array<{
+    subject: string;
+    score: number;
+    trend: string;
+    chatInterest: number;
+    examAccuracy: number;
+    weaknessLevel: number;
+    practiceFrequency: number;
+  }>;
+  knowledgeGaps: Array<{
+    knowledgePoint: string;
+    wrongCount: number;
+    examWeakness: number;
+    severity: string;
+  }>;
+  learningPreferences: {
+    difficultyPreference: string;
+    learningStyle: string;
+    activityLevel: string;
+    preferredTypes: string[];
+  };
+  aiSummary: string;
+}
+
+/** 获取用户画像 */
+export function getUserProfile() {
+  return request<UserProfile>('/api/recommendations/profile');
+}
+
+/** 记录用户行为日志 */
+export function logBehavior(params: {
+  action: string;
+  targetType?: string;
+  targetId?: string;
+  detail?: Record<string, unknown>;
+  durationMs?: number;
+}) {
+  return request<{ logged: boolean }>('/api/recommendations/behavior', {
+    method: 'POST',
+    body: JSON.stringify(params),
+  });
+}
+
+/** 提交推荐反馈 */
+export function submitRecommendationFeedback(params: {
+  recommendationType: string;
+  recommendationContent?: Record<string, unknown>;
+  feedbackType: string; // helpful | not_helpful | irrelevant | too_easy | too_hard | bookmark
+  feedbackDetail?: string;
+}) {
+  return request<{ submitted: boolean; message: string }>('/api/recommendations/feedback', {
+    method: 'POST',
+    body: JSON.stringify(params),
+  });
 }

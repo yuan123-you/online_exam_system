@@ -132,7 +132,7 @@
             :class="['eq-result', results[idx][qi] ? 'correct' : 'wrong']"
           >
             <span v-if="results[idx][qi]">✅ 回答正确</span>
-            <span v-else>❌ 回答错误，正确答案：{{ (q.answer || []).join('，') }}</span>
+            <span v-else>❌ 回答错误，正确答案：{{ formatAnswer(q.answer || [], q.type || 'single') }}</span>
             <!-- Enhanced explanation display -->
             <div v-if="q.explanation" class="eq-explanation">
               <div class="eq-expl-header" @click="toggleExplanation(idx, qi)">
@@ -166,6 +166,8 @@ import { reactive, ref } from 'vue'
 import { useAppStore } from '@/stores/app'
 import { typeLabel } from '@/utils/format'
 import type { AiQuestion } from '@/api/client'
+import katex from 'katex'
+import 'katex/dist/katex.min.css'
 import { savePracticeRecords } from '@/api/client'
 
 const props = defineProps<{
@@ -259,9 +261,11 @@ function renderExplanation(text: string): string {
   return html
 }
 
-// ---- Copy Plain Text (strip markdown) ----
+// ---- Copy Plain Text (strip markdown + AI thinking) ----
 async function copyPlain(text: string, idx: number) {
-  const plain = text
+  // 安全网：剥离 AI 思考文本（正常情况下已在 store 中处理）
+  const cleaned = stripThinkingForCopy(text)
+  const plain = cleaned
     .replace(/```[\s\S]*?```/g, '')
     .replace(/\*\*([^*]+)\*\*/g, '$1')
     .replace(/\*([^*]+)\*/g, '$1')
@@ -270,6 +274,49 @@ async function copyPlain(text: string, idx: number) {
     .replace(/\n{2,}/g, '\n\n')
     .trim()
   await copyToClipboard(plain, idx)
+}
+
+/** 复制时剥离 AI 思考/推理文本 */
+function stripThinkingForCopy(text: string): string {
+  if (!text || text.length < 30) return text || ''
+
+  // 策略1：JSON 数组前有思考文本
+  const arrIdx = text.search(/\[\s*\{/)
+  if (arrIdx > 0) {
+    const before = text.substring(0, arrIdx).trim()
+    if (isThinkingText(before)) return text.substring(arrIdx)
+  }
+
+  // 策略2：JSON 对象前有思考文本
+  const objIdx = text.search(/\{\s*"/)
+  if (objIdx > 0) {
+    const before = text.substring(0, objIdx).trim()
+    if (isThinkingText(before)) return text.substring(objIdx)
+  }
+
+  // 策略3：代码块前有思考文本
+  const codeIdx = text.search(/```(?:json)?\s*\n/)
+  if (codeIdx > 0) {
+    const before = text.substring(0, codeIdx).trim()
+    if (isThinkingText(before)) return text.substring(codeIdx)
+  }
+
+  return text
+}
+
+/** 检测文本是否为 AI 思考输出 */
+function isThinkingText(text: string): boolean {
+  if (!text || text.length < 20) return false
+  const patterns = [
+    /分析/, /让我/, /好的[，，]?\s*我/, /我将/, /我们需要/,
+    /检查/, /起草/, /构建/, /组装/, /最终/, /自检/,
+    /步骤/, /考虑/, /优化/, /重读/, /尝试/, /看看/,
+    /约束/, /格式.*要求/, /示例.*输出/, /题\s*\d/,
+    /角色/, /任务/, /内容.*涵盖/, /严格遵循/,
+  ]
+  let matches = 0
+  for (const p of patterns) { if (p.test(text)) matches++ }
+  return matches >= 2
 }
 
 // ---- Copy Markdown ----
@@ -321,20 +368,40 @@ function parsedQuestions(msgIdx: number): AiQuestion[] {
   const now = Date.now()
   if (now - _lastCacheClear > 30000) { if (_parseCache.size > 50) _parseCache.clear(); _lastCacheClear = now }
 
+  let result: AiQuestion[] = []
+
   // Strategy 1: Parse text format (===题目开始=== ... ===题目结束===)
-  const textParsed = parseTextFormat(content)
-  if (textParsed.length > 0) { _parseCache.set(cacheKey, textParsed); return textParsed }
+  result = parseTextFormat(content)
+  if (result.length > 0) { result = normalizeParsedQuestions(result); _parseCache.set(cacheKey, result); return result }
 
   // Strategy 2: Parse JSON (fallback for legacy format or if text format not used)
-  const jsonParsed = parseJsonFormat(content)
-  if (jsonParsed.length > 0) { _parseCache.set(cacheKey, jsonParsed); return jsonParsed }
+  result = parseJsonFormat(content)
+  if (result.length > 0) { result = normalizeParsedQuestions(result); _parseCache.set(cacheKey, result); return result }
 
   // Strategy 3: Regex extraction
-  const regexParsed = extractQuestionsByRegex(content)
-  if (regexParsed.length > 0) { _parseCache.set(cacheKey, regexParsed); return regexParsed }
+  result = extractQuestionsByRegex(content)
+  if (result.length > 0) { result = normalizeParsedQuestions(result); _parseCache.set(cacheKey, result); return result }
 
   _parseCache.set(cacheKey, [])
   return []
+}
+
+/** Normalize parsed questions: clean answer field to only contain valid letters for choice/judge */
+function normalizeParsedQuestions(questions: AiQuestion[]): AiQuestion[] {
+  return questions.map(q => ({
+    ...q,
+    answer: normalizeAnswers(q.answer || [], q.type || 'single'),
+  }))
+}
+
+/** Enforce option count: single/multiple -> 4, judge -> 2 */
+function capOptions(q: Partial<AiQuestion>) {
+  if (!q.options) return
+  if (q.type === 'judge' && q.options.length > 2) {
+    q.options = q.options.slice(0, 2)
+  } else if (q.options.length > 4 && (q.type === 'single' || q.type === 'multiple')) {
+    q.options = q.options.slice(0, 4)
+  }
 }
 
 /** Parse the text-based question format */
@@ -392,6 +459,7 @@ function parseTextFormat(content: string): AiQuestion[] {
       q.knowledgePoint = (q.title || '').substring(0, 30)
       if (!q.options) q.options = []
       if (!q.answer) q.answer = []
+      capOptions(q)
       questions.push(q as AiQuestion)
     }
   }
@@ -420,7 +488,34 @@ function parseJsonFormat(content: string): AiQuestion[] {
   }
   if (!jsonStr) return []
   const parsed = tryParseJson(jsonStr)
-  return (Array.isArray(parsed) && parsed.length > 0 && parsed[0].title) ? parsed as AiQuestion[] : []
+  if (Array.isArray(parsed) && parsed.length > 0) {
+    // Filter out entries with blank / placeholder titles
+    const filtered = parsed.filter((q: any) => q.title && String(q.title).trim())
+    if (filtered.length > 0) {
+      const capped = filtered.map((q: any) => {
+        // Cap options
+        let opts = q.options || []
+        if (q.type === 'judge' && opts.length > 2) {
+          opts = opts.slice(0, 2)
+        } else if (opts.length > 4 && (q.type === 'single' || q.type === 'multiple')) {
+          opts = opts.slice(0, 4)
+        }
+        // Normalize answer for choice/judge types
+        let answer = q.answer || []
+        if (q.type === 'single' || q.type === 'multiple' || q.type === 'judge') {
+          const cleanAnswer: string[] = []
+          for (const a of answer) {
+            const m = String(a).match(/([A-D])/)
+            if (m) cleanAnswer.push(m[1])
+          }
+          if (cleanAnswer.length > 0) answer = cleanAnswer
+        }
+        return { ...q, options: opts, answer }
+      })
+      return capped as AiQuestion[]
+    }
+  }
+  return []
 }
 
 /** Last-resort: regex-based extraction of individual question objects from malformed text */
@@ -455,6 +550,20 @@ function extractQuestionsByRegex(text: string): AiQuestion[] {
       }
 
       if (title && type) {
+        if (type === 'judge' && options.length > 2) {
+          options.length = 2
+        } else if (options.length > 4 && (type === 'single' || type === 'multiple')) {
+          options.length = 4
+        }
+        // Normalize answer for choice/judge
+        if (type === 'single' || type === 'multiple' || type === 'judge') {
+          const cleanAnswer: string[] = []
+          for (const a of answer) {
+            const m = String(a).match(/([A-D])/)
+            if (m) cleanAnswer.push(m[1])
+          }
+          if (cleanAnswer.length > 0) answer.length = 0, answer.push(...cleanAnswer)
+        }
         questions.push({
           id: `q-${questions.length}-${Date.now()}`,
           title, type: type as AiQuestion['type'],
@@ -538,6 +647,26 @@ function extractKey(opt: string): string {
   return m ? m[1] : opt
 }
 
+/** Normalize answer array: extract only valid answer letters for choice/judge, keep text for fill/short */
+function normalizeAnswers(answer: string[], type: string): string[] {
+  if (type === 'fill' || type === 'short' || type === 'coding') {
+    return answer.filter(a => a && a.trim())
+  }
+  // For choice/judge: extract letter from each answer item
+  const letters: string[] = []
+  for (const a of answer) {
+    const m = String(a).match(/([A-D])/)
+    if (m) letters.push(m[1])
+  }
+  return letters
+}
+
+/** Format answer for display: clean letter(s) for choice, raw text for fill/short */
+function formatAnswer(answer: string[], type: string): string {
+  const norm = normalizeAnswers(answer, type)
+  return norm.join('，')
+}
+
 // ---- Answer helpers ----
 function ensure(msgIdx: number, qi: number) {
   if (!answers[msgIdx]) answers[msgIdx] = {}
@@ -565,7 +694,8 @@ function optionClass(msgIdx: number, qi: number, opt: string): string {
   if (!submitted[msgIdx]) return sel ? 'selected' : ''
   const q = parsedQuestions(msgIdx)[qi]
   if (!q) return ''
-  const correct = (q.answer || []).includes(key)
+  const normAnswer = normalizeAnswers(q.answer || [], q.type || 'single')
+  const correct = normAnswer.includes(key)
   if (correct) return 'correct'
   if (sel && !correct) return 'wrong'
   return ''
@@ -611,7 +741,7 @@ async function submitAnswers(msgIdx: number) {
     } else {
       student = (answers[msgIdx]?.[qi] || []).sort()
     }
-    const correct = (q.answer || []).sort()
+    const correct = normalizeAnswers(q.answer || [], q.type || 'single').sort()
     const isCorrect = JSON.stringify(student.sort()) === JSON.stringify(correct.sort())
     results[msgIdx][qi] = isCorrect
 
@@ -729,17 +859,57 @@ function findJsonRange(text: string): { start: number; end: number } | null {
   return null
 }
 
-/** Render plain text as markdown HTML */
+/** Render LaTeX math to HTML using KaTeX */
+function renderLatex(latex: string, displayMode: boolean): string {
+  try {
+    return katex.renderToString(latex, { displayMode, throwOnError: false, strict: false })
+  } catch {
+    return escapeHtml(latex)
+  }
+}
+
 function renderMarkdown(text: string): string {
-  let html = escapeHtml(text)
+  // Step 1: Extract and protect LaTeX before escaping HTML
+  const mathBlocks: string[] = []
+
+  // Protect display math ($$...$$) first
+  let html = text.replace(/\$\$([\s\S]*?)\$\$/g, (_, math) => {
+    const idx = mathBlocks.length
+    mathBlocks.push(renderLatex(math.trim(), true))
+    return `%%MATH${idx}%%`
+  })
+
+  // Protect inline math ($...$) — but not $$ (already handled)
+  html = html.replace(/\$([^\$\n]+?)\$/g, (_, math) => {
+    const idx = mathBlocks.length
+    mathBlocks.push(renderLatex(math.trim(), false))
+    return `%%MATH${idx}%%`
+  })
+
+  // Step 2: Escape HTML (math blocks are already safe HTML)
+  html = escapeHtml(html)
+
+  // Step 3: Restore math blocks
+  html = html.replace(/%%MATH(\d+)%%/g, (_, idx) => mathBlocks[parseInt(idx)])
+
+  // Step 4: Markdown formatting
+  // Code blocks
   html = html.replace(/```(\w*)\n?([\s\S]*?)```/g, '<pre class="md-code"><code>$2</code></pre>')
   html = html.replace(/`([^`]+)`/g, '<code class="md-inline">$1</code>')
-  html = html.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
-  html = html.replace(/\*([^*]+)\*/g, '<em>$1</em>')
+  // Headers
+  html = html.replace(/^#### (.+)$/gm, '<h6 class="md-h6">$1</h6>')
   html = html.replace(/^### (.+)$/gm, '<h5 class="md-h5">$1</h5>')
   html = html.replace(/^## (.+)$/gm, '<h4 class="md-h4">$1</h4>')
+  html = html.replace(/^# (.+)$/gm, '<h3 class="md-h3">$1</h3>')
+  // Bold & italic
+  html = html.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+  html = html.replace(/\*([^*]+)\*/g, '<em>$1</em>')
+  // Horizontal rule
+  html = html.replace(/^---+$/gm, '<hr class="md-hr">')
+  // Ordered & unordered lists
   html = html.replace(/^(\d+)\. (.+)$/gm, '<li class="md-li">$1. $2</li>')
-  html = html.replace(/^- (.+)$/gm, '<li class="md-li">• $1</li>')
+  html = html.replace(/^[-*] (.+)$/gm, '<li class="md-li">• $1</li>')
+  // Paragraphs & line breaks
   html = html.replace(/\n\n+/g, '</p><p class="md-p">')
   html = html.replace(/\n/g, '<br>')
   return '<p class="md-p">' + html + '</p>'
@@ -811,12 +981,32 @@ function escapeHtml(s: string) {
 .reasoning-block { margin-bottom: 8px; }
 .reasoning-block summary {
   font-size: 13px; color: #6b7280; cursor: pointer; font-weight: 500;
-  padding: 6px 10px; border-radius: 6px;
+  padding: 8px 12px; border-radius: 8px;
   background: #f9fafb; border: 1px solid #e5e7eb;
-  transition: all 0.15s;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
   user-select: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  list-style: none;
 }
-.reasoning-block summary:hover { color: #374151; border-color: #d1d5db; }
+.reasoning-block summary::-webkit-details-marker { display: none; }
+.reasoning-block summary::before {
+  content: '▶';
+  font-size: 10px;
+  transition: transform 0.2s;
+  display: inline-block;
+}
+.reasoning-block details[open] > summary::before,
+.reasoning-block summary:has(+ *)::before {
+  transform: rotate(90deg);
+}
+.reasoning-block summary:hover {
+  color: #374151;
+  border-color: #d1d5db;
+  background: #f3f4f6;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+}
 .reasoning-block.reasoning-saved summary { color: #6b7280; font-weight: 500; }
 
 .reasoning-text {
@@ -942,17 +1132,25 @@ function escapeHtml(s: string) {
 .exam-title { font-size: 13px; font-weight: 600; color: #374151; }
 
 .exam-submit {
-  padding: 10px 24px;
+  padding: 10px 28px;
   border: none;
-  border-radius: 8px;
+  border-radius: 10px;
   background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
   color: #fff;
   font-size: 14px;
   font-weight: 600;
   cursor: pointer;
-  transition: all 0.15s;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  box-shadow: 0 2px 8px rgba(102, 126, 234, 0.3);
 }
-.exam-submit:hover { opacity: 0.9; transform: scale(1.03); }
+.exam-submit:hover {
+  opacity: 0.9;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 16px rgba(102, 126, 234, 0.4);
+}
+.exam-submit:active {
+  transform: translateY(0) scale(0.98);
+}
 
 .exam-score { font-size: 13px; font-weight: 600; color: #6366f1; }
 
@@ -1104,14 +1302,20 @@ function escapeHtml(s: string) {
   font-size: 12px;
   font-weight: 500;
   color: #6366f1;
-  padding: 4px 0;
+  padding: 6px 8px;
+  border-radius: 6px;
   user-select: none;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
 }
-.eq-expl-header:hover { color: #4f46e5; }
+.eq-expl-header:hover {
+  color: #4f46e5;
+  background: #eef2ff;
+}
 
 .eq-expl-arrow {
   font-size: 10px;
-  transition: transform 0.15s;
+  transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  display: inline-block;
 }
 
 .eq-expl-body {
@@ -1158,12 +1362,13 @@ function escapeHtml(s: string) {
   color: #6b7280;
   font-size: 12px;
   cursor: pointer;
-  transition: all 0.12s;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
 }
 .copy-btn:hover {
   border-color: #6366f1;
   color: #6366f1;
   background: #eef2ff;
+  box-shadow: 0 1px 4px rgba(99,102,241,0.15);
 }
 
 /* Retry button for failed messages */

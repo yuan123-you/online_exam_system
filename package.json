@@ -19,6 +19,7 @@
   "description": "",
   "dependencies": {
     "echarts": "^6.0.0",
+    "katex": "^0.17.0",
     "pdfjs-dist": "^5.6.205",
     "pinia": "^2.3.1",
     "tslib": "^2.8.1",

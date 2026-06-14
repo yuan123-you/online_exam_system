@@ -35,7 +35,7 @@
     </div>
 
     <div v-if="store.filteredWrongBookEntries.length === 0" class="empty-state">暂无错题记录</div>
-    <div v-else class="table-wrap">
+    <div v-else class="table-wrap mobile-card-table">
       <table>
         <thead>
           <tr>
@@ -56,25 +56,25 @@
             :key="entry.id"
             :class="{ 'row-selected': selectedIds.has(entry.id) }"
           >
-            <td class="checkbox-col">
+            <td class="checkbox-col" data-label="选择">
               <input
                 type="checkbox"
                 :checked="selectedIds.has(entry.id)"
                 @change="toggleSelect(entry.id)"
               />
             </td>
-            <td>{{ entry.subject }}</td>
-            <td>{{ entry.knowledgePoint }}</td>
-            <td><span class="tag">{{ typeLabel(entry.type) }}</span></td>
-            <td>{{ entry.title.slice(0, 40) }}{{ entry.title.length > 40 ? '...' : '' }}</td>
-            <td><strong style="color:var(--danger)">{{ entry.wrongCount }}</strong></td>
-            <td>{{ entry.retryCount }}</td>
-            <td>
+            <td data-label="科目">{{ entry.subject }}</td>
+            <td data-label="知识点">{{ entry.knowledgePoint }}</td>
+            <td data-label="题型"><span class="tag">{{ typeLabel(entry.type) }}</span></td>
+            <td data-label="题目">{{ entry.title.slice(0, 40) }}{{ entry.title.length > 40 ? '...' : '' }}</td>
+            <td data-label="错误次数"><strong style="color:var(--danger)">{{ entry.wrongCount }}</strong></td>
+            <td data-label="重做次数">{{ entry.retryCount }}</td>
+            <td data-label="状态">
               <span :class="entry.lastRetryCorrect ? 'status-ok' : 'status-pending'">
                 {{ entry.lastRetryCorrect ? '已掌握' : '待重做' }}
               </span>
             </td>
-            <td>
+            <td data-label="操作">
               <div class="action-row">
                 <button class="primary-btn" type="button" @click="store.retryWrongEntry(entry)">重做</button>
                 <button v-if="entry.removable" class="ghost-btn" type="button" @click="store.removeWrongEntry(entry.id)">移除</button>
@@ -204,5 +204,19 @@ async function handleBatchRemove() {
   color: var(--warn, #d4a844);
   font-weight: 500;
   font-size: 0.85rem;
+}
+
+/* Mobile card-table: hide less important columns */
+@media (max-width: 767px) {
+  .checkbox-col {
+    width: auto;
+  }
+
+  /* On mobile, the card layout handles overflow naturally */
+  .selection-bar {
+    flex-wrap: wrap;
+    gap: 6px;
+    font-size: 0.8rem;
+  }
 }
 </style>

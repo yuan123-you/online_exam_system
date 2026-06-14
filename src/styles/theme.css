@@ -83,6 +83,7 @@ html,
 body {
   margin: 0;
   height: 100%;
+  scroll-behavior: smooth;
 }
 
 body {
@@ -95,6 +96,47 @@ body {
     linear-gradient(165deg, var(--bg-top), var(--bg-bottom));
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+}
+
+/* ---- Global Scroll Optimization ---- */
+/* Smooth scrolling for all scrollable containers */
+.sidebar-body,
+.content-grid,
+.content-panel,
+.table-wrap,
+.modal-card,
+.chat-main {
+  scroll-behavior: smooth;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  scroll-padding: 8px;
+}
+
+/* Performance hints for scroll containers */
+.sidebar-body,
+.content-grid,
+.content-panel,
+.table-wrap,
+.modal-card {
+  will-change: scroll-position;
+}
+
+/* Firefox scrollbar styling (cross-browser) */
+.sidebar-body,
+.content-grid,
+.table-wrap,
+.modal-card {
+  scrollbar-width: thin;
+}
+
+.sidebar-body {
+  scrollbar-color: rgba(255, 255, 255, 0.15) transparent;
+}
+
+.content-grid,
+.table-wrap,
+.modal-card {
+  scrollbar-color: var(--line) transparent;
 }
 
 button,
@@ -192,12 +234,7 @@ textarea {
 }
 
 /* ---- Login Page (styles now scoped in AuthLogin.vue) ---- */
-/* mobile overrides */
-@media (max-width: 768px) {
-  .login-shell { grid-template-columns: 1fr; }
-  .login-left { display: none; }
-}
-
+/* Legacy login keyframes kept for backward compatibility */
 @keyframes loginEnter {
   from {
     opacity: 0;
@@ -209,7 +246,7 @@ textarea {
   }
 }
 
-/* Password visibility toggle */
+/* Password visibility toggle (used by scoped AuthLogin.vue via :deep) */
 .password-input-wrap {
   position: relative;
   display: flex;
@@ -403,11 +440,22 @@ label span {
   flex-shrink: 0;
   cursor: pointer;
   transition: all var(--duration) var(--ease);
+  min-width: 36px;
+  min-height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .sidebar-collapse-btn:hover {
   background: var(--sidebar-surface-hover);
   color: var(--sidebar-text-bright);
+  box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+  transform: scale(1.05);
+}
+
+.sidebar-collapse-btn:active {
+  transform: scale(0.95);
 }
 
 .sidebar-body {
@@ -421,7 +469,7 @@ label span {
 }
 
 .sidebar-body::-webkit-scrollbar {
-  width: 4px;
+  width: 5px;
 }
 
 .sidebar-body::-webkit-scrollbar-track {
@@ -430,7 +478,12 @@ label span {
 
 .sidebar-body::-webkit-scrollbar-thumb {
   background: rgba(255, 255, 255, 0.15);
-  border-radius: 2px;
+  border-radius: 3px;
+  transition: background 0.2s ease;
+}
+
+.sidebar-body::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.3);
 }
 
 /* Sidebar user panel */
@@ -657,7 +710,13 @@ label span {
 
 .sidebar-collapsed .sidebar-top {
   justify-content: center;
-  padding: 12px 8px 10px;
+  padding: 12px 6px 10px;
+}
+
+.sidebar-collapsed .sidebar-collapse-btn {
+  padding: 8px;
+  min-width: 36px;
+  min-height: 36px;
 }
 
 .sidebar-collapsed .sidebar-brand-text,
@@ -705,7 +764,7 @@ label span {
 
 /* ---- Main Workspace ---- */
 .workspace-main {
-  padding: 16px;
+  padding: 12px;
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
   gap: 0;
@@ -735,7 +794,7 @@ label span {
   overflow: auto;
   padding-right: 4px;
   display: grid;
-  gap: 14px;
+  gap: 10px;
   align-content: start;
 }
 
@@ -750,6 +809,7 @@ label span {
 .content-grid::-webkit-scrollbar-thumb {
   background: var(--line);
   border-radius: 3px;
+  transition: background 0.2s ease;
 }
 
 .content-grid::-webkit-scrollbar-thumb:hover {
@@ -758,7 +818,7 @@ label span {
 
 /* ---- Panel Content ---- */
 .panel {
-  padding: 20px;
+  padding: 16px;
 }
 
 .section-title {
@@ -766,7 +826,7 @@ label span {
   justify-content: space-between;
   gap: 10px;
   align-items: center;
-  margin-bottom: 14px;
+  margin-bottom: 10px;
 }
 
 .section-subtitle {
@@ -779,7 +839,7 @@ label span {
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
-  margin-bottom: 16px;
+  margin-bottom: 12px;
 }
 
 .section-head h3 {
@@ -840,7 +900,7 @@ label span {
 .two-column,
 .three-column {
   display: grid;
-  gap: 14px;
+  gap: 10px;
 }
 
 .stats-grid {
@@ -861,7 +921,7 @@ label span {
 
 /* ---- Stat Cards ---- */
 .stat-card {
-  padding: 18px;
+  padding: 14px;
   min-width: 0;
   transition: transform var(--duration) var(--ease),
               box-shadow var(--duration) var(--ease);
@@ -873,7 +933,7 @@ label span {
 }
 
 .compact-stats {
-  margin-bottom: 14px;
+  margin-bottom: 10px;
 }
 
 .compact-card {
@@ -901,7 +961,7 @@ label span {
 }
 
 .compact-card {
-  padding: 16px;
+  padding: 12px;
 }
 
 .compact-card span {
@@ -950,8 +1010,8 @@ label span {
 /* ---- Filter & Toolbar ---- */
 .filter-bar {
   display: grid;
-  gap: 10px;
-  margin-bottom: 14px;
+  gap: 8px;
+  margin-bottom: 10px;
 }
 
 .toolbar-note {
@@ -968,7 +1028,7 @@ label span {
 }
 
 .org-panel {
-  padding-top: 16px;
+  padding-top: 12px;
 }
 
 .org-panel + .org-panel {
@@ -976,8 +1036,8 @@ label span {
 }
 
 .org-panel .section-title {
-  margin-bottom: 14px;
-  padding-bottom: 10px;
+  margin-bottom: 10px;
+  padding-bottom: 8px;
   border-bottom: 1px solid var(--line-soft);
 }
 
@@ -991,7 +1051,7 @@ label span {
   overflow: auto;
   border: 1px solid var(--line-soft);
   border-radius: var(--radius-lg);
-  max-height: calc(100dvh - 340px);
+  max-height: calc(100dvh - 300px);
   min-height: 200px;
   background: rgba(255, 255, 255, 0.85);
 }
@@ -1008,11 +1068,16 @@ label span {
 .table-wrap::-webkit-scrollbar-thumb {
   background: var(--line);
   border-radius: 3px;
+  transition: background 0.2s ease;
+}
+
+.table-wrap::-webkit-scrollbar-thumb:hover {
+  background: var(--muted-light);
 }
 
 table {
   width: 100%;
-  min-width: 680px;
+  min-width: 580px;
   border-collapse: collapse;
   background: transparent;
 }
@@ -1103,7 +1168,7 @@ th {
 
 /* ---- Empty State ---- */
 .empty-state {
-  padding: 24px;
+  padding: 18px;
   text-align: center;
   color: var(--muted);
   border: 1.5px dashed var(--line);
@@ -1162,7 +1227,7 @@ th {
   width: min(980px, 100%);
   max-height: 90dvh;
   overflow: auto;
-  padding: 24px;
+  padding: 20px;
   position: relative;
   animation: modalCardIn 0.3s var(--ease);
 }
@@ -1182,17 +1247,26 @@ th {
   width: 6px;
 }
 
+.modal-card::-webkit-scrollbar-track {
+  background: transparent;
+}
+
 .modal-card::-webkit-scrollbar-thumb {
   background: var(--line);
   border-radius: 3px;
+  transition: background 0.2s ease;
+}
+
+.modal-card::-webkit-scrollbar-thumb:hover {
+  background: var(--muted-light);
 }
 
 .modal-header {
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
-  margin-bottom: 18px;
-  padding-bottom: 14px;
+  margin-bottom: 14px;
+  padding-bottom: 10px;
   border-bottom: 1px solid var(--line-soft);
 }
 
@@ -1202,7 +1276,7 @@ th {
 
 .modal-body {
   display: grid;
-  gap: 14px;
+  gap: 10px;
 }
 
 .icon-btn {
@@ -2217,7 +2291,7 @@ th {
 
 /* ---- Charts ---- */
 .chart-panel {
-  padding: 20px;
+  padding: 16px;
 }
 
 .chart-surface {
@@ -2416,7 +2490,7 @@ th {
 }
 
 .topbar {
-  padding: 16px 20px;
+  padding: 12px 16px;
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
@@ -2429,8 +2503,28 @@ th {
 }
 
 .content-panel {
-  padding: 20px;
+  padding: 14px;
   overflow: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
+  scrollbar-color: var(--line) transparent;
+}
+
+/* Full-screen content panel for AI assistant page */
+.main-panel--full {
+  height: 100dvh !important;
+  grid-template-rows: minmax(0, 1fr) !important;
+}
+
+.content-panel--full {
+  margin: 0 !important;
+  padding: 0 !important;
+  width: 100% !important;
+  height: 100% !important;
+  max-width: none !important;
+  max-height: none !important;
+  overflow: hidden !important;
 }
 
 .brand-card {
@@ -2659,24 +2753,10 @@ th {
 }
 
 @media (max-width: 640px) {
-  .login-shell {
-    grid-template-columns: 1fr;
-    padding: 0;
-  }
-
-  .login-intro {
-    display: none;
-  }
-
-  .login-panel {
-    padding: 12px;
-  }
-
   .workspace-main {
     padding: 12px;
   }
 
-  .login-card,
   .panel,
   .modal-card {
     padding: 18px;
@@ -2826,7 +2906,7 @@ th {
     height: 100%;
   }
 
-  .content-panel {
+  .content-panel:not(.content-panel--full) {
     padding-bottom: 72px !important;
   }
 }
@@ -2884,21 +2964,7 @@ th {
    ============================================ */
 
 /* ---- Login UX Enhancements ---- */
-
-/* Focus states with visual feedback on login inputs */
-.login-input:focus,
-.login-form input:focus {
-  outline: none;
-  border-color: var(--primary);
-  box-shadow: 0 0 0 3px var(--primary-glow), var(--shadow-sm);
-  transition: border-color var(--duration) var(--ease),
-              box-shadow var(--duration) var(--ease);
-}
-
-.login-input:hover,
-.login-form input:hover {
-  border-color: var(--primary-hover);
-}
+/* Most login styles are now scoped in AuthLogin.vue. Only error/shake animations remain global. */
 
 /* Error message styling */
 .login-message-error {
@@ -2913,41 +2979,6 @@ th {
   40%      { transform: translateX(6px); }
   60%      { transform: translateX(-4px); }
   80%      { transform: translateX(4px); }
-}
-
-/* Loading spinner on submit button */
-.login-spinner {
-  display: inline-block;
-  width: 16px;
-  height: 16px;
-  border: 2px solid rgba(255, 255, 255, 0.3);
-  border-top-color: #fff;
-  border-radius: 50%;
-  animation: loginSpin 0.7s linear infinite;
-  margin-right: 8px;
-  vertical-align: middle;
-}
-
-@keyframes loginSpin {
-  to { transform: rotate(360deg); }
-}
-
-.login-submit-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: background var(--duration) var(--ease),
-              transform var(--duration) var(--ease),
-              opacity var(--duration) var(--ease);
-}
-
-.login-submit-btn:active:not(:disabled) {
-  transform: scale(0.98);
-}
-
-.login-submit-btn:disabled {
-  opacity: 0.75;
-  cursor: not-allowed;
 }
 
 /* ---- Mobile Drawer Sidebar Enhancements ---- */
@@ -2998,12 +3029,12 @@ th {
     min-height: 100dvh;
   }
 
-  .content-panel {
-    padding: 14px 12px 80px; /* room for bottom tab bar */
+  .content-panel:not(.content-panel--full) {
+    padding: 10px 8px 72px; /* room for bottom tab bar */
   }
 
   .topbar {
-    padding: 12px 14px;
+    padding: 10px 10px;
   }
 
   .topbar h1 {
@@ -3013,12 +3044,12 @@ th {
   /* ---- Stats grid single column ---- */
   .stats-grid {
     grid-template-columns: 1fr 1fr;
-    gap: 10px;
+    gap: 8px;
   }
 
   .card-grid {
     grid-template-columns: 1fr;
-    gap: 12px;
+    gap: 8px;
   }
 
   .two-column,
@@ -3032,7 +3063,7 @@ th {
 
   /* ---- Stat cards compact ---- */
   .stat-card {
-    padding: 14px;
+    padding: 10px;
   }
 
   .stat-card h4 {
@@ -3041,8 +3072,8 @@ th {
 
   /* ---- Panels ---- */
   .panel {
-    padding: 16px;
-    margin-bottom: 12px;
+    padding: 12px;
+    margin-bottom: 8px;
   }
 
   /* ---- Tables -> Card-style layouts ---- */
@@ -3062,7 +3093,7 @@ th {
   .mobile-card-table table,
   .table-card-mobile table {
     border-collapse: separate;
-    border-spacing: 0 8px;
+    border-spacing: 0 6px;
   }
 
   .mobile-card-table thead,
@@ -3076,8 +3107,8 @@ th {
     background: var(--panel);
     border: 1px solid var(--line-soft);
     border-radius: var(--radius);
-    padding: 12px 14px;
-    margin-bottom: 10px;
+    padding: 10px 12px;
+    margin-bottom: 8px;
     box-shadow: var(--shadow-sm);
   }
 
@@ -3086,7 +3117,7 @@ th {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    padding: 4px 0;
+    padding: 3px 0;
     border-bottom: 1px solid var(--line-soft);
     font-size: 13px;
   }
@@ -3101,8 +3132,9 @@ th {
     content: attr(data-label);
     font-weight: 600;
     color: var(--muted);
-    margin-right: 12px;
+    margin-right: 10px;
     flex-shrink: 0;
+    font-size: 12px;
   }
 
   /* ---- Forms stack vertically ---- */
@@ -3118,7 +3150,7 @@ th {
   .section-actions {
     flex-direction: column;
     align-items: stretch;
-    gap: 10px;
+    gap: 8px;
   }
 
   .toolbar-form label,
@@ -3129,9 +3161,9 @@ th {
 
   /* ---- Modals ---- */
   .modal-card {
-    padding: 18px;
+    padding: 14px;
     max-width: 100%;
-    margin: 8px;
+    margin: 6px;
     border-radius: var(--radius);
   }
 
@@ -3167,7 +3199,14 @@ th {
 
   /* ---- Charts resize ---- */
   .chart-container {
-    min-height: 220px;
+    min-height: 200px;
+  }
+
+  /* ---- Table cells compact ---- */
+  th,
+  td {
+    padding: 8px 10px;
+    font-size: 12px;
   }
 }
 
@@ -3184,8 +3223,8 @@ th {
     width: 100%;
   }
 
-  .content-panel {
-    padding: 18px 16px 80px;
+  .content-panel:not(.content-panel--full) {
+    padding: 14px 12px 72px;
   }
 
   /* ---- Sidebar collapsed by default ---- */
@@ -3224,11 +3263,11 @@ th {
 
   /* ---- Moderate spacing ---- */
   .panel {
-    padding: 18px;
+    padding: 14px;
   }
 
   .stat-card {
-    padding: 16px;
+    padding: 12px;
   }
 
   /* ---- Login page tablet ---- */
@@ -3291,8 +3330,8 @@ th {
   }
 
   /* Content panel has no bottom padding for tab bar */
-  .content-panel {
-    padding-bottom: 20px;
+  .content-panel:not(.content-panel--full) {
+    padding-bottom: 14px;
   }
 }
 
@@ -3305,12 +3344,262 @@ th {
     grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
   }
 
-  .content-panel {
-    padding: 24px 28px;
+  .content-panel:not(.content-panel--full) {
+    padding: 18px 22px;
   }
 
   .panel {
-    padding: 22px;
+    padding: 18px;
+  }
+}
+
+/* ============================================
+   LANDSCAPE ORIENTATION OVERRIDES
+   Optimize for horizontal screen space
+   ============================================ */
+@media (max-width: 1023px) and (orientation: landscape) {
+  .content-panel:not(.content-panel--full) {
+    padding: 8px 12px 60px;
+  }
+
+  .topbar {
+    padding: 6px 12px;
+  }
+
+  .topbar h1 {
+    font-size: 16px;
+  }
+
+  .ios-tab-bar {
+    padding: 2px 0 env(safe-area-inset-bottom, 2px);
+  }
+
+  .ios-tab-bar-inner {
+    gap: 0;
+  }
+
+  .ios-tab-btn {
+    padding: 4px 6px;
+    font-size: 9px;
+  }
+
+  .ios-tab-btn .tab-icon {
+    width: 18px;
+    height: 18px;
+  }
+
+  /* Exam/grading sidebar more compact in landscape */
+  .exam-sidebar {
+    max-height: 100px;
+    padding: 8px 12px;
+  }
+
+  .grading-sidebar {
+    max-height: 100px;
+    padding: 8px 12px;
+  }
+
+  .exam-question-area {
+    height: calc(100dvh - 100px);
+  }
+
+  .exam-question-header,
+  .grading-question-header {
+    padding: 8px 14px;
+  }
+
+  .exam-question-body,
+  .grading-question-body {
+    padding: 12px 14px;
+  }
+
+  .exam-nav-footer,
+  .grading-nav-footer {
+    padding: 8px 14px;
+  }
+
+  .stat-card strong {
+    font-size: 22px;
+  }
+}
+
+/* ============================================
+   EXAM / GRADING MODAL - MOBILE ENHANCEMENTS
+   ============================================ */
+@media (max-width: 767px) {
+  .exam-shell {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto 1fr;
+    height: 100dvh;
+  }
+
+  .exam-sidebar {
+    height: auto;
+    max-height: 120px;
+    flex-direction: row;
+    flex-wrap: wrap;
+    padding: 8px 10px;
+    gap: 6px;
+    overflow: visible;
+  }
+
+  .exam-sidebar-title {
+    font-size: 13px;
+    margin: 0;
+  }
+
+  .exam-sidebar-meta {
+    display: none;
+  }
+
+  .exam-info-block {
+    flex-direction: row;
+    gap: 10px;
+    border: none;
+    padding: 0;
+    margin: 0;
+  }
+
+  .exam-progress {
+    display: none;
+  }
+
+  .question-nav {
+    display: flex;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    gap: 3px;
+    margin: 0;
+    padding: 0;
+  }
+
+  .question-nav button {
+    min-width: 28px;
+    height: 28px;
+    font-size: 11px;
+  }
+
+  .exam-sidebar-actions {
+    flex-direction: row;
+    border: none;
+    padding: 0;
+    margin: 0;
+    gap: 4px;
+  }
+
+  .exam-sidebar-actions .ghost-btn,
+  .exam-sidebar-actions .primary-btn {
+    padding: 4px 10px;
+    font-size: 11px;
+  }
+
+  .exam-question-area {
+    height: calc(100dvh - 120px);
+  }
+
+  .exam-question-header {
+    padding: 8px 10px;
+    gap: 6px;
+  }
+
+  .exam-question-body {
+    padding: 12px 10px;
+  }
+
+  .exam-nav-footer {
+    padding: 8px 10px;
+  }
+
+  .exam-nav-btn {
+    padding: 6px 12px;
+    font-size: 12px;
+  }
+
+  .exam-textarea {
+    min-height: 120px;
+  }
+
+  .option-item {
+    padding: 10px 12px;
+  }
+
+  /* Grading modal mobile */
+  .grading-shell {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto 1fr;
+    height: 100dvh;
+  }
+
+  .grading-sidebar {
+    height: auto;
+    max-height: 120px;
+    flex-direction: row;
+    flex-wrap: wrap;
+    padding: 8px 10px;
+    gap: 6px;
+  }
+
+  .grading-sidebar-title {
+    font-size: 13px;
+  }
+
+  .grading-sidebar-meta {
+    display: none;
+  }
+
+  .grading-info-block {
+    flex-direction: row;
+    gap: 10px;
+    border: none;
+    padding: 0;
+    margin: 0;
+  }
+
+  .grading-progress {
+    display: none;
+  }
+
+  .grading-nav {
+    display: flex;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    gap: 3px;
+    margin: 0;
+  }
+
+  .grading-nav button {
+    min-width: 28px;
+    height: 28px;
+    font-size: 11px;
+  }
+
+  .grading-sidebar-actions {
+    flex-direction: row;
+    border: none;
+    padding: 0;
+    margin: 0;
+    gap: 4px;
+  }
+
+  .grading-question-area {
+    height: calc(100dvh - 120px);
+  }
+
+  .grading-question-header {
+    padding: 8px 10px;
+  }
+
+  .grading-question-body {
+    padding: 12px 10px;
+  }
+
+  .grading-nav-footer {
+    padding: 8px 10px;
+  }
+
+  .grading-nav-btn {
+    padding: 6px 12px;
+    font-size: 12px;
   }
 }
 

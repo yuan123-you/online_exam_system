@@ -1,32 +1,26 @@
 <template>
   <aside class="chat-sidebar" :class="{ collapsed: !props.expanded }">
-    <!-- Expand button — visible only when collapsed -->
-    <button
-      v-if="!props.expanded"
-      class="sidebar-expand-btn"
-      @click="emit('update:expanded', true)"
-      title="展开侧栏"
-    >
-      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
-        <line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/>
-      </svg>
-    </button>
-
-    <template v-if="props.expanded">
-      <!-- Logo area with collapse button on the right -->
-      <div class="sidebar-brand">
+    <!-- Collapse/Expand toggle button — always visible -->
+    <div class="sidebar-brand">
+      <template v-if="props.expanded">
         <span class="brand-icon">🧠</span>
         <span class="brand-text">AI 助手</span>
-        <button
-          class="brand-collapse-btn"
-          @click="emit('update:expanded', false)"
-          title="收起侧栏"
-        >
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
-            <polyline points="15 6 9 12 15 18"/>
-          </svg>
-        </button>
-      </div>
+      </template>
+      <button
+        class="brand-collapse-btn"
+        @click="emit('update:expanded', !props.expanded)"
+        :title="props.expanded ? '收起侧栏' : '展开侧栏'"
+      >
+        <svg class="collapse-icon collapse-icon--chevron" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <polyline points="15 6 9 12 15 18"/>
+        </svg>
+        <svg class="collapse-icon collapse-icon--menu" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
+          <line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/>
+        </svg>
+      </button>
+    </div>
+
+    <template v-if="props.expanded">
 
       <!-- New chat -->
       <button class="new-chat-btn" @click="store.handleNewConversation(store.activeTab); emit('update:expanded', false)">
@@ -240,38 +234,15 @@ function onDelete(id: string) {
 }
 
 .chat-sidebar.collapsed {
-  width: 0;
-  min-width: 0;
-  border-right: none;
+  width: 48px;
+  min-width: 48px;
+  border-right: 1px solid #e5e7eb;
   overflow: visible;
-}
-
-/* ---- Sidebar toggle: top-left corner of chat-layout box ---- */
-/* Expand button when sidebar is collapsed */
-.sidebar-expand-btn {
-  width: 36px;
-  height: 36px;
-  border: 1px solid #e5e7eb;
-  border-radius: 8px;
-  background: #fff;
-  color: #6b7280;
-  cursor: pointer;
   display: flex;
+  flex-direction: column;
   align-items: center;
-  justify-content: center;
-  position: absolute;
-  top: 8px;
-  left: 8px;
-  z-index: 38;
-  box-shadow: 0 2px 6px rgba(0,0,0,0.08);
-  transition: all 0.15s;
+  padding-top: 0;
 }
-.sidebar-expand-btn:hover {
-  background: #f3f4f6;
-  color: #111827;
-  border-color: #9ca3af;
-}
-
 
 
 .sidebar-brand {
@@ -281,14 +252,19 @@ function onDelete(id: string) {
   padding: 16px 16px 12px;
 }
 
+.chat-sidebar.collapsed .sidebar-brand {
+  padding: 8px;
+  justify-content: center;
+}
+
 .brand-icon { font-size: 22px; }
 .brand-text { font-size: 15px; font-weight: 700; color: #111827; flex: 1; }
 
 .brand-collapse-btn {
-  width: 30px;
-  height: 30px;
-  border: 1px solid #e5e7eb;
-  border-radius: 8px;
+  width: 32px;
+  height: 32px;
+  border: 1px solid #d1d5db;
+  border-radius: 10px;
   background: #fff;
   color: #6b7280;
   cursor: pointer;
@@ -296,12 +272,53 @@ function onDelete(id: string) {
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  transition: all 0.15s;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  position: relative;
 }
 .brand-collapse-btn:hover {
   background: #f3f4f6;
   color: #111827;
-  border-color: #d1d5db;
+  border-color: #9ca3af;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+  transform: scale(1.05);
+}
+.brand-collapse-btn:active {
+  transform: scale(0.97);
+}
+
+/* Collapse icon — two icons stacked, cross-fade via opacity + rotation */
+.collapse-icon {
+  position: absolute;
+  width: 16px;
+  height: 16px;
+  transition: opacity 300ms cubic-bezier(0.4, 0, 0.2, 1),
+              transform 300ms cubic-bezier(0.4, 0, 0.2, 1),
+              color 300ms cubic-bezier(0.4, 0, 0.2, 1);
+  color: #6b7280;
+}
+.brand-collapse-btn:hover .collapse-icon {
+  color: #111827;
+}
+
+/* Expanded state: show chevron (collapse), hide menu */
+.collapse-icon--chevron {
+  opacity: 1;
+  transform: rotate(0deg);
+}
+.collapse-icon--menu {
+  opacity: 0;
+  transform: rotate(-90deg);
+}
+
+/* Collapsed state: show menu (expand), hide chevron */
+.chat-sidebar.collapsed .collapse-icon--chevron {
+  opacity: 0;
+  transform: rotate(-90deg);
+}
+.chat-sidebar.collapsed .collapse-icon--menu {
+  opacity: 1;
+  transform: rotate(0deg);
 }
 
 .new-chat-btn {
@@ -382,6 +399,10 @@ function onDelete(id: string) {
   overflow-y: auto;
   padding: 0 8px;
   scroll-behavior: smooth;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
+  scrollbar-color: #d1d5db transparent;
 }
 
 .history-section::-webkit-scrollbar { width: 4px; }
@@ -529,18 +550,16 @@ function onDelete(id: string) {
     transform: translateX(0);
   }
   .chat-sidebar.collapsed {
-    width: 240px;
+    width: 48px;
+    min-width: 48px;
     overflow: visible;
-    transform: translateX(-100%);
+    transform: translateX(0);
   }
 
-  /* Mobile: button peeks from left edge, smaller */
-  .sidebar-collapse {
-    border-radius: 0 8px 8px 0;
-    height: 48px;
-    width: 24px;
-    font-size: 12px;
+  .brand-collapse-btn {
+    width: 32px;
+    height: 32px;
+    border-radius: 8px;
   }
-  .sidebar-collapse:hover { width: 28px; }
 }
 </style>

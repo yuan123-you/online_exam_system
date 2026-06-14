@@ -68,9 +68,9 @@
 
     </aside>
 
-    <main class="main-panel">
-      <!-- Desktop topbar -->
-      <header class="topbar">
+    <main :class="['main-panel', { 'main-panel--full': isAiPractice }]">
+      <!-- Desktop topbar (hidden on AI assistant page for full-screen layout) -->
+      <header v-if="!isAiPractice" class="topbar">
         <div style="display:flex;align-items:center;gap:12px;">
           <button class="mobile-menu-btn" type="button" @click="sidebarOpen = !sidebarOpen">
             <svg viewBox="0 0 24 24"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
@@ -82,13 +82,13 @@
         </div>
       </header>
 
-      <section class="content-panel">
+      <section :class="['content-panel', { 'content-panel--full': isAiPractice }]">
         <router-view />
       </section>
     </main>
 
-    <!-- iOS Bottom Tab Bar (shown on mobile/tablet via CSS) -->
-    <nav class="ios-tab-bar">
+    <!-- iOS Bottom Tab Bar (shown on mobile/tablet via CSS, hidden on AI assistant page) -->
+    <nav v-if="!isAiPractice" class="ios-tab-bar">
       <div class="ios-tab-bar-inner">
         <button
           v-for="item in tabItems"
@@ -111,11 +111,13 @@ import { useRouter, useRoute } from 'vue-router'
 import { useAppStore } from '@/stores/app'
 import { roleLabel } from '@/utils/format'
 import { useDeviceType } from '@/composables/useDeviceType'
+import { useSmoothScroll } from '@/composables/useSmoothScroll'
 
 const router = useRouter()
 const route = useRoute()
 const store = useAppStore()
 const { isMobile } = useDeviceType()
+useSmoothScroll()
 
 const sidebarOpen = ref(false)
 const sidebarCollapsed = ref(false)
@@ -186,6 +188,8 @@ const activeMenuKey = computed(() => {
 })
 
 const activeItem = computed(() => store.menuItems.find((item) => item.key === activeMenuKey.value))
+
+const isAiPractice = computed(() => activeMenuKey.value === 'ai-practice')
 
 // Show up to 5 items in bottom tab bar (iOS convention)
 const tabItems = computed(() => store.menuItems.slice(0, 5))

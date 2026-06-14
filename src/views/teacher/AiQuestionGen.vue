@@ -67,7 +67,7 @@
               <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg>
             </button>
             <button v-else class="action-btn stop-action" @click="stopStreaming">
-              <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>
             </button>
           </div>
         </div>
@@ -118,8 +118,19 @@ const parsedQuestions = computed((): AiQuestion[] => {
       const jsonMatch = content.match(/\[[\s\S]*\]/)
       if (!jsonMatch) continue
       const parsed = JSON.parse(jsonMatch[0])
-      if (Array.isArray(parsed) && parsed.length > 0 && parsed[0].title) {
-        return parsed as AiQuestion[]
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        // Filter out entries with blank / placeholder titles (AI occasionally emits garbage first entry)
+        const filtered = parsed.filter((q: any) => q.title && q.title.trim() && q.title !== '...')
+        if (filtered.length > 0) {
+          // Enforce max 4 options for choice question types
+          const capped = filtered.map((q: any) => {
+            if (q.options && q.options.length > 4 && (q.type === 'single' || q.type === 'judge' || q.type === 'multiple')) {
+              return { ...q, options: q.options.slice(0, 4) }
+            }
+            return q
+          })
+          return capped as AiQuestion[]
+        }
       }
     } catch { continue }
   }
@@ -291,6 +302,10 @@ async function importSelected() {
   flex-direction: column;
   gap: 14px;
   scroll-behavior: smooth;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
+  scrollbar-color: #d1d5db transparent;
 }
 .msg-area::-webkit-scrollbar { width: 6px; }
 .msg-area::-webkit-scrollbar-track { background: transparent; }
@@ -349,7 +364,7 @@ async function importSelected() {
 /* Input */
 .bottom-area { flex-shrink: 0; border-top: 1px solid #f3f4f6; background: #fff; }
 .input-row { padding: 10px 16px; }
-.input-wrapper { position: relative; display: flex; align-items: flex-end; }
+.input-wrapper { position: relative; display: flex; align-items: flex-end; overflow: hidden; }
 .msg-input {
   width: 100%;
   padding: 12px 52px 12px 16px;
@@ -369,10 +384,10 @@ async function importSelected() {
   transition: all 0.15s; z-index: 2;
 }
 .send-action { background: #6366f1; color: #fff; }
-.send-action:hover:not(:disabled) { background: #4f46e5; transform: scale(1.06); }
+.send-action:hover:not(:disabled) { background: #4f46e5; transform: translateY(-50%) scale(1.06); }
 .send-action:disabled { opacity: 0.3; cursor: not-allowed; }
 .stop-action { background: #ef4444; color: #fff; }
-.stop-action:hover { background: #dc2626; }
+.stop-action:hover { background: #dc2626; transform: translateY(-50%) scale(1.06); }
 
 /* Ghost btn */
 .ghost-btn {

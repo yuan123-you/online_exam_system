@@ -51,6 +51,10 @@ import {
   deleteConversation,
   searchConversations,
   getUserPreferences,
+  getRecommendations,
+  getUserProfile,
+  logBehavior,
+  submitRecommendationFeedback,
 } from '@/api/client'
 import type {
   MonitorResult,
@@ -70,12 +74,72 @@ import type {
   ChatResult,
   UserPreference,
   SearchResultConversation,
+  RecommendationItem,
+  UserProfile,
 } from '@/api/client'
 
 export interface Toast {
   id: number
   message: string
   type: 'success' | 'error' | 'info'
+}
+
+/**
+ * 检测文本是否为 AI 思考/推理过程输出
+ * 通过匹配多个思考模式来避免误判
+ */
+function looksLikeThinking(text: string): boolean {
+  if (!text || text.length < 20) return false
+  const patterns = [
+    /分析/, /让我/, /好的[，，]?\s*我/, /我将/, /我们需要/,
+    /检查/, /起草/, /构建/, /组装/, /最终/, /自检/,
+    /步骤/, /考虑/, /优化/, /重读/, /尝试/, /看看/,
+    /约束/, /格式.*要求/, /示例.*输出/, /题\s*\d/,
+    /角色/, /任务/, /内容.*涵盖/, /严格遵循/,
+  ]
+  let matches = 0
+  for (const p of patterns) {
+    if (p.test(text)) matches++
+  }
+  return matches >= 2
+}
+
+/**
+ * 从 AI 响应内容中剥离思考/推理文本
+ * AI 模型有时会将思考过程输出到 content 字段而非 reasoning_content
+ * 此函数检测并剥离这些文本，将其移入 reasoning 字段
+ */
+function stripThinkingFromContent(raw: string): { content: string; thinking: string } {
+  if (!raw || raw.length < 30) return { content: raw, thinking: '' }
+
+  // 策略1：JSON 数组前有思考文本 — 剥离到第一个 [ 之前
+  const arrIdx = raw.search(/\[\s*\{/)
+  if (arrIdx > 0) {
+    const before = raw.substring(0, arrIdx).trim()
+    if (looksLikeThinking(before)) {
+      return { content: raw.substring(arrIdx), thinking: before }
+    }
+  }
+
+  // 策略2：JSON 对象前有思考文本 — 剥离到第一个 { 之前
+  const objIdx = raw.search(/\{\s*"/)
+  if (objIdx > 0) {
+    const before = raw.substring(0, objIdx).trim()
+    if (looksLikeThinking(before)) {
+      return { content: raw.substring(objIdx), thinking: before }
+    }
+  }
+
+  // 策略3：代码块前有思考文本 — 剥离到 ``` 之前
+  const codeIdx = raw.search(/```(?:json)?\s*\n/)
+  if (codeIdx > 0) {
+    const before = raw.substring(0, codeIdx).trim()
+    if (looksLikeThinking(before)) {
+      return { content: raw.substring(codeIdx), thinking: before }
+    }
+  }
+
+  return { content: raw, thinking: '' }
 }
 
 export const useAppStore = defineStore('app', () => {
@@ -173,6 +237,11 @@ export const useAppStore = defineStore('app', () => {
   // User preference state (personalized recommendations)
   const userPreferences = ref<UserPreference | null>(null)
   const preferencesLoading = ref(false)
+
+  // Recommendation state
+  const recommendations = ref<RecommendationItem[]>([])
+  const recommendationsLoading = ref(false)
+  const userProfile = ref<UserProfile | null>(null)
 
   // Deep thinking toggle
   const deepThinkingEnabled = ref(false)
@@ -458,6 +527,7 @@ export const useAppStore = defineStore('app', () => {
         bootstrap.value = await apiLoadBootstrap()
         handleLoadConversations() // load conversation history in background
         handleLoadPreferences()   // load user preferences for personalization
+        loadRecommendations()     // load personalized recommendations
       } catch {
         setCurrentAuthToken('')
         localStorage.removeItem('auth_token')
@@ -977,6 +1047,54 @@ export const useAppStore = defineStore('app', () => {
     }
   }
 
+  /** Load personalized recommendations and user profile */
+  async function loadRecommendations() {
+    if (!currentUser.value || recommendationsLoading.value) return
+    recommendationsLoading.value = true
+    try {
+      const [recResult, profile] = await Promise.all([
+        getRecommendations(),
+        getUserProfile(),
+      ])
+      recommendations.value = recResult.recommendations
+      userProfile.value = profile
+    } catch (err) {
+      console.warn('[Recommendations] Failed to load recommendations:', err)
+    } finally {
+      recommendationsLoading.value = false
+    }
+  }
+
+  /** Submit feedback on a recommendation */
+  async function submitFeedback(
+    recommendationType: string,
+    feedbackType: string,
+    detail?: string,
+  ) {
+    try {
+      await submitRecommendationFeedback({
+        recommendationType,
+        feedbackType,
+        feedbackDetail: detail,
+      })
+    } catch (err) {
+      console.warn('[Recommendations] Failed to submit feedback:', err)
+    }
+  }
+
+  /** Track user behavior (fire-and-forget) */
+  function trackBehavior(
+    action: string,
+    targetType?: string,
+    targetId?: string,
+    detail?: Record<string, unknown>,
+    durationMs?: number,
+  ) {
+    logBehavior({ action, targetType, targetId, detail, durationMs }).catch(() => {
+      // silently ignore behavior logging errors
+    })
+  }
+
   /** Search conversations by keyword */
   async function handleSearchConversations(keyword: string): Promise<SearchResultConversation[]> {
     if (!keyword.trim()) {
@@ -1136,22 +1254,28 @@ export const useAppStore = defineStore('app', () => {
 
     // Build context: include recent practice messages as cross-tab context
     let contextMessages = chatMessages.value.slice(0, -1)
-    const recentPractice = practiceMessages.value.filter(m => m.content).slice(-4)
+    const recentPractice = practiceMessages.value.filter(m => m.content).slice(-2)
     if (recentPractice.length > 0) {
       const practiceContext: ChatMessage[] = [
         { role: 'assistant', content: '[以下是该学生最近的练题记录，供参考了解其学习方向]' },
-        ...recentPractice,
+        ...recentPractice.map(m => ({ ...m, content: m.content.substring(0, 200) })),
       ]
       contextMessages = [...practiceContext, ...contextMessages]
     }
 
-    // Timeout warning: if no output after 20s, show slow hint
+    // Timeout warning: if no output after 5s, show slow hint
     if (chatTimeoutId) clearTimeout(chatTimeoutId)
     chatTimeoutId = setTimeout(() => {
       if (chatStreamingActive.value && !chatStreamingContent.value && !chatStreamingReasoning.value) {
-        chatMessages.value[aiMsgIndex].content = '⏳ AI 响应较慢，请耐心等待...'
+        chatMessages.value[aiMsgIndex].content = '⏳ 正在思考中，请稍候...'
       }
-    }, 8000)
+    }, 5000)
+    // Second timeout: more encouraging message
+    const chatTimeout2 = setTimeout(() => {
+      if (chatStreamingActive.value && !chatStreamingContent.value) {
+        chatMessages.value[aiMsgIndex].content = '⏳ 好答案值得等待，AI正在认真构思...'
+      }
+    }, 15000)
 
     chatAbortController = apiAiChatStream(
       { message, messages: contextMessages, deepThinking: deepThinkingEnabled.value },
@@ -1166,15 +1290,24 @@ export const useAppStore = defineStore('app', () => {
       },
       (data) => {
         if (chatTimeoutId) { clearTimeout(chatTimeoutId); chatTimeoutId = null }
+        clearTimeout(chatTimeout2)
         chatStreamingActive.value = false
         chatLoading.value = false
         if (data.content) {
-          chatMessages.value[aiMsgIndex].content = data.content
+          // 剥离 AI 思考文本，将其移入 reasoning 字段
+          const { content, thinking } = stripThinkingFromContent(data.content)
+          chatMessages.value[aiMsgIndex].content = content
+          if (thinking) {
+            const existing = data.reasoning || chatStreamingReasoning.value || ''
+            chatMessages.value[aiMsgIndex].reasoning = existing
+              ? thinking + '\n\n' + existing
+              : thinking
+          }
         }
         // Save reasoning for later review (collapsed fold)
-        if (data.reasoning) {
+        if (data.reasoning && !chatMessages.value[aiMsgIndex].reasoning) {
           chatMessages.value[aiMsgIndex].reasoning = data.reasoning
-        } else if (chatStreamingReasoning.value) {
+        } else if (!chatMessages.value[aiMsgIndex].reasoning && chatStreamingReasoning.value) {
           chatMessages.value[aiMsgIndex].reasoning = chatStreamingReasoning.value
         }
         // Compute response duration
@@ -1188,6 +1321,7 @@ export const useAppStore = defineStore('app', () => {
       },
       (error) => {
         if (chatTimeoutId) { clearTimeout(chatTimeoutId); chatTimeoutId = null }
+        clearTimeout(chatTimeout2)
         chatStreamingActive.value = false
         chatLoading.value = false
         const cleanError = (error || 'AI 请求失败，请稍后重试').replace(/^HTTP \d+: /, '')
@@ -1197,6 +1331,7 @@ export const useAppStore = defineStore('app', () => {
       },
       () => {
         if (chatTimeoutId) { clearTimeout(chatTimeoutId); chatTimeoutId = null }
+        clearTimeout(chatTimeout2)
         chatStreamingActive.value = false
         chatLoading.value = false
       }
@@ -1260,7 +1395,8 @@ export const useAppStore = defineStore('app', () => {
 
     practiceMessages.value.push({ role: 'user', content: message })
     const aiMsgIndex = practiceMessages.value.length
-    practiceMessages.value.push({ role: 'assistant', content: '' })
+    const startTime = Date.now()
+    practiceMessages.value.push({ role: 'assistant', content: '', _startedAt: startTime } as any)
 
     practiceStreamingContent.value = ''
     practiceStreamingReasoning.value = ''
@@ -1268,27 +1404,47 @@ export const useAppStore = defineStore('app', () => {
     practSessionLoading.value = true
 
     // Build enriched prompt: include recent chat context for smarter question generation
-    const recentChat = chatMessages.value.filter(m => m.content && m.role === 'user').slice(-3)
+    const recentChat = chatMessages.value.filter(m => m.content && m.role === 'user').slice(-2)
     let enrichedPrompt = message
     if (recentChat.length > 0) {
-      const chatTopics = recentChat.map(m => m.content).join('; ')
+      const chatTopics = recentChat.map(m => m.content.substring(0, 100)).join('; ')
       enrichedPrompt = `${message}\n\n[学生最近学习方向参考: ${chatTopics}]`
     }
 
     if (practiceTimeoutId) clearTimeout(practiceTimeoutId)
     practiceTimeoutId = setTimeout(() => {
       if (practiceStreamingActive.value && !practiceStreamingContent.value && !practiceStreamingReasoning.value) {
-        practiceMessages.value[aiMsgIndex].content = '⏳ AI 响应较慢，请耐心等待...'
+        practiceMessages.value[aiMsgIndex].content = '⏳ 正在为你精心出题，请稍候...'
       }
-    }, 8000)
+    }, 5000)
+    // Second timeout: show more encouraging message
+    const practiceTimeout2 = setTimeout(() => {
+      if (practiceStreamingActive.value && !practiceStreamingContent.value) {
+        practiceMessages.value[aiMsgIndex].content = '⏳ 题目生成中，好题值得等待...'
+      }
+    }, 15000)
+
+    // Smart extraction from user message: infer type/subject/difficulty/count
+    const inferredType = /多选/.test(message) ? 'multiple'
+      : /判断/.test(message) ? 'judge'
+      : /填空/.test(message) ? 'fill'
+      : /简答/.test(message) ? 'short'
+      : /编程|代码/.test(message) ? 'coding'
+      : /单选/.test(message) ? 'single'
+      : ''
+    const inferredDifficulty = /简单|基础|入门/.test(message) ? 'easy'
+      : /困难|较难|高难|挑战/.test(message) ? 'hard'
+      : ''
+    const countMatch = message.match(/(\d+)\s*道/)
+    const inferredCount = countMatch ? Math.min(parseInt(countMatch[1]), 20) : 0
 
     practiceAbortController = aiPracticeQuestionsStream(
       {
         customPrompt: enrichedPrompt,
         subject: '',
-        type: 'single',
-        difficulty: 'medium',
-        count: 5,
+        type: inferredType || 'single',
+        difficulty: inferredDifficulty || 'medium',
+        count: inferredCount || 5,
         deepThinking: false, // practice mode skips deep thinking — generate cards directly
       },
       (chunk) => {
@@ -1301,22 +1457,38 @@ export const useAppStore = defineStore('app', () => {
       },
       (data) => {
         if (practiceTimeoutId) { clearTimeout(practiceTimeoutId); practiceTimeoutId = null }
+        clearTimeout(practiceTimeout2)
         practiceStreamingActive.value = false
         practSessionLoading.value = false
         if (data.content) {
-          practiceMessages.value[aiMsgIndex].content = data.content
+          // 剥离 AI 思考文本，将其移入 reasoning 字段
+          const { content, thinking } = stripThinkingFromContent(data.content)
+          practiceMessages.value[aiMsgIndex].content = content
+          if (thinking) {
+            const existing = data.reasoning || practiceStreamingReasoning.value || ''
+            practiceMessages.value[aiMsgIndex].reasoning = existing
+              ? thinking + '\n\n' + existing
+              : thinking
+          }
         }
         // Save reasoning for later review (collapsed fold)
-        if (data.reasoning) {
+        if (data.reasoning && !practiceMessages.value[aiMsgIndex].reasoning) {
           practiceMessages.value[aiMsgIndex].reasoning = data.reasoning
-        } else if (practiceStreamingReasoning.value) {
+        } else if (!practiceMessages.value[aiMsgIndex].reasoning && practiceStreamingReasoning.value) {
           practiceMessages.value[aiMsgIndex].reasoning = practiceStreamingReasoning.value
+        }
+        // Compute response duration
+        const msg = practiceMessages.value[aiMsgIndex] as any
+        if (msg._startedAt) {
+          msg.duration = (Date.now() - msg._startedAt) / 1000
+          delete msg._startedAt
         }
         // Persist practice messages to conversation history
         handleSaveMessages(practiceMessages.value)
       },
       (error) => {
         if (practiceTimeoutId) { clearTimeout(practiceTimeoutId); practiceTimeoutId = null }
+        clearTimeout(practiceTimeout2)
         practiceStreamingActive.value = false
         practSessionLoading.value = false
         const cleanError = (error || 'AI 请求失败，请稍后重试').replace(/^HTTP \d+: /, '')
@@ -1326,6 +1498,7 @@ export const useAppStore = defineStore('app', () => {
       },
       () => {
         if (practiceTimeoutId) { clearTimeout(practiceTimeoutId); practiceTimeoutId = null }
+        clearTimeout(practiceTimeout2)
         practiceStreamingActive.value = false
         practSessionLoading.value = false
       }
@@ -1579,6 +1752,14 @@ export const useAppStore = defineStore('app', () => {
     userPreferences,
     preferencesLoading,
     handleLoadPreferences,
+
+    // Recommendations
+    recommendations,
+    recommendationsLoading,
+    userProfile,
+    loadRecommendations,
+    submitFeedback,
+    trackBehavior,
 
     // Practice (separate question generation session)
     practiceMessages,

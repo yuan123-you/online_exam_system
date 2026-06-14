@@ -10,7 +10,7 @@
         <button class="primary-btn" type="button" @click="store.openEditor('teacher', null)">新增教师</button>
       </div>
     </div>
-    <div class="table-wrap">
+    <div class="table-wrap mobile-card-table">
       <table>
         <thead>
           <tr>
@@ -22,13 +22,13 @@
         </thead>
         <tbody>
           <tr v-if="store.teachers.length === 0">
-            <td colspan="4" style="text-align:center;color:var(--muted);padding:32px;">暂无教师数据</td>
+            <td colspan="4" style="text-align:center;color:var(--muted);padding:20px;">暂无教师数据</td>
           </tr>
           <tr v-for="user in store.teachers" :key="user.id">
-            <td>{{ user.username }}</td>
-            <td><strong>{{ user.name }}</strong></td>
-            <td>{{ store.departmentName(user.departmentId) }}</td>
-            <td>
+            <td data-label="账号">{{ user.username }}</td>
+            <td data-label="姓名"><strong>{{ user.name }}</strong></td>
+            <td data-label="学院">{{ store.departmentName(user.departmentId) }}</td>
+            <td data-label="操作">
               <div class="action-row">
                 <button class="ghost-btn" type="button" @click="store.openEditor('teacher', user)">编辑</button>
                 <button class="danger-btn" type="button" @click="store.removeEntity('users', user.id)">删除</button>

@@ -10,24 +10,24 @@
         <button class="ghost-btn" type="button" @click="$router.push('/ai-questions')">AI 一键出题</button>
       </div>
     </div>
-    <div class="table-wrap">
+    <div class="table-wrap mobile-card-table">
       <table>
         <thead><tr><th>题型</th><th>科目</th><th>知识点</th><th>难度</th><th>题目</th><th>分值</th><th>操作</th></tr></thead>
         <tbody>
           <tr v-if="store.questionsLoading">
-            <td colspan="7" style="text-align:center;color:var(--muted);padding:32px;">加载中...</td>
+            <td colspan="7" style="text-align:center;color:var(--muted);padding:20px;">加载中...</td>
           </tr>
           <tr v-else-if="store.paginatedQuestions.length === 0">
-            <td colspan="7" style="text-align:center;color:var(--muted);padding:32px;">暂无题目，点击上方按钮新增或使用 AI 出题</td>
+            <td colspan="7" style="text-align:center;color:var(--muted);padding:20px;">暂无题目，点击上方按钮新增或使用 AI 出题</td>
           </tr>
           <tr v-for="(q, idx) in store.paginatedQuestions" :key="idx">
-            <td><span class="tag">{{ typeLabel((q.type as QuestionType) || 'single') }}</span></td>
-            <td>{{ q.subject }}</td>
-            <td>{{ q.knowledgePoint }}</td>
-            <td>{{ q.difficulty }}</td>
-            <td>{{ String(q.title || '').slice(0, 40) }}{{ String(q.title || '').length > 40 ? '...' : '' }}</td>
-            <td><strong style="color:var(--primary)">{{ q.score }}</strong></td>
-            <td>
+            <td data-label="题型"><span class="tag">{{ typeLabel((q.type as QuestionType) || 'single') }}</span></td>
+            <td data-label="科目">{{ q.subject }}</td>
+            <td data-label="知识点">{{ q.knowledgePoint }}</td>
+            <td data-label="难度">{{ q.difficulty }}</td>
+            <td data-label="题目">{{ String(q.title || '').slice(0, 40) }}{{ String(q.title || '').length > 40 ? '...' : '' }}</td>
+            <td data-label="分值"><strong style="color:var(--primary)">{{ q.score }}</strong></td>
+            <td data-label="操作">
               <div class="action-row">
                 <button class="ghost-btn" type="button" @click="store.openEditor('question', q)">编辑</button>
                 <button class="danger-btn" type="button" @click="store.removeEntity('questions', q.id as string)">删除</button>
