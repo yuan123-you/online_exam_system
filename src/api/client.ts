@@ -705,6 +705,7 @@ export interface Conversation {
   id: string;
   title: string;
   role: string;
+  sessionType?: string; // 'chat' | 'practice'
   createdAt: string;
   updatedAt: string;
 }
@@ -717,17 +718,17 @@ export function getConversationMessages(conversationId: string) {
   return request<{ messages: ChatMessage[] }>(`/api/chat/conversations/${conversationId}`);
 }
 
-export function createConversation(title?: string, role?: string) {
+export function createConversation(title?: string, role?: string, sessionType?: string) {
   return request<Conversation>('/api/chat/conversations', {
     method: 'POST',
-    body: JSON.stringify({ title: title || '新对话', role: role || 'student' }),
+    body: JSON.stringify({ title: title || '新对话', role: role || 'student', sessionType: sessionType || 'chat' }),
   });
 }
 
-export function appendConversationMessages(conversationId: string, messages: ChatMessage[]) {
+export function appendConversationMessages(conversationId: string, messages: ChatMessage[], sessionType?: string) {
   return request<{ saved: number }>(`/api/chat/conversations/${conversationId}/messages`, {
     method: 'POST',
-    body: JSON.stringify({ messages }),
+    body: JSON.stringify({ messages, sessionType: sessionType || '' }),
   });
 }
 

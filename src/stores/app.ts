@@ -177,6 +177,9 @@ export const useAppStore = defineStore('app', () => {
   // Deep thinking toggle
   const deepThinkingEnabled = ref(false)
 
+  // Current session tab ('chat' | 'practice')
+  const activeTab = ref<'chat' | 'practice'>('chat')
+
   // Quota state
   const quotaData = ref<QuotaResult | null>(null)
 
@@ -988,11 +991,13 @@ export const useAppStore = defineStore('app', () => {
     }
   }
 
-  /** Create a new conversation and switch to it */
-  async function handleNewConversation() {
+  /** Create a new conversation and switch to it, tagged with current tab */
+  async function handleNewConversation(sessionType?: string) {
     if (!currentUser.value) return
     try {
-      const conv = await createConversation('新对话')
+      const type = sessionType || activeTab.value
+      const conv = await createConversation('新对话', undefined, type)
+      conv.sessionType = type
       conversations.value.unshift(conv)
       activeConversationId.value = conv.id
       persistedCount[`chat:${conv.id}`] = 0
@@ -1004,11 +1009,17 @@ export const useAppStore = defineStore('app', () => {
     }
   }
 
-  /** Switch to a conversation and load its messages */
+  /** Switch to a conversation and load its messages, auto-switch tab based on sessionType */
   async function handleSwitchConversation(conversationId: string) {
     if (!currentUser.value || activeConversationId.value === conversationId) return
     conversationsLoading.value = true
     try {
+      // Find conversation metadata to determine session type
+      const conv = conversations.value.find(c => c.id === conversationId)
+      if (conv?.sessionType) {
+        activeTab.value = conv.sessionType as 'chat' | 'practice'
+      }
+
       const result = await getConversationMessages(conversationId)
       activeConversationId.value = conversationId
       // Deduplicate messages on load (fixes any pre-existing duplicates in DB)
@@ -1019,15 +1030,22 @@ export const useAppStore = defineStore('app', () => {
         seen.add(key)
         return true
       })
-      chatMessages.value = deduped.map(m => ({
+      // Load into the appropriate message array based on session type
+      const target = activeTab.value === 'practice' ? practiceMessages : chatMessages
+      target.value = deduped.map(m => ({
         role: m.role as 'user' | 'assistant',
         content: m.content,
         reasoning: m.reasoning,
       }))
-      // Mark all loaded messages as persisted (chat mode)
-      persistedCount[`chat:${conversationId}`] = chatMessages.value.length
-      persistedCount[`practice:${conversationId}`] = 0
-      practiceMessages.value = []
+      // Mark all loaded messages as persisted
+      persistedCount[`chat:${conversationId}`] = activeTab.value === 'chat' ? target.value.length : 0
+      persistedCount[`practice:${conversationId}`] = activeTab.value === 'practice' ? target.value.length : 0
+      // Clear the other array
+      if (activeTab.value === 'practice') {
+        chatMessages.value = []
+      } else {
+        practiceMessages.value = []
+      }
     } catch (err: any) {
       showToast(err?.message || '加载会话失败', 'error')
     } finally {
@@ -1047,7 +1065,8 @@ export const useAppStore = defineStore('app', () => {
     if (!activeConversationId.value) {
       try {
         if (!currentUser.value) return
-        const conv = await createConversation('新对话')
+        const conv = await createConversation('新对话', undefined, activeTab.value)
+        conv.sessionType = activeTab.value
         conversations.value.unshift(conv)
         activeConversationId.value = conv.id
       } catch (err: any) {
@@ -1068,7 +1087,7 @@ export const useAppStore = defineStore('app', () => {
     if (newMessages.length === 0) return
 
     try {
-      await appendConversationMessages(convId, newMessages)
+      await appendConversationMessages(convId, newMessages, activeTab.value)
       // Update persisted count for this mode+conversation
       persistedCount[modeKey] = msgs.length
       // Refresh conversation list to update title/time
@@ -1270,7 +1289,7 @@ export const useAppStore = defineStore('app', () => {
         type: 'single',
         difficulty: 'medium',
         count: 5,
-        deepThinking: deepThinkingEnabled.value,
+        deepThinking: false, // practice mode skips deep thinking — generate cards directly
       },
       (chunk) => {
         if (chunk.type === 'reasoning') {
@@ -1541,6 +1560,9 @@ export const useAppStore = defineStore('app', () => {
 
     // Deep thinking toggle
     deepThinkingEnabled,
+
+    // Current session tab
+    activeTab,
 
     // Conversation history
     conversations,

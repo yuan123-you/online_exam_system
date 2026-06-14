@@ -42,7 +42,7 @@
           :streaming-active="currentStreamingActive"
           :streaming-reasoning="currentStreamingReasoning"
           :loading="currentLoading"
-          :tab="activeTab === 0 ? 'chat' : 'practice'"
+          :tab="activeTab"
         />
       </div>
 
@@ -109,7 +109,9 @@ import ChatSidebar from './AiPractice/ChatSidebar.vue'
 
 const store = useAppStore()
 
-const activeTab = ref<'chat' | 'practice'>('chat')
+const activeTab = ref<'chat' | 'practice'>(store.activeTab || 'chat')
+// Keep store in sync with local tab
+watch(activeTab, (val) => { store.activeTab = val })
 const sidebarExpanded = ref(window.innerWidth > 768)
 const inputText = ref('')
 const msgList = ref<HTMLElement | null>(null)
@@ -174,7 +176,7 @@ const recentThemes = computed(() => {
 
 function switchTab(tab: 'chat' | 'practice') {
   activeTab.value = tab
-  nextTick(() => smoothScrollToBottom(300))
+  nextTick(() => scrollToBottom(300))
 }
 
 function send(text: string) {
@@ -212,56 +214,28 @@ function autoResize() {
   }
 }
 
-// Scroll — smooth even during streaming, targeting the outer page scroll container
-let scrollRafId: number | null = null
-let scrollTarget = 0
-
-watch(() => currentMessages.value.length, () => nextTick(() => smoothScrollToBottom(400)))
+// Scroll — instant during streaming (no jitter), smooth for new messages
+watch(() => currentMessages.value.length, () => nextTick(() => scrollToBottom(300)))
 watch(() => activeTab.value === 'chat' ? store.chatStreamingContent : store.practiceStreamingContent,
-  () => smoothScrollToBottom(250))
+  () => scrollToBottom(0))  // instant during streaming — no animation jitter
+watch(() => activeTab.value === 'chat' ? store.chatStreamingReasoning : store.practiceStreamingReasoning,
+  () => scrollToBottom(0))
 
-/** Find the scrollable ancestor (content-panel) and scroll it smoothly */
+/** Find the scrollable element (.chat-main which has overflow-y:auto) */
 function getScrollContainer(): HTMLElement | null {
-  // Walk up from chat-layout to find .content-panel which has overflow:auto
-  const chatLayout = msgList.value?.closest('.chat-layout') as HTMLElement | null
-  if (!chatLayout) return null
-  return chatLayout.closest('.content-panel') as HTMLElement | null
+  return msgList.value?.closest('.chat-main') as HTMLElement | null
 }
 
-function smoothScrollToBottom(duration: number) {
+function scrollToBottom(duration: number) {
   const el = getScrollContainer()
   if (!el) return
-  scrollTarget = el.scrollHeight
-  // Cancel previous animation and start fresh from current position
-  if (scrollRafId !== null) {
-    cancelAnimationFrame(scrollRafId)
-    scrollRafId = null
-  }
-  const start = el.scrollTop
-  // Don't animate tiny deltas — jump directly
-  if (scrollTarget - start < 20) {
-    el.scrollTop = scrollTarget
+  if (duration <= 0) {
+    // Instant snap — no animation jitter during rapid streaming updates
+    el.scrollTop = el.scrollHeight
     return
   }
-  // Cap max scroll distance per animation to avoid large jumps
-  const cappedTarget = Math.min(scrollTarget, start + 200)
-  const startTime = performance.now()
-  function animate(now: number) {
-    if (!el) return
-    const elapsed = now - startTime
-    const progress = Math.min(elapsed / duration, 1)
-    // easeOutQuad — gentler deceleration
-    const ease = 1 - (1 - progress) * (1 - progress)
-    el.scrollTop = start + (cappedTarget - start) * ease
-    if (progress < 1) {
-      scrollRafId = requestAnimationFrame(animate)
-    } else {
-      // Final snap to true bottom
-      el.scrollTop = scrollTarget
-      scrollRafId = null
-    }
-  }
-  scrollRafId = requestAnimationFrame(animate)
+  // Smooth scroll for new message arrival
+  el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' })
 }
 </script>
 
@@ -269,18 +243,19 @@ function smoothScrollToBottom(duration: number) {
 /* ===== Layout ===== */
 .chat-layout {
   display: flex;
-  flex-direction: column;
-  min-height: calc(100vh - 180px); /* ensure minimum height for welcome state */
+  flex-direction: row;
+  height: calc(100vh - 180px);
   background: #fff;
   border: 1px solid #e5e7eb;
   border-radius: 12px;
-  overflow: visible;
+  overflow: hidden;
   position: relative;
 }
 
-/* Hide custom scrollbar from inner elements */
+/* Hide custom scrollbar from inner elements — outer .content-panel handles scrolling */
 .chat-layout::-webkit-scrollbar { display: none; }
 .chat-main::-webkit-scrollbar { display: none; }
+.msg-area::-webkit-scrollbar { display: none; }
 
 /* ===== Messages ===== */
 .msg-area {
@@ -299,6 +274,8 @@ function smoothScrollToBottom(duration: number) {
   display: flex;
   flex-direction: column;
   background: #fff;
+  overflow-y: auto;
+  overflow-x: hidden;
 }
 
 /* ===== Top bar ===== */
@@ -410,18 +387,19 @@ function smoothScrollToBottom(duration: number) {
 
 .msg-input {
   width: 100%;
-  padding: 12px 52px 12px 16px;  /* right padding for button */
+  padding: 14px 52px 14px 18px;  /* right padding for button */
   border: 2px solid #e5e7eb;
   border-radius: 14px;
-  font-size: 14px;
+  font-size: 15px;
   font-family: inherit;
-  line-height: 1.5;
+  line-height: 1.6;
   resize: none;
   outline: none;
   background: #f9fafb;
   color: #111827;
-  max-height: 150px;
-  transition: border-color 0.15s, box-shadow 0.15s;
+  min-height: 48px;
+  max-height: 200px;
+  transition: border-color 0.15s, box-shadow 0.15s, background 0.15s;
 }
 .msg-input:focus {
   border-color: #6366f1;

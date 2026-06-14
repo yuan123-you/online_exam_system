@@ -530,6 +530,12 @@ public class AiService {
    */
   public void callAiApiStream(String systemPrompt, String userPrompt, boolean thinkingEnabled,
                                org.springframework.web.servlet.mvc.method.annotation.SseEmitter emitter) {
+    callAiApiStream(systemPrompt, userPrompt, thinkingEnabled, 0.9, emitter);
+  }
+
+  public void callAiApiStream(String systemPrompt, String userPrompt, boolean thinkingEnabled,
+                               double temperature,
+                               org.springframework.web.servlet.mvc.method.annotation.SseEmitter emitter) {
     if (apiKey == null || apiKey.isBlank()) {
       try { emitter.send(SseEmitter.event().name("error").data("{\"error\":\"AI API密钥未配置\"}")); emitter.complete(); }
       catch (Exception ignored) {}
@@ -559,8 +565,8 @@ public class AiService {
           java.util.Map.of("role", "system", "content", systemPrompt),
           java.util.Map.of("role", "user", "content", userPrompt)
         ));
-        reqBody.put("temperature", 0.9);
-        reqBody.put("max_tokens", 4096);
+        reqBody.put("temperature", temperature);
+        reqBody.put("max_tokens", 32768);
         reqBody.put("stream", true);
         if (thinkingEnabled) {
           reqBody.put("thinking", java.util.Map.of("type", "enabled"));
@@ -630,6 +636,13 @@ public class AiService {
                     ? String.valueOf(delta.get("reasoning_content")) : "";
                   String content = delta.containsKey("content") && delta.get("content") != null
                     ? String.valueOf(delta.get("content")) : "";
+
+                  // When deep thinking is disabled, redirect reasoning_content to content
+                  // (GLM models sometimes send reasoning_content even without thinking enabled)
+                  if (!thinkingEnabled && content.isEmpty() && !reasoningContent.isEmpty()) {
+                    content = reasoningContent;
+                    reasoningContent = "";
+                  }
 
                   if (!reasoningContent.isEmpty()) {
                     reasoningBuilder.append(reasoningContent);
@@ -710,20 +723,20 @@ public class AiService {
 
     if (!customPrompt.isBlank()) {
       systemPrompt = """
-        出题专家兼教学辅导老师。请严格按照以下JSON格式输出题目数组，不要用markdown包裹，直接输出纯JSON：
-        [{
-          "title": "题目描述（清晰准确，必要时可包含背景信息）",
-          "type": "single|multiple|judge|fill|short|coding",
-          "options": ["A.选项1", "B.选项2", "C.选项3", "D.选项4"],
-          "answer": ["A"],
-          "score": 5,
-          "explanation": "【答案】X\\n【解析】详细的解题过程和思路，包含关键知识点、公式推导或概念解释。对于选择题说明每个选项的对错原因。"
-        }]
-        要求：
-        1. 每道题的explanation必须详细完整，包含【答案】和【解析】两部分
-        2. 解析要有教学性，让学生看完能真正理解知识点
-        3. 选项以A./B./C./D.开头
-        4. answer数组存放正确选项的字母，如["A"]或["A","C"]""";
+You are a strict JSON question generator. Output ONLY a valid JSON array — no markdown, no explanation outside JSON, no trailing commas. Every field must use double quotes. Escape newlines as \\n inside strings.
+
+Format exactly:
+[{"title":"题目","type":"single","options":["A.选项","B.选项","C.选项","D.选项"],"answer":["A"],"score":5,"explanation":"【答案】A\\n【解析】详细解析"}]
+
+RULES:
+- type: one of single/multiple/judge/fill/short/coding
+- single/judge: 4 options A-D, answer is one letter like ["A"]
+- multiple: 4 options A-D, answer can be multiple like ["A","C"]
+- fill/short/coding: options=[], answer is the correct text
+- explanation MUST escape newlines as \\n, use 【答案】 and 【解析】 sections
+- NO trailing commas before ] or }
+- ALL strings double-quoted, NO unquoted keys
+- Output the JSON array DIRECTLY, nothing else""";
       userPrompt = customPrompt;
     } else {
       String subject = str(body, "subject");
@@ -743,25 +756,30 @@ public class AiService {
       };
 
       systemPrompt = """
-        出题专家兼教学辅导老师。请严格按照以下JSON格式输出题目数组，不要用markdown包裹，直接输出纯JSON：
-        [{
-          "title": "题目描述",
-          "type": "single|multiple|judge|fill|short|coding",
-          "options": ["A.选项1", "B.选项2", "C.选项3", "D.选项4"],
-          "answer": ["A"],
-          "score": 5,
-          "explanation": "【答案】X\\n【解析】详细的解题过程和思路"
-        }]
-        要求：explanation必须详细完整，包含【答案】和【解析】两部分。解析要有教学性。选项以A./B./C./D.开头。""";
+You are a strict JSON question generator. Output ONLY a valid JSON array — no markdown, no explanation outside JSON, no trailing commas. Every field must use double quotes. Escape newlines as \\n inside strings.
+
+Format exactly:
+[{"title":"题目","type":"single","options":["A.选项","B.选项","C.选项","D.选项"],"answer":["A"],"score":5,"explanation":"【答案】A\\n【解析】详细解析"}]
+
+RULES:
+- type: one of single/multiple/judge/fill/short/coding
+- single/judge: 4 options A-D, answer is one letter like ["A"]
+- multiple: 4 options A-D, answer can be multiple like ["A","C"]
+- fill/short/coding: options=[], answer is the correct text
+- explanation MUST escape newlines as \\n, use 【答案】 and 【解析】 sections
+- NO trailing commas before ] or }
+- ALL strings double-quoted, NO unquoted keys
+- Output the JSON array DIRECTLY, nothing else""";
 
       userPrompt = String.format(
-        "请生成 %d 道关于「%s」的%s练习题，难度为「%s」。每题都要包含详细解析。",
+        "生成 %d 道关于「%s」的%s练习题，难度%s。每题含详细解析。只输出JSON数组。",
         count, subject.isBlank() ? "计算机基础" : subject, typeChinese, difficultyChinese
       );
     }
 
     boolean deepThinking = Boolean.TRUE.equals(body.get("deepThinking"));
-    callAiApiStream(systemPrompt, userPrompt, deepThinking, emitter);
+    // Use low temperature (0.3) for more deterministic JSON output
+    callAiApiStream(systemPrompt, userPrompt, deepThinking, 0.3, emitter);
   }
 
   /**
@@ -966,7 +984,7 @@ public class AiService {
       Map.of("role", "user", "content", userPrompt)
     ));
     requestBody.put("temperature", 0.9);
-    requestBody.put("max_tokens", 4096);
+    requestBody.put("max_tokens", 32768);
 
     HttpEntity<Map<String, Object>> entity = new HttpEntity<>(requestBody, headers);
 

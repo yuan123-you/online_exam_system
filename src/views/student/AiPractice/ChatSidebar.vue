@@ -1,15 +1,36 @@
 <template>
   <aside class="chat-sidebar" :class="{ collapsed: !props.expanded }">
+    <!-- Expand button — visible only when collapsed -->
+    <button
+      v-if="!props.expanded"
+      class="sidebar-expand-btn"
+      @click="emit('update:expanded', true)"
+      title="展开侧栏"
+    >
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
+        <line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/>
+      </svg>
+    </button>
+
     <template v-if="props.expanded">
-      <!-- Logo area -->
+      <!-- Logo area with collapse button on the right -->
       <div class="sidebar-brand">
         <span class="brand-icon">🧠</span>
         <span class="brand-text">AI 助手</span>
+        <button
+          class="brand-collapse-btn"
+          @click="emit('update:expanded', false)"
+          title="收起侧栏"
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
+            <polyline points="15 6 9 12 15 18"/>
+          </svg>
+        </button>
       </div>
 
       <!-- New chat -->
-      <button class="new-chat-btn" @click="store.handleNewConversation(); emit('update:expanded', false)">
-        <span class="nc-icon">➕</span> 新对话
+      <button class="new-chat-btn" @click="store.handleNewConversation(store.activeTab); emit('update:expanded', false)">
+        <span class="nc-icon">➕</span> 新{{ store.activeTab === 'practice' ? '练题' : '对话' }}
       </button>
 
       <!-- Search bar -->
@@ -45,10 +66,15 @@
                 :class="['conv-item', { active: conv.id === store.activeConversationId }]"
                 @click="store.handleSwitchConversation(conv.id); emit('update:expanded', false)"
               >
-                <span class="ci-icon">💬</span>
+                <span class="ci-icon">{{ conv.sessionType === 'practice' ? '📝' : '💬' }}</span>
                 <span class="ci-text">
                   <span class="ci-title" :title="conv.title">{{ conv.title }}</span>
-                  <span class="ci-time">{{ formatTime(conv.updatedAt) }}</span>
+                  <span class="ci-meta-row">
+                    <span class="ci-badge" :class="conv.sessionType === 'practice' ? 'badge-practice' : 'badge-chat'">
+                      {{ conv.sessionType === 'practice' ? '练题' : '对话' }}
+                    </span>
+                    <span class="ci-time">{{ formatTime(conv.updatedAt) }}</span>
+                  </span>
                 </span>
                 <button class="ci-delete" title="删除" @click.stop="onDelete(conv.id)">×</button>
               </button>
@@ -69,13 +95,18 @@
               :class="['conv-item', { active: conv.id === store.activeConversationId }]"
               @click="store.handleSwitchConversation(conv.id); emit('update:expanded', false)"
             >
-              <span class="ci-icon">💬</span>
+              <span class="ci-icon">{{ conv.sessionType === 'practice' ? '📝' : '💬' }}</span>
               <span class="ci-text">
                 <span class="ci-title" :title="conv.title">{{ conv.title }}</span>
                 <span v-if="conv.snippets && conv.snippets.length > 0" class="ci-snippet">
                   {{ conv.snippets[0] }}
                 </span>
-                <span class="ci-time">{{ formatTime(conv.updatedAt) }}</span>
+                <span class="ci-meta-row">
+                  <span class="ci-badge" :class="conv.sessionType === 'practice' ? 'badge-practice' : 'badge-chat'">
+                    {{ conv.sessionType === 'practice' ? '练题' : '对话' }}
+                  </span>
+                  <span class="ci-time">{{ formatTime(conv.updatedAt) }}</span>
+                </span>
               </span>
               <button class="ci-delete" title="删除" @click.stop="onDelete(conv.id)">×</button>
             </button>
@@ -84,10 +115,7 @@
       </div>
     </template>
 
-    <!-- Collapse toggle -->
-    <button class="sidebar-collapse" @click="emit('update:expanded', !props.expanded)" :title="props.expanded ? '收起侧栏' : '展开侧栏'">
-      {{ props.expanded ? '◀' : '▶' }}
-    </button>
+
   </aside>
 </template>
 
@@ -206,6 +234,7 @@ function onDelete(id: string) {
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  height: 100%; /* fill parent height */
   transition: width 0.2s;
   position: relative;
 }
@@ -217,27 +246,33 @@ function onDelete(id: string) {
   overflow: visible;
 }
 
-.sidebar-collapse {
-  position: absolute;
-  top: 50%;
-  right: -18px;
-  transform: translateY(-50%);
+/* ---- Sidebar toggle: top-left corner of chat-layout box ---- */
+/* Expand button when sidebar is collapsed */
+.sidebar-expand-btn {
   width: 36px;
-  height: 56px;
+  height: 36px;
   border: 1px solid #e5e7eb;
-  border-radius: 0 8px 8px 0;
+  border-radius: 8px;
   background: #fff;
   color: #6b7280;
-  font-size: 15px;
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 10;
-  box-shadow: 2px 0 6px rgba(0,0,0,0.06);
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  z-index: 38;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.08);
   transition: all 0.15s;
 }
-.sidebar-collapse:hover { background: #f3f4f6; color: #111827; box-shadow: 2px 0 10px rgba(0,0,0,0.1); }
+.sidebar-expand-btn:hover {
+  background: #f3f4f6;
+  color: #111827;
+  border-color: #9ca3af;
+}
+
+
 
 .sidebar-brand {
   display: flex;
@@ -247,7 +282,27 @@ function onDelete(id: string) {
 }
 
 .brand-icon { font-size: 22px; }
-.brand-text { font-size: 15px; font-weight: 700; color: #111827; }
+.brand-text { font-size: 15px; font-weight: 700; color: #111827; flex: 1; }
+
+.brand-collapse-btn {
+  width: 30px;
+  height: 30px;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  background: #fff;
+  color: #6b7280;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: all 0.15s;
+}
+.brand-collapse-btn:hover {
+  background: #f3f4f6;
+  color: #111827;
+  border-color: #d1d5db;
+}
 
 .new-chat-btn {
   margin: 0 12px 8px;
@@ -413,6 +468,24 @@ function onDelete(id: string) {
   font-style: italic;
 }
 
+/* Session type badge */
+.ci-meta-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 2px;
+}
+
+.ci-badge {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-weight: 500;
+  flex-shrink: 0;
+}
+.badge-chat { background: #ede9fe; color: #7c3aed; }
+.badge-practice { background: #dbeafe; color: #2563eb; }
+
 .ci-time {
   font-size: 11px;
   color: #9ca3af;
@@ -461,14 +534,13 @@ function onDelete(id: string) {
     transform: translateX(-100%);
   }
 
-  /* Button peeks from left viewport edge when collapsed */
+  /* Mobile: button peeks from left edge, smaller */
   .sidebar-collapse {
-    right: -30px;
-    left: auto;
     border-radius: 0 8px 8px 0;
-    height: 52px;
-    width: 30px;
-    font-size: 14px;
+    height: 48px;
+    width: 24px;
+    font-size: 12px;
   }
+  .sidebar-collapse:hover { width: 28px; }
 }
 </style>

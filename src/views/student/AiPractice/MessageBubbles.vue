@@ -64,10 +64,6 @@
       >
         <div class="exam-header">
           <span class="exam-title">📋 练习题（共 {{ parsedQuestions(idx).length }} 题）</span>
-          <button v-if="!submitted[idx]" class="exam-submit" @click="submitAnswers(idx)">交卷</button>
-          <span v-else class="exam-score">
-            得分：{{ scoreSummary(idx) }}
-          </span>
         </div>
 
         <div v-for="(q, qi) in parsedQuestions(idx)" :key="qi" class="exam-question">
@@ -147,6 +143,18 @@
             </div>
           </div>
         </div>
+
+        <!-- Footer: submit button / score at the bottom -->
+        <div class="exam-footer">
+          <button v-if="!submitted[idx]" class="exam-submit" @click="submitAnswers(idx)">
+            📝 提交答案
+          </button>
+          <div v-else class="exam-score-summary">
+            <span class="ess-badge" :class="{ pass: scorePercent(idx) >= 60, fail: scorePercent(idx) < 60 }">
+              {{ scorePercent(idx) >= 60 ? '✅' : '❌' }} {{ scoreSummary(idx) }}
+            </span>
+          </div>
+        </div>
       </div>
     </div>
     <div v-if="msg.role === 'user'" class="bubble-avatar user-avatar">👤</div>
@@ -158,6 +166,7 @@ import { reactive, ref } from 'vue'
 import { useAppStore } from '@/stores/app'
 import { typeLabel } from '@/utils/format'
 import type { AiQuestion } from '@/api/client'
+import { savePracticeRecords } from '@/api/client'
 
 const props = defineProps<{
   messages: Array<{ role: string; content: string; reasoning?: string; duration?: number; _retryMessage?: string }>
@@ -341,10 +350,62 @@ function parsedQuestions(msgIdx: number): AiQuestion[] {
   if (Array.isArray(parsed) && parsed.length > 0 && parsed[0].title) {
     return parsed as AiQuestion[]
   }
+
+  // Last resort: regex-based extraction of individual question objects
+  const regexExtracted = extractQuestionsByRegex(content)
+  if (regexExtracted.length > 0) return regexExtracted
+
   return []
 }
 
-/** Parse JSON with recovery: trailing commas, unescaped newlines in strings */
+/** Last-resort: regex-based extraction of individual question objects from malformed text */
+function extractQuestionsByRegex(text: string): AiQuestion[] {
+  const questions: AiQuestion[] = []
+  // Match individual question blocks by looking for title/type/options/answer patterns
+  const blockRegex = /\{\s*"title"\s*:\s*"([^"]*(?:\\.[^"]*)*)"\s*,\s*"type"\s*:\s*"([^"]*)"\s*,\s*"options"\s*:\s*\[(.*?)\]\s*,\s*"answer"\s*:\s*\[(.*?)\]\s*,\s*"score"\s*:\s*(\d+)\s*,\s*"explanation"\s*:\s*"([^"]*(?:\\.[^"]*)*)"/gs
+  let match
+  while ((match = blockRegex.exec(text)) !== null) {
+    try {
+      const title = match[1].replace(/\\"/g, '"').replace(/\\n/g, '\n')
+      const type = match[2]
+      const optionsRaw = match[3]
+      const answerRaw = match[4]
+      const score = parseInt(match[5]) || 5
+      const explanation = match[6].replace(/\\"/g, '"').replace(/\\n/g, '\n')
+
+      // Parse options: "A.xxx","B.yyy"
+      const options: string[] = []
+      const optRegex = /"([^"]*(?:\\.[^"]*)*)"/g
+      let optMatch
+      while ((optMatch = optRegex.exec(optionsRaw)) !== null) {
+        options.push(optMatch[1].replace(/\\"/g, '"'))
+      }
+
+      // Parse answer
+      const answer: string[] = []
+      const ansRegex = /"([^"]*)"/g
+      let ansMatch
+      while ((ansMatch = ansRegex.exec(answerRaw)) !== null) {
+        answer.push(ansMatch[1])
+      }
+
+      if (title && type) {
+        questions.push({
+          id: `q-${questions.length}-${Date.now()}`,
+          title, type: type as AiQuestion['type'],
+          options, answer,
+          score, explanation,
+          subject: 'AI练习',
+          knowledgePoint: title.substring(0, 30),
+          difficulty: 'medium',
+        })
+      }
+    } catch { /* skip malformed block */ }
+  }
+  return questions
+}
+
+/** Parse JSON with recovery: trailing commas, unescaped newlines, smart quotes */
 function tryParseJson(raw: string): unknown {
   // Attempt 1: direct parse
   try { return JSON.parse(raw) } catch { /* continue */ }
@@ -355,13 +416,52 @@ function tryParseJson(raw: string): unknown {
     return JSON.parse(cleaned)
   } catch { /* continue */ }
 
-  // Attempt 3: try to fix unescaped quotes in strings (common AI mistake)
+  // Attempt 3: fix common AI output issues (smart quotes, Chinese commas)
   try {
-    // Replace smart quotes with straight quotes
     const fixed = raw
       .replace(/[\u201C\u201D]/g, '"')
       .replace(/[\u2018\u2019]/g, "'")
-      .replace(/，/g, ',')  // Chinese commas in JSON
+      .replace(/，/g, ',')
+    return JSON.parse(fixed)
+  } catch { /* continue */ }
+
+  // Attempt 4: escape literal newlines inside JSON strings
+  try {
+    let escaped = ''
+    let inString = false
+    let isEscaped = false
+    for (let i = 0; i < raw.length; i++) {
+      const ch = raw[i]
+      if (isEscaped) { escaped += ch; isEscaped = false; continue }
+      if (ch === '\\') { escaped += ch; isEscaped = true; continue }
+      if (ch === '"') { inString = !inString; escaped += ch; continue }
+      if (inString && ch === '\n') { escaped += '\\n'; continue }
+      if (inString && ch === '\r') { continue }
+      if (inString && ch === '\t') { escaped += '\\t'; continue }
+      escaped += ch
+    }
+    const cleaned = escaped.replace(/,\s*([}\]])/g, '$1')
+    return JSON.parse(cleaned)
+  } catch { /* continue */ }
+
+  // Attempt 5: fix missing opening braces before each question object
+  try {
+    let fixed = raw
+    // Each question object must start with {"title":
+    // Fix patterns like: "title": → {"title":
+    fixed = fixed.replace(/(?<!\\)"title"\s*:/g, '{"title":')
+    // Fix missing [ before first option value (e.g., "options":A. → "options":["A.)
+    fixed = fixed.replace(/"options"\s*:\s*([A-D]\.[^",\]\}]+)/g, '"options":["$1"]')
+    // Fix unquoted option strings in arrays: ,B. xxx → ,"B. xxx"
+    fixed = fixed.replace(/\[\s*([A-D]\.[^",\]]+?)(\s*,|\s*\])/g, '["$1"$2')
+    fixed = fixed.replace(/,\s*([A-D]\.[^",\]]+?)(\s*,|\s*\])/g, ',"$1"$2')
+    // Fix missing commas between } and { (squashed objects)
+    fixed = fixed.replace(/\}\s*\{/g, '},{')
+    // Wrap in array if not already
+    if (!fixed.trim().startsWith('[')) fixed = '[' + fixed + ']'
+    if (!fixed.trim().endsWith(']')) fixed = fixed.trim() + ']'
+    // Normalize trailing commas
+    fixed = fixed.replace(/,\s*([}\]])/g, '$1')
     return JSON.parse(fixed)
   } catch { /* continue */ }
 
@@ -419,10 +519,24 @@ function scoreSummary(msgIdx: number): string {
   return `${correct}/${qs.length} 题正确，${earned}/${totalScore} 分`
 }
 
-function submitAnswers(msgIdx: number) {
+function scorePercent(msgIdx: number): number {
+  if (!results[msgIdx]) return 0
+  const qs = parsedQuestions(msgIdx)
+  let totalScore = 0; let earned = 0
+  for (let qi = 0; qi < qs.length; qi++) {
+    totalScore += (qs[qi].score || 5)
+    if (results[msgIdx][qi]) earned += (qs[qi].score || 5)
+  }
+  return totalScore > 0 ? Math.round((earned / totalScore) * 100) : 0
+}
+
+async function submitAnswers(msgIdx: number) {
   const qs = parsedQuestions(msgIdx)
   submitted[msgIdx] = true
   if (!results[msgIdx]) results[msgIdx] = {}
+
+  const records: Array<Record<string, unknown>> = []
+  const now = new Date().toISOString()
 
   for (let qi = 0; qi < qs.length; qi++) {
     const q = qs[qi]
@@ -433,7 +547,24 @@ function submitAnswers(msgIdx: number) {
       student = (answers[msgIdx]?.[qi] || []).sort()
     }
     const correct = (q.answer || []).sort()
-    results[msgIdx][qi] = JSON.stringify(student.sort()) === JSON.stringify(correct.sort())
+    const isCorrect = JSON.stringify(student.sort()) === JSON.stringify(correct.sort())
+    results[msgIdx][qi] = isCorrect
+
+    // Build practice record with unique ID, timestamp, and question annotation
+    records.push({
+      questionId: q.id || `practice-${msgIdx}-${qi}`,
+      subject: q.subject || 'AI练习',
+      knowledgePoint: q.knowledgePoint || (q.title || '').substring(0, 30),
+      type: q.type || 'single',
+      title: q.title || '',
+      answer: student,
+      expectedAnswer: q.answer || [],
+      fullScore: q.score || 5,
+      lastScore: isCorrect ? (q.score || 5) : 0,
+      lastRetryCorrect: isCorrect,
+      wrongCount: isCorrect ? 0 : 1,
+      lastWrongAt: now,
+    })
   }
 
   // Auto-expand explanations for all questions after submission
@@ -443,7 +574,16 @@ function submitAnswers(msgIdx: number) {
   }
 
   const cc = Object.values(results[msgIdx]).filter(Boolean).length
+
+  // Auto-save to practice records (async, non-blocking)
+  savePracticeRecordsSilent(records)
+
   store.showToast(`练习完成！正确 ${cc}/${qs.length}`, cc === qs.length ? 'success' : 'info')
+}
+
+/** Auto-save practice records without showing errors to user */
+function savePracticeRecordsSilent(records: Array<Record<string, unknown>>) {
+  savePracticeRecords(records).catch(() => {})
 }
 
 // ---- Markdown rendering ----
@@ -455,36 +595,36 @@ function renderContent(text: string, role: string, idx: number): string {
 
   // --- Practice mode: detect and hide raw JSON question data ---
   if (isPractice) {
-    const jsonRange = findJsonRange(text)
-
-    if (jsonRange) {
-      // JSON found — extract surrounding text (before/after the JSON block)
-      const before = text.substring(0, jsonRange.start).trim()
-      const after = text.substring(jsonRange.end).trim()
-      const nonJson = (before + ' ' + after).trim()
-
-      if (nonJson) {
-        // There's explanatory text alongside the JSON — render that
-        return renderMarkdown(nonJson)
-      }
-
-      // Entire content is just the JSON array
-      if (isStreaming) {
-        // Still generating — show animated placeholder
-        return '<div class="generating-hint">📝 正在生成题目<span class="gen-dots">...</span></div>'
-      }
-      // Streaming complete, questions are parsed and displayed as cards below
+    // First, check if cards were already parsed successfully (non-streaming, content present)
+    if (!isStreaming) {
       const parsed = parsedQuestions(idx)
       if (parsed.length > 0) {
+        // Extract any non-JSON explanatory text to show above the cards
+        const jsonRange = findJsonRange(text)
+        if (jsonRange) {
+          const before = text.substring(0, jsonRange.start).trim()
+          const after = text.substring(jsonRange.end).trim()
+          const nonJson = (before + ' ' + after).trim()
+          if (nonJson) return renderMarkdown(nonJson)
+        }
         return `<p style="color:var(--muted);font-style:italic;">📋 已生成 ${parsed.length} 道练习题，请在下方作答 👇</p>`
       }
-      // Parsing failed — show a friendly fallback (not the raw JSON)
-      return '<p style="color:var(--muted);">📋 题目已生成，点击下方卡片作答</p>'
+      // Parsing failed — fall through to render markdown so user sees raw content
     }
 
-    // JSON not fully formed yet but content starts like JSON — hide during streaming
-    if (isStreaming && /^\s*[\[`]/.test(text)) {
-      return '<div class="generating-hint">📝 正在生成题目<span class="gen-dots">...</span></div>'
+    // During streaming: hide raw JSON from view, show generating hint
+    if (isStreaming) {
+      const jsonRange = findJsonRange(text)
+      if (jsonRange) {
+        const before = text.substring(0, jsonRange.start).trim()
+        const after = text.substring(jsonRange.end).trim()
+        const nonJson = (before + ' ' + after).trim()
+        if (nonJson) return renderMarkdown(nonJson)
+        return '<div class="generating-hint">📝 正在生成题目<span class="gen-dots">...</span></div>'
+      }
+      if (/^\s*[\[`]/.test(text)) {
+        return '<div class="generating-hint">📝 正在生成题目<span class="gen-dots">...</span></div>'
+      }
     }
   }
 
@@ -566,25 +706,30 @@ function escapeHtml(s: string) {
 .bubble-user { align-self: flex-end; flex-direction: row-reverse; }
 .bubble-ai { align-self: flex-start; }
 
+/* ---- DeepSeek-style bubbles ---- */
 .bubble-avatar {
-  width: 30px; height: 30px; border-radius: 50%;
+  width: 32px; height: 32px; border-radius: 50%;
   display: flex; align-items: center; justify-content: center;
-  font-size: 14px; flex-shrink: 0;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  font-size: 15px; flex-shrink: 0;
+  background: #f0f0f0;
+  border: 1px solid #e8e8e8;
 }
-.user-avatar { background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%); }
+.user-avatar { background: #1d1d1f; border-color: #1d1d1f; }
 
 .bubble-body {
-  padding: 16px 20px; border-radius: 18px;
-  font-size: 14px; line-height: 1.7; min-width: 0;
+  padding: 12px 18px; border-radius: 16px;
+  font-size: 14px; line-height: 1.75; min-width: 0;
 }
 .bubble-user .bubble-body {
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-  color: #fff; border-bottom-right-radius: 4px;
+  background: #2b2b30;
+  color: #f1f1f3;
+  border-bottom-right-radius: 6px;
 }
 .bubble-ai .bubble-body {
-  background: var(--bg-alt, #f3f4f6);
-  color: var(--text); border-bottom-left-radius: 4px;
+  background: #fff;
+  color: #1d1d1f;
+  border: 1px solid #e8e8e8;
+  border-bottom-left-radius: 6px;
 }
 
 /* Column wrapper for bubble body + meta (keeps layout) */
@@ -610,19 +755,29 @@ function escapeHtml(s: string) {
 }
 
 /* Reasoning */
-.reasoning-block { margin-bottom: 6px; }
-.reasoning-block summary { font-size: 12px; color: #8b5cf6; cursor: pointer; font-weight: 500; }
+/* ---- DeepSeek-style reasoning block (no inner scrollbar) ---- */
+.reasoning-block { margin-bottom: 8px; }
+.reasoning-block summary {
+  font-size: 13px; color: #6b7280; cursor: pointer; font-weight: 500;
+  padding: 6px 10px; border-radius: 6px;
+  background: #f9fafb; border: 1px solid #e5e7eb;
+  transition: all 0.15s;
+  user-select: none;
+}
+.reasoning-block summary:hover { color: #374151; border-color: #d1d5db; }
 .reasoning-block.reasoning-saved summary { color: #6b7280; font-weight: 500; }
-.reasoning-block summary:hover { color: #7c3aed; }
+
 .reasoning-text {
-  font-size: 12px; line-height: 1.6; color: #5b21b6;
-  background: #f5f3ff; padding: 10px 12px; border-radius: 6px;
-  max-height: 200px; overflow-y: auto; margin-top: 4px;
+  font-size: 13px; line-height: 1.65; color: #4b5563;
+  padding: 10px 14px; margin-top: 6px;
+  border-left: 2px solid #d1d5db;
+  border-radius: 0 6px 6px 0;
+  /* No max-height, no overflow — scrolls with page */
 }
 .reasoning-saved .reasoning-text {
-  color: #4b5563;
-  background: #f9fafb;
-  border: 1px solid #e5e7eb;
+  color: #6b7280;
+  background: #fcfcfd;
+  border-left-color: #e5e7eb;
 }
 
 /* Reasoning formatted content */
@@ -694,13 +849,22 @@ function escapeHtml(s: string) {
 
 .message-content :deep(.md-p) { margin: 3px 0; }
 .message-content :deep(.md-code) {
-  background: #1e1e2e; color: #cdd6f4;
-  padding: 10px; border-radius: 7px; overflow-x: auto;
-  font-size: 12px; line-height: 1.4; margin: 6px 0;
+  background: #1a1a2e; color: #cdd6f4;
+  padding: 12px 14px; border-radius: 8px; overflow-x: auto;
+  font-size: 13px; line-height: 1.55; margin: 8px 0;
+  border: 1px solid #2a2a3e;
 }
-.message-content :deep(.md-inline) {
-  background: rgba(0,0,0,0.07); padding: 1px 5px;
-  border-radius: 3px; font-size: 12px; font-family: monospace;
+/* Inline code in AI bubbles */
+.bubble-ai .message-content :deep(.md-inline) {
+  background: #f3f3f5; padding: 1px 6px;
+  border-radius: 4px; font-size: 12px; font-family: 'SF Mono', 'Cascadia Code', monospace;
+  color: #d9466c;
+}
+/* Inline code in user bubbles */
+.bubble-user .message-content :deep(.md-inline) {
+  background: rgba(255,255,255,0.12); padding: 1px 6px;
+  border-radius: 4px; font-size: 12px; font-family: 'SF Mono', 'Cascadia Code', monospace;
+  color: rgba(255,255,255,0.85);
 }
 .message-content :deep(.md-h4),
 .message-content :deep(.md-h5) { margin: 8px 0 3px; font-weight: 600; }
@@ -718,7 +882,6 @@ function escapeHtml(s: string) {
 .exam-header {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   padding: 10px 16px;
   background: #f9fafb;
   border-bottom: 1px solid #e5e7eb;
@@ -727,18 +890,43 @@ function escapeHtml(s: string) {
 .exam-title { font-size: 13px; font-weight: 600; color: #374151; }
 
 .exam-submit {
-  padding: 5px 16px;
+  padding: 10px 24px;
   border: none;
-  border-radius: 6px;
-  background: #111827;
+  border-radius: 8px;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
   color: #fff;
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 600;
   cursor: pointer;
+  transition: all 0.15s;
 }
-.exam-submit:hover { background: #374151; }
+.exam-submit:hover { opacity: 0.9; transform: scale(1.03); }
 
 .exam-score { font-size: 13px; font-weight: 600; color: #6366f1; }
+
+/* Footer: submit button / score at bottom */
+.exam-footer {
+  padding: 16px;
+  display: flex;
+  justify-content: center;
+  border-top: 1px solid #e5e7eb;
+  background: #fafbfc;
+}
+
+.exam-score-summary {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.ess-badge {
+  padding: 8px 20px;
+  border-radius: 20px;
+  font-size: 14px;
+  font-weight: 600;
+}
+.ess-badge.pass { background: #dcfce7; color: #16a34a; }
+.ess-badge.fail { background: #fef2f2; color: #dc2626; }
 
 /* Each question */
 .exam-question {

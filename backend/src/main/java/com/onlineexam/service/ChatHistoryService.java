@@ -33,7 +33,9 @@ public class ChatHistoryService {
   @PostConstruct
   void initTables() {
     try {
-      jdbc.execute("CREATE TABLE IF NOT EXISTS chat_conversation (id VARCHAR(64) PRIMARY KEY, user_id VARCHAR(64) NOT NULL, title VARCHAR(200) NOT NULL, role VARCHAR(20) NOT NULL DEFAULT 'student', created_at DATETIME(3) NOT NULL, updated_at DATETIME(3) NOT NULL, INDEX idx_chat_conv_user (user_id), INDEX idx_chat_conv_updated (updated_at)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+      jdbc.execute("CREATE TABLE IF NOT EXISTS chat_conversation (id VARCHAR(64) PRIMARY KEY, user_id VARCHAR(64) NOT NULL, title VARCHAR(200) NOT NULL, role VARCHAR(20) NOT NULL DEFAULT 'student', session_type VARCHAR(20) NOT NULL DEFAULT 'chat', created_at DATETIME(3) NOT NULL, updated_at DATETIME(3) NOT NULL, INDEX idx_chat_conv_user (user_id), INDEX idx_chat_conv_updated (updated_at)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+      // Add session_type column if upgrading from older schema (IF NOT EXISTS unsupported in MySQL <8.0.29)
+      try { jdbc.execute("ALTER TABLE chat_conversation ADD COLUMN session_type VARCHAR(20) NOT NULL DEFAULT 'chat'"); } catch (Exception ignored) {}
       jdbc.execute("CREATE TABLE IF NOT EXISTS chat_message (id VARCHAR(64) PRIMARY KEY, conversation_id VARCHAR(64) NOT NULL, role VARCHAR(20) NOT NULL, content TEXT NOT NULL, reasoning TEXT, created_at DATETIME(3) NOT NULL, INDEX idx_chat_msg_conv (conversation_id)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
     } catch (Exception e) {
       System.err.println("[ChatHistory] Failed to initialize tables: " + e.getMessage());
@@ -45,9 +47,17 @@ public class ChatHistoryService {
     if (userId == null || userId.isBlank()) return error(HttpStatus.UNAUTHORIZED, "Not authenticated.");
 
     try {
-      List<Map<String, Object>> rows = jdbc.queryForList(
-        "SELECT id, title, role, created_at, updated_at FROM chat_conversation WHERE user_id = ? ORDER BY updated_at DESC LIMIT ?",
-        userId, MAX_CONVERSATIONS);
+      List<Map<String, Object>> rows;
+      try {
+        rows = jdbc.queryForList(
+          "SELECT id, title, role, session_type, created_at, updated_at FROM chat_conversation WHERE user_id = ? ORDER BY updated_at DESC LIMIT ?",
+          userId, MAX_CONVERSATIONS);
+      } catch (Exception e) {
+        // session_type column may not exist yet — fall back
+        rows = jdbc.queryForList(
+          "SELECT id, title, role, created_at, updated_at FROM chat_conversation WHERE user_id = ? ORDER BY updated_at DESC LIMIT ?",
+          userId, MAX_CONVERSATIONS);
+      }
 
       List<Map<String, Object>> conversations = new ArrayList<>();
       for (Map<String, Object> row : rows) {
@@ -55,6 +65,7 @@ public class ChatHistoryService {
           "id", str(row.get("id")),
           "title", str(row.get("title")),
           "role", str(row.get("role")),
+          "sessionType", str(row.getOrDefault("session_type", "chat")),
           "createdAt", str(row.get("created_at")),
           "updatedAt", str(row.get("updated_at"))
         ));
@@ -104,13 +115,21 @@ public class ChatHistoryService {
     if (title.length() > 200) title = title.substring(0, 200);
 
     String role = str(body, "role").isBlank() ? "student" : str(body, "role");
+    String sessionType = str(body, "sessionType").isBlank() ? "chat" : str(body, "sessionType");
     String id = "conv-" + System.currentTimeMillis() + "-" + Integer.toHexString((int) (Math.random() * 0xffffff));
     String nowStr = now();
 
     try {
-      jdbc.update(
-        "INSERT INTO chat_conversation (id, user_id, title, role, created_at, updated_at) VALUES (?,?,?,?,?,?)",
-        id, userId, title, role, nowStr, nowStr);
+      try {
+        jdbc.update(
+          "INSERT INTO chat_conversation (id, user_id, title, role, session_type, created_at, updated_at) VALUES (?,?,?,?,?,?,?)",
+          id, userId, title, role, sessionType, nowStr, nowStr);
+      } catch (Exception colEx) {
+        // session_type column may not exist yet — fall back
+        jdbc.update(
+          "INSERT INTO chat_conversation (id, user_id, title, role, created_at, updated_at) VALUES (?,?,?,?,?,?)",
+          id, userId, title, role, nowStr, nowStr);
+      }
       enforceLimit(userId);
     } catch (Exception e) {
       System.err.println("[ChatHistory] Failed to insert conversation: " + e.getMessage());
@@ -121,6 +140,7 @@ public class ChatHistoryService {
     result.put("id", id);
     result.put("title", title);
     result.put("role", role);
+    result.put("sessionType", sessionType);
     result.put("createdAt", nowStr);
     result.put("updatedAt", nowStr);
     return ResponseEntity.ok(result);
@@ -152,6 +172,16 @@ public class ChatHistoryService {
           nullableStr(msg, "reasoning"),
           nowStr);
         saved++;
+      }
+
+      // Update session_type if provided (column may not exist yet)
+      String sessionType = str(body, "sessionType");
+      if (!sessionType.isBlank()) {
+        try {
+          jdbc.update("UPDATE chat_conversation SET session_type = ? WHERE id = ?", sessionType, conversationId);
+        } catch (Exception ignored) {
+          // Column may not exist — non-critical, ignore
+        }
       }
 
       // Smart title generation: only update title if it's still the default "新对话"
@@ -202,13 +232,24 @@ public class ChatHistoryService {
     try {
       String pattern = "%" + keyword + "%";
       // Search in both conversation titles and message content
-      List<Map<String, Object>> rows = jdbc.queryForList(
-        "SELECT DISTINCT c.id, c.title, c.role, c.created_at, c.updated_at " +
-        "FROM chat_conversation c " +
-        "LEFT JOIN chat_message m ON m.conversation_id = c.id " +
-        "WHERE c.user_id = ? AND (c.title LIKE ? OR m.content LIKE ?) " +
-        "ORDER BY c.updated_at DESC LIMIT ?",
-        userId, pattern, pattern, MAX_CONVERSATIONS);
+      List<Map<String, Object>> rows;
+      try {
+        rows = jdbc.queryForList(
+          "SELECT DISTINCT c.id, c.title, c.role, c.session_type, c.created_at, c.updated_at " +
+          "FROM chat_conversation c " +
+          "LEFT JOIN chat_message m ON m.conversation_id = c.id " +
+          "WHERE c.user_id = ? AND (c.title LIKE ? OR m.content LIKE ?) " +
+          "ORDER BY c.updated_at DESC LIMIT ?",
+          userId, pattern, pattern, MAX_CONVERSATIONS);
+      } catch (Exception e) {
+        rows = jdbc.queryForList(
+          "SELECT DISTINCT c.id, c.title, c.role, c.created_at, c.updated_at " +
+          "FROM chat_conversation c " +
+          "LEFT JOIN chat_message m ON m.conversation_id = c.id " +
+          "WHERE c.user_id = ? AND (c.title LIKE ? OR m.content LIKE ?) " +
+          "ORDER BY c.updated_at DESC LIMIT ?",
+          userId, pattern, pattern, MAX_CONVERSATIONS);
+      }
 
       List<Map<String, Object>> conversations = new ArrayList<>();
       for (Map<String, Object> row : rows) {
@@ -216,6 +257,7 @@ public class ChatHistoryService {
         conv.put("id", str(row.get("id")));
         conv.put("title", str(row.get("title")));
         conv.put("role", str(row.get("role")));
+        conv.put("sessionType", str(row.getOrDefault("session_type", "chat")));
         conv.put("createdAt", str(row.get("created_at")));
         conv.put("updatedAt", str(row.get("updated_at")));
 

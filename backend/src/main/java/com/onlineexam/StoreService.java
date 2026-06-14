@@ -282,6 +282,7 @@ public class StoreService {
 
   private int asInt(Object value) {
     if (value instanceof Number n) return n.intValue();
+    if (value instanceof Boolean) return 0; // TINYINT(1) may arrive as Boolean without tinyInt1isBit=false
     if (value == null || String.valueOf(value).isBlank()) return 0;
     try {
       return Integer.parseInt(String.valueOf(value));
@@ -297,7 +298,11 @@ public class StoreService {
   private boolean asBool(Object value) {
     if (value instanceof Boolean b) return b;
     if (value instanceof Number n) return n.intValue() != 0;
-    return value != null && Boolean.parseBoolean(String.valueOf(value));
+    // TINYINT(1) may arrive as Integer even with instanceof checks — handle gracefully
+    if (value != null) {
+      try { return Integer.parseInt(String.valueOf(value)) != 0; } catch (NumberFormatException ignored) {}
+    }
+    return false;
   }
 
   private String str(Map<String, Object> r, String key) {
