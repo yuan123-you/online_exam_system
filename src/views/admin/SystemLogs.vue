@@ -15,7 +15,7 @@
           </tr>
           <tr v-for="log in store.sortedLogs" :key="log.id">
             <td>{{ formatDate(log.time) }}</td>
-            <td>{{ log.actorId }}</td>
+            <td>{{ log.actorName || log.actorId }}</td>
             <td><span class="tag">{{ log.action }}</span></td>
             <td class="cell-sub">{{ log.detail }}</td>
           </tr>

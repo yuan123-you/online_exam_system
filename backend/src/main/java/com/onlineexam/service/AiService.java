@@ -140,11 +140,11 @@ public class AiService {
       String aiResponse = callAiApi(systemPrompt, userPrompt);
       generated = parseAiQuestions(aiResponse, userId, subject, knowledgePoint, difficulty, type);
     } catch (Exception e) {
-      systemLogService.log(user, "ai generate questions error", e.getMessage());
+      systemLogService.log(user, "AI出题失败", e.getMessage());
       return error(HttpStatus.SERVICE_UNAVAILABLE, "AI 服务暂时不可用：" + e.getMessage());
     }
 
-    systemLogService.log(user, "ai generate questions", "custom=" + !customPrompt.isBlank() + ", count=" + generated.size());
+    systemLogService.log(user, "AI出题", "自定义=" + !customPrompt.isBlank() + ", 数量=" + generated.size());
     return ResponseEntity.ok(mapOf(
       "questions", generated,
       "aiUsed", true,
@@ -213,7 +213,7 @@ public class AiService {
       }
     }
 
-    systemLogService.log(user, "ai import questions", "imported=" + imported.size() + ", errors=" + errors.size());
+    systemLogService.log(user, "AI导入题目", "导入=" + imported.size() + ", 失败=" + errors.size());
     return ResponseEntity.ok(mapOf(
       "importedCount", imported.size(),
       "errors", errors,
@@ -294,7 +294,7 @@ public class AiService {
     result.put("details", aiDetails);
     result.put("message", "AI评分完成（仅供参考），不影响教师手动阅卷分数。");
 
-    systemLogService.log(user, "ai grade submission", str(submission, "id"));
+    systemLogService.log(user, "AI阅卷", str(submission, "id"));
     return ResponseEntity.ok(result);
   }
 
@@ -366,11 +366,11 @@ public class AiService {
         }
       }
     } catch (Exception e) {
-      systemLogService.log(user, "ai assistant error", e.getMessage());
+      systemLogService.log(user, "AI助手失败", e.getMessage());
       return error(HttpStatus.SERVICE_UNAVAILABLE, "AI 服务暂时不可用：" + e.getMessage());
     }
 
-    systemLogService.log(user, "ai assistant request", "custom=" + !customPrompt.isBlank());
+    systemLogService.log(user, "AI助手请求", "自定义=" + !customPrompt.isBlank());
     return ResponseEntity.ok(mapOf("questions", questions, "totalCount", questions.size()));
   }
 
@@ -418,7 +418,7 @@ public class AiService {
       result.put("explanation", str(parsed, "explanation").isBlank() ? "解析暂时无法生成" : str(parsed, "explanation"));
       result.put("tips", str(parsed, "tips").isBlank() ? "请认真复习相关知识点" : str(parsed, "tips"));
 
-      systemLogService.log(user, "ai explain answer", "correct=" + isCorrect);
+      systemLogService.log(user, "AI解析答案", "正确=" + isCorrect);
       return ResponseEntity.ok(result);
     } catch (Exception e) {
       boolean isCorrect = studentAnswer.equals(correctAnswer);
@@ -463,7 +463,7 @@ public class AiService {
     record.put("lastWrongAt", Instant.now().toString());
 
     storeService.saveRecord("wrongBookEntries", record);
-    systemLogService.log(user, "save practice record", str(record, "id"));
+    systemLogService.log(user, "保存练习记录", str(record, "id"));
     return ResponseEntity.ok(mapOf("record", record));
   }
 
@@ -514,7 +514,7 @@ public class AiService {
       }
     }
 
-    systemLogService.log(user, "save practice records batch", "saved=" + savedCount);
+    systemLogService.log(user, "批量保存练习", "保存=" + savedCount);
     return ResponseEntity.ok(mapOf("savedCount", savedCount));
   }
 
@@ -530,11 +530,17 @@ public class AiService {
    */
   public void callAiApiStream(String systemPrompt, String userPrompt, boolean thinkingEnabled,
                                org.springframework.web.servlet.mvc.method.annotation.SseEmitter emitter) {
-    callAiApiStream(systemPrompt, userPrompt, thinkingEnabled, 0.9, emitter);
+    callAiApiStream(systemPrompt, userPrompt, thinkingEnabled, 0.9, false, emitter);
   }
 
   public void callAiApiStream(String systemPrompt, String userPrompt, boolean thinkingEnabled,
                                double temperature,
+                               org.springframework.web.servlet.mvc.method.annotation.SseEmitter emitter) {
+    callAiApiStream(systemPrompt, userPrompt, thinkingEnabled, temperature, false, emitter);
+  }
+
+  public void callAiApiStream(String systemPrompt, String userPrompt, boolean thinkingEnabled,
+                               double temperature, boolean jsonMode,
                                org.springframework.web.servlet.mvc.method.annotation.SseEmitter emitter) {
     if (apiKey == null || apiKey.isBlank()) {
       try { emitter.send(SseEmitter.event().name("error").data("{\"error\":\"AI API密钥未配置\"}")); emitter.complete(); }
@@ -566,8 +572,11 @@ public class AiService {
           java.util.Map.of("role", "user", "content", userPrompt)
         ));
         reqBody.put("temperature", temperature);
-        reqBody.put("max_tokens", 32768);
+        reqBody.put("max_tokens", jsonMode ? 16384 : 32768);  // practice: enough for 5-10 questions with explanations
         reqBody.put("stream", true);
+        if (jsonMode) {
+          reqBody.put("response_format", java.util.Map.of("type", "json_object"));
+        }
         if (thinkingEnabled) {
           reqBody.put("thinking", java.util.Map.of("type", "enabled"));
         }
@@ -723,20 +732,23 @@ public class AiService {
 
     if (!customPrompt.isBlank()) {
       systemPrompt = """
-You are a strict JSON question generator. Output ONLY a valid JSON array — no markdown, no explanation outside JSON, no trailing commas. Every field must use double quotes. Escape newlines as \\n inside strings.
+你是出题专家。严格按步骤执行：
 
-Format exactly:
-[{"title":"题目","type":"single","options":["A.选项","B.选项","C.选项","D.选项"],"answer":["A"],"score":5,"explanation":"【答案】A\\n【解析】详细解析"}]
+第1步 分析：理解用户要求的学科、知识点、难度。
+第2步 出题：生成指定数量的高质量题目，全部使用中文，内容准确。
+第3步 自检：确认答案正确、干扰项合理、解析有教学价值。
+第4步 输出：输出一个JSON数组，每道题一个对象。不要markdown、不要废话、不要尾随逗号。
 
-RULES:
-- type: one of single/multiple/judge/fill/short/coding
-- single/judge: 4 options A-D, answer is one letter like ["A"]
-- multiple: 4 options A-D, answer can be multiple like ["A","C"]
-- fill/short/coding: options=[], answer is the correct text
-- explanation MUST escape newlines as \\n, use 【答案】 and 【解析】 sections
-- NO trailing commas before ] or }
-- ALL strings double-quoted, NO unquoted keys
-- Output the JSON array DIRECTLY, nothing else""";
+输出格式示例：
+[{"title":"栈遵循什么原则？","type":"single","options":["A. 先进先出","B. 后进先出","C. 随机存取","D. 仅栈顶操作"],"answer":["B"],"score":5,"explanation":"【答案】B\\n【解析】栈是后进先出（LIFO）结构，最后放入的最先取出。"}]
+
+字段说明：
+- title: 题目文字（中文）
+- type: single/multiple/judge/fill/short/coding
+- options: 选项数组，单选/判断4个以"A. "开头，多选4个，填空/简答/编程用空数组[]
+- answer: 答案数组，单选["A"]，多选["A","C"]，填空["答案文字"]
+- score: 整数分值
+- explanation: 【答案】X\\n【解析】详细解析，\\n表示换行""";
       userPrompt = customPrompt;
     } else {
       String subject = str(body, "subject");
@@ -756,30 +768,26 @@ RULES:
       };
 
       systemPrompt = """
-You are a strict JSON question generator. Output ONLY a valid JSON array — no markdown, no explanation outside JSON, no trailing commas. Every field must use double quotes. Escape newlines as \\n inside strings.
+你是出题专家。严格按步骤执行：
 
-Format exactly:
-[{"title":"题目","type":"single","options":["A.选项","B.选项","C.选项","D.选项"],"answer":["A"],"score":5,"explanation":"【答案】A\\n【解析】详细解析"}]
+第1步 分析：理解学科、知识点、难度。
+第2步 出题：生成指定数量的题目，全部中文，内容准确。
+第3步 自检：验证答案、干扰项、解析质量。
+第4步 输出：JSON数组。不要markdown、不要废话。
 
-RULES:
-- type: one of single/multiple/judge/fill/short/coding
-- single/judge: 4 options A-D, answer is one letter like ["A"]
-- multiple: 4 options A-D, answer can be multiple like ["A","C"]
-- fill/short/coding: options=[], answer is the correct text
-- explanation MUST escape newlines as \\n, use 【答案】 and 【解析】 sections
-- NO trailing commas before ] or }
-- ALL strings double-quoted, NO unquoted keys
-- Output the JSON array DIRECTLY, nothing else""";
+格式：[{"title":"题目","type":"single","options":["A. xx","B. xx","C. xx","D. xx"],"answer":["A"],"score":5,"explanation":"【答案】A\\n【解析】..."}]
+
+字段：title/type/options/answer/score/explanation。type取single/multiple/judge/fill/short/coding。\\n表示换行。选项以"A. "开头。全部中文。""";
 
       userPrompt = String.format(
-        "生成 %d 道关于「%s」的%s练习题，难度%s。每题含详细解析。只输出JSON数组。",
+        "生成 %d 道「%s」%s题，难度%s。输出JSON。",
         count, subject.isBlank() ? "计算机基础" : subject, typeChinese, difficultyChinese
       );
     }
 
     boolean deepThinking = Boolean.TRUE.equals(body.get("deepThinking"));
-    // Use low temperature (0.3) for more deterministic JSON output
-    callAiApiStream(systemPrompt, userPrompt, deepThinking, 0.3, emitter);
+    // Practice mode: glm-4.7-flash supports json_object in streaming
+    callAiApiStream(systemPrompt, userPrompt, deepThinking, 0.3, true, emitter);
   }
 
   /**
@@ -864,10 +872,10 @@ RULES:
 
     try {
       String aiResponse = callAiApi(systemPrompt, userPrompt);
-      systemLogService.log(user, "ai chat", "ok");
+      systemLogService.log(user, "AI对话", "完成");
       return ResponseEntity.ok(mapOf("content", aiResponse, "role", "assistant"));
     } catch (Exception e) {
-      systemLogService.log(user, "ai chat error", e.getMessage());
+      systemLogService.log(user, "AI对话失败", e.getMessage());
       return error(HttpStatus.SERVICE_UNAVAILABLE, "AI 服务暂时不可用：" + e.getMessage());
     }
   }
@@ -905,7 +913,7 @@ RULES:
     String userPrompt = buildChatUserPrompt(userMessage, body);
 
     boolean deepThinking = Boolean.TRUE.equals(body.get("deepThinking"));
-    systemLogService.log(user, "ai chat stream", "start deepThinking=" + deepThinking);
+    systemLogService.log(user, "AI对话流", "深度思考=" + deepThinking);
     callAiApiStream(systemPrompt, userPrompt, deepThinking, emitter);
   }
 

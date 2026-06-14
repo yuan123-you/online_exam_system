@@ -29,9 +29,24 @@ public class SystemLogService {
   public void log(Map<String, Object> user, String action, String detail) {
     Map<String, Object> logEntry = new LinkedHashMap<>();
     logEntry.put("id", createId("log"));
-    logEntry.put("actorId", user == null ? "system" : str(user, "id"));
+    String actorId = user == null ? "system" : str(user, "id");
+    String actorName = user == null ? "系统" : str(user, "name");
+    logEntry.put("actorId", actorId);
+    logEntry.put("actorName", actorName);
     logEntry.put("action", action);
-    logEntry.put("detail", detail);
+    // detail: append user identity info if not already included
+    String enrichedDetail = detail != null ? detail : "";
+    if (user != null && !actorId.equals("system")) {
+      String role = str(user, "role");
+      String roleCn = switch (role) {
+        case "admin" -> "管理员"; case "teacher" -> "教师"; case "student" -> "学生";
+        default -> role;
+      };
+      if (!enrichedDetail.contains(actorId)) {
+        enrichedDetail = "[" + roleCn + ":" + actorName + "(" + actorId + ")] " + enrichedDetail;
+      }
+    }
+    logEntry.put("detail", enrichedDetail);
     logEntry.put("time", now());
     storeService.saveRecord("logs", logEntry);
   }

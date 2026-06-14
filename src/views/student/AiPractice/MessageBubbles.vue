@@ -302,30 +302,112 @@ async function copyToClipboard(text: string, idx: number) {
   }
 }
 
-// ---- Question parsing ----
-/** Extract JSON question array from AI response, handling markdown fences and bare arrays */
+// ---- Question parsing (with content-hash memoization) ----
+const _parseCache = new Map<string, AiQuestion[]>()
+let _lastCacheClear = 0
+
+/** Extract questions from AI response — text format first, JSON as fallback */
 function parsedQuestions(msgIdx: number): AiQuestion[] {
   const msg = props.messages[msgIdx]
   if (!msg || msg.role !== 'assistant') return []
   const content = msg.content
   if (!content) return []
 
-  // Multiple extraction strategies, tried in order
-  let jsonStr = ''
+  // Content hash cache
+  const cacheKey = content.slice(0, 80) + '|' + content.length
+  const cached = _parseCache.get(cacheKey)
+  if (cached !== undefined) return cached
 
-  // Strategy 1: extract from ```json ... ``` code fence
-  const fenceMatch = content.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/)
-  if (fenceMatch) {
-    jsonStr = fenceMatch[1].trim()
+  const now = Date.now()
+  if (now - _lastCacheClear > 30000) { if (_parseCache.size > 50) _parseCache.clear(); _lastCacheClear = now }
+
+  // Strategy 1: Parse text format (===题目开始=== ... ===题目结束===)
+  const textParsed = parseTextFormat(content)
+  if (textParsed.length > 0) { _parseCache.set(cacheKey, textParsed); return textParsed }
+
+  // Strategy 2: Parse JSON (fallback for legacy format or if text format not used)
+  const jsonParsed = parseJsonFormat(content)
+  if (jsonParsed.length > 0) { _parseCache.set(cacheKey, jsonParsed); return jsonParsed }
+
+  // Strategy 3: Regex extraction
+  const regexParsed = extractQuestionsByRegex(content)
+  if (regexParsed.length > 0) { _parseCache.set(cacheKey, regexParsed); return regexParsed }
+
+  _parseCache.set(cacheKey, [])
+  return []
+}
+
+/** Parse the text-based question format */
+function parseTextFormat(content: string): AiQuestion[] {
+  const questions: AiQuestion[] = []
+  // Split by ===题目开始=== ... ===题目结束===
+  const blocks = content.split(/===题目开始===/g).filter(b => b.trim())
+  for (const block of blocks) {
+    const endIdx = block.indexOf('===题目结束===')
+    const body = (endIdx >= 0 ? block.substring(0, endIdx) : block).trim()
+    if (!body) continue
+
+    const q: Partial<AiQuestion> = { score: 5, subject: 'AI练习', difficulty: '中等' }
+    const lines = body.split('\n')
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i].trim()
+      if (!line) continue
+
+      if (line.startsWith('题型：') || line.startsWith('题型:')) {
+        const t = line.replace(/^题型[：:]\s*/, '')
+        if (t.includes('单选')) q.type = 'single'
+        else if (t.includes('多选')) q.type = 'multiple'
+        else if (t.includes('判断')) q.type = 'judge'
+        else if (t.includes('填空')) q.type = 'fill'
+        else if (t.includes('简答')) q.type = 'short'
+        else if (t.includes('编程')) q.type = 'coding'
+        else q.type = 'single'
+      } else if (line.startsWith('题目：') || line.startsWith('题目:')) {
+        q.title = line.replace(/^题目[：:]\s*/, '')
+      } else if (/^[A-D][.、)\s]/.test(line)) {
+        // Option line: "A. xxx" or "A、xxx"
+        if (!q.options) q.options = []
+        q.options.push(line)
+      } else if (line.startsWith('答案：') || line.startsWith('答案:')) {
+        const ans = line.replace(/^答案[：:]\s*/, '').trim()
+        q.answer = ans.split(/[,，\s]+/).filter(Boolean)
+      } else if (line.startsWith('分数：') || line.startsWith('分数:')) {
+        q.score = parseInt(line.replace(/^分数[：:]\s*/, '')) || 5
+      } else if (line.startsWith('解析：') || line.startsWith('解析:')) {
+        // Collect all remaining lines as explanation
+        const explLines = [line.replace(/^解析[：:]\s*/, '')]
+        for (let j = i + 1; j < lines.length; j++) {
+          const nl = lines[j].trim()
+          if (nl.startsWith('题型：') || nl.startsWith('题目：') || /^[A-D][.、)\s]/.test(nl) || nl.startsWith('答案：')) break
+          if (nl) explLines.push(nl)
+        }
+        q.explanation = explLines.join('\n')
+        break
+      }
+    }
+
+    if (q.title && q.type) {
+      q.id = `q-${questions.length}-${Date.now()}`
+      q.knowledgePoint = (q.title || '').substring(0, 30)
+      if (!q.options) q.options = []
+      if (!q.answer) q.answer = []
+      questions.push(q as AiQuestion)
+    }
   }
+  return questions
+}
 
-  // Strategy 2: balanced bracket extraction for bare JSON arrays
+/** Parse JSON format (fallback) */
+function parseJsonFormat(content: string): AiQuestion[] {
+  let jsonStr = ''
+  const fenceMatch = content.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/)
+  if (fenceMatch) { jsonStr = fenceMatch[1].trim() }
+
   if (!jsonStr) {
     const startIdx = content.indexOf('[')
     if (startIdx === -1) return []
-    let depth = 0
-    let inString = false
-    let escaped = false
+    let depth = 0, inString = false, escaped = false
     for (let i = startIdx; i < content.length; i++) {
       const ch = content[i]
       if (escaped) { escaped = false; continue }
@@ -333,29 +415,12 @@ function parsedQuestions(msgIdx: number): AiQuestion[] {
       if (ch === '"') { inString = !inString; continue }
       if (inString) continue
       if (ch === '[') depth++
-      else if (ch === ']') {
-        depth--
-        if (depth === 0) {
-          jsonStr = content.substring(startIdx, i + 1)
-          break
-        }
-      }
+      else if (ch === ']') { depth--; if (depth === 0) { jsonStr = content.substring(startIdx, i + 1); break } }
     }
   }
-
   if (!jsonStr) return []
-
-  // Try to parse, with recovery for common AI output issues
   const parsed = tryParseJson(jsonStr)
-  if (Array.isArray(parsed) && parsed.length > 0 && parsed[0].title) {
-    return parsed as AiQuestion[]
-  }
-
-  // Last resort: regex-based extraction of individual question objects
-  const regexExtracted = extractQuestionsByRegex(content)
-  if (regexExtracted.length > 0) return regexExtracted
-
-  return []
+  return (Array.isArray(parsed) && parsed.length > 0 && parsed[0].title) ? parsed as AiQuestion[] : []
 }
 
 /** Last-resort: regex-based extraction of individual question objects from malformed text */
@@ -599,32 +664,19 @@ function renderContent(text: string, role: string, idx: number): string {
     if (!isStreaming) {
       const parsed = parsedQuestions(idx)
       if (parsed.length > 0) {
-        // Extract any non-JSON explanatory text to show above the cards
-        const jsonRange = findJsonRange(text)
-        if (jsonRange) {
-          const before = text.substring(0, jsonRange.start).trim()
-          const after = text.substring(jsonRange.end).trim()
-          const nonJson = (before + ' ' + after).trim()
-          if (nonJson) return renderMarkdown(nonJson)
-        }
         return `<p style="color:var(--muted);font-style:italic;">📋 已生成 ${parsed.length} 道练习题，请在下方作答 👇</p>`
       }
-      // Parsing failed — fall through to render markdown so user sees raw content
+      // Parsing failed — hide raw JSON, show friendly message
+      if (/[\{\[]/.test(text) && (text.includes('"title"') || text.includes('"type"') || text.includes('"options"'))) {
+        return '<p style="color:var(--muted);">📋 题目解析中，如未显示卡片请重新生成</p>'
+      }
+      // Not JSON-like — render normally
+      return renderMarkdown(text)
     }
 
-    // During streaming: hide raw JSON from view, show generating hint
+    // During streaming: hide ALL potential JSON from view
     if (isStreaming) {
-      const jsonRange = findJsonRange(text)
-      if (jsonRange) {
-        const before = text.substring(0, jsonRange.start).trim()
-        const after = text.substring(jsonRange.end).trim()
-        const nonJson = (before + ' ' + after).trim()
-        if (nonJson) return renderMarkdown(nonJson)
-        return '<div class="generating-hint">📝 正在生成题目<span class="gen-dots">...</span></div>'
-      }
-      if (/^\s*[\[`]/.test(text)) {
-        return '<div class="generating-hint">📝 正在生成题目<span class="gen-dots">...</span></div>'
-      }
+      return '<div class="generating-hint">📝 正在生成题目<span class="gen-dots">...</span></div>'
     }
   }
 

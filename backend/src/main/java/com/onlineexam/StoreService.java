@@ -81,9 +81,17 @@ public class StoreService {
       "lastRetryCorrect", asBool(row.get("last_retry_correct")), "removable", asBool(row.get("removable")),
       "removedAt", asIso(row.get("removed_at")), "status", row.get("status")
     ))).toList();
-    store.logs = jdbc.queryForList("select id,actor_id,action,detail,time from system_log order by time desc limit 100").stream().map(row -> compact(mapOf(
-      "id", row.get("id"), "actorId", row.get("actor_id"), "action", row.get("action"), "detail", row.get("detail"), "time", asIso(row.get("time"))
-    ))).toList();
+    store.logs = jdbc.queryForList("select id,actor_id,action,detail,time from system_log order by time desc limit 100").stream().map(row -> {
+      String actorId = str(row.get("actor_id"));
+      return compact(mapOf(
+        "id", row.get("id"),
+        "actorId", actorId,
+        "actorName", resolveActorName(actorId, store),
+        "action", row.get("action"),
+        "detail", row.get("detail"),
+        "time", asIso(row.get("time"))
+      ));
+    }).toList();
     return store;
   }
 
@@ -307,6 +315,14 @@ public class StoreService {
 
   private String str(Map<String, Object> r, String key) {
     return str(r.get(key));
+  }
+
+  private String resolveActorName(String actorId, Store store) {
+    if (actorId == null || actorId.isBlank() || "system".equals(actorId)) return "系统";
+    for (Map<String, Object> u : store.users) {
+      if (actorId.equals(str(u, "id"))) return str(u, "name");
+    }
+    return actorId;
   }
 
   private String str(Object value) {

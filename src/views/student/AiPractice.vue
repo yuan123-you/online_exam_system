@@ -102,7 +102,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, nextTick } from 'vue'
+import { ref, computed, watch, nextTick, onMounted, onUnmounted } from 'vue'
 import { useAppStore } from '@/stores/app'
 import MessageBubbles from './AiPractice/MessageBubbles.vue'
 import ChatSidebar from './AiPractice/ChatSidebar.vue'
@@ -214,12 +214,26 @@ function autoResize() {
   }
 }
 
-// Scroll — instant during streaming (no jitter), smooth for new messages
-watch(() => currentMessages.value.length, () => nextTick(() => scrollToBottom(300)))
+// Smart auto-scroll: pauses when user scrolls up, resumes on new message
+const userScrolledUp = ref(false)
+const nearBottomThreshold = 80 // px from bottom considered "at bottom"
+
+function onChatScroll() {
+  const el = getScrollContainer()
+  if (!el) return
+  const distFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight
+  // User scrolled up → pause auto-scroll. Scrolled back to bottom → resume.
+  userScrolledUp.value = distFromBottom > nearBottomThreshold
+}
+
+watch(() => currentMessages.value.length, () => {
+  userScrolledUp.value = false  // new message → resume auto-scroll
+  nextTick(() => scrollToBottom(300))
+})
 watch(() => activeTab.value === 'chat' ? store.chatStreamingContent : store.practiceStreamingContent,
-  () => scrollToBottom(0))  // instant during streaming — no animation jitter
+  () => { if (!userScrolledUp.value) scrollToBottom(0) })
 watch(() => activeTab.value === 'chat' ? store.chatStreamingReasoning : store.practiceStreamingReasoning,
-  () => scrollToBottom(0))
+  () => { if (!userScrolledUp.value) scrollToBottom(0) })
 
 /** Find the scrollable element (.chat-main which has overflow-y:auto) */
 function getScrollContainer(): HTMLElement | null {
@@ -230,13 +244,21 @@ function scrollToBottom(duration: number) {
   const el = getScrollContainer()
   if (!el) return
   if (duration <= 0) {
-    // Instant snap — no animation jitter during rapid streaming updates
     el.scrollTop = el.scrollHeight
     return
   }
-  // Smooth scroll for new message arrival
   el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' })
 }
+
+// Attach/detach scroll listener
+onMounted(() => {
+  nextTick(() => {
+    getScrollContainer()?.addEventListener('scroll', onChatScroll, { passive: true })
+  })
+})
+onUnmounted(() => {
+  getScrollContainer()?.removeEventListener('scroll', onChatScroll)
+})
 </script>
 
 <style scoped>
