@@ -24,11 +24,12 @@ cd "$APP_DIR"
 echo "$(date -Iseconds) Pulling latest code..." >> "$LOG_FILE"
 git pull origin master >> "$LOG_FILE" 2>&1
 
-# 2. Clean old dist and rebuild frontend (Vite produces green theme)
+# 2. Clean old dist and rebuild frontend
 echo "$(date -Iseconds) Cleaning old dist and building frontend..." >> "$LOG_FILE"
 rm -rf "$APP_DIR/dist"
 npm install --production=false >> "$LOG_FILE" 2>&1
 npx vite build >> "$LOG_FILE" 2>&1
+echo "$(date -Iseconds) Frontend built to dist/" >> "$LOG_FILE"
 
 # 3. Rebuild backend
 echo "$(date -Iseconds) Building backend..." >> "$LOG_FILE"

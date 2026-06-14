@@ -159,7 +159,7 @@ npm config set registry https://registry.npmmirror.com
 npm install
 rm -rf dist
 npx vite build
-echo "  Frontend built to dist/ (green theme)"
+echo "  Frontend built to dist/"
 
 # Build Backend
 echo ""
