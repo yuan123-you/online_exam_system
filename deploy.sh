@@ -236,73 +236,83 @@ else
 fi
 
 #--------------------------------------------------------------
-# 8. Configure Nginx
+# 8. Configure Nginx + HTTPS (Let's Encrypt)
 #--------------------------------------------------------------
 echo ""
-echo "[8/8] Configuring Nginx..."
+echo "[8/8] Configuring Nginx & HTTPS..."
 
-sudo apt-get install -y -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" nginx
+sudo apt-get install -y -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" nginx certbot python3-certbot-nginx
 
-# Create Nginx configuration (single server block for both domain and IP)
+# Clear all existing enabled sites to avoid conflicts
+sudo rm -f /etc/nginx/sites-enabled/*
+
+# Step A: Create initial HTTP-only config (required for certbot HTTP-01 challenge)
+echo "  Writing initial HTTP config..."
 sudo tee /etc/nginx/sites-available/online-exam > /dev/null <<NGINX_EOF
 server {
     listen 80;
     server_name ${DOMAIN} 54.179.150.131;
 
-    # Frontend static files
     root /opt/online-exam/dist;
     index index.html;
 
-    # Frontend routes
     location / {
         try_files \$uri \$uri/ /index.html;
     }
 
-    # Never cache HTML and CSS files (ensures users always get latest version)
     location ~* \.(html|css)$ {
         add_header Cache-Control "no-cache, no-store, must-revalidate";
         add_header Pragma "no-cache";
         add_header Expires "0";
     }
 
-    # API reverse proxy to Spring Boot backend
     location /api/ {
         proxy_pass http://127.0.0.1:8080/api/;
         proxy_set_header Host \$host;
         proxy_set_header X-Real-IP \$remote_addr;
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto \$scheme;
-
-        # Increase timeout for long-running requests
         proxy_connect_timeout 60s;
         proxy_read_timeout 120s;
         proxy_send_timeout 60s;
-
-        # Increase body size for file uploads
         client_max_body_size 10m;
     }
 
-    # Cache JS static assets
     location ~* \.js$ {
         expires 1d;
         add_header Cache-Control "public";
     }
 
-    # Gzip compression
+    # Let's Encrypt ACME challenge
+    location /.well-known/acme-challenge/ {
+        root /var/www/html;
+    }
+
     gzip on;
     gzip_types text/plain text/css application/json application/javascript text/xml application/xml text/javascript;
     gzip_min_length 1024;
 }
 NGINX_EOF
 
-# Clear all existing enabled sites to avoid duplicate default_server conflicts
-sudo rm -f /etc/nginx/sites-enabled/*
-# Enable our site
 sudo ln -sf /etc/nginx/sites-available/online-exam /etc/nginx/sites-enabled/online-exam
+sudo nginx -t && sudo systemctl restart nginx
+echo "  Nginx started on HTTP."
 
-# Test and reload Nginx
-sudo nginx -t
-sudo systemctl restart nginx
+# Step B: Obtain Let's Encrypt SSL certificate
+echo ""
+echo "  Obtaining SSL certificate for ${DOMAIN}..."
+if sudo certbot certificates 2>/dev/null | grep -q "${DOMAIN}"; then
+    echo "  Certificate already exists, skipping issuance."
+else
+    sudo certbot --nginx -d ${DOMAIN} --non-interactive --agree-tos \
+        --email admin@${DOMAIN} --redirect 2>&1 || {
+        echo "  [WARN] certbot failed — HTTPS will not be available."
+        echo "  Check that port 80 is reachable from the internet and DNS is correct."
+    }
+fi
+
+# Step C: Reload final Nginx config (certbot may have modified it)
+sudo systemctl reload nginx 2>/dev/null || sudo systemctl restart nginx
 sudo systemctl enable nginx
 
 echo ""
@@ -310,8 +320,9 @@ echo "=========================================="
 echo "  Deployment Complete!"
 echo "=========================================="
 echo ""
-echo "  Frontend: http://${DOMAIN}"
-echo "  Backend API: http://${DOMAIN}/api/"
+echo "  Frontend:  https://${DOMAIN}"
+echo "  API:       https://${DOMAIN}/api/"
+echo "  (HTTP automatically redirects to HTTPS)"
 echo ""
 echo "  Useful commands:"
 echo "    Check backend status:  sudo systemctl status online-exam"
