@@ -243,20 +243,13 @@ echo "[8/8] Configuring Nginx..."
 
 sudo apt-get install -y -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" nginx
 
-# Create Nginx configuration
+# Create Nginx configuration (single server block for both domain and IP)
 sudo tee /etc/nginx/sites-available/online-exam > /dev/null <<NGINX_EOF
-# Redirect IP access to domain
-server {
-    listen 80 default_server;
-    server_name _;
-    return 301 https://${DOMAIN}\$request_uri;
-}
-
 server {
     listen 80;
-    server_name ${DOMAIN};
+    server_name ${DOMAIN} 54.179.150.131;
 
-    # Frontend static files (green theme)
+    # Frontend static files
     root /opt/online-exam/dist;
     index index.html;
 
@@ -302,9 +295,10 @@ server {
 }
 NGINX_EOF
 
-# Enable the site
+# Clear all existing enabled sites to avoid duplicate default_server conflicts
+sudo rm -f /etc/nginx/sites-enabled/*
+# Enable our site
 sudo ln -sf /etc/nginx/sites-available/online-exam /etc/nginx/sites-enabled/online-exam
-sudo rm -f /etc/nginx/sites-enabled/default
 
 # Test and reload Nginx
 sudo nginx -t
