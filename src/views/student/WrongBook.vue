@@ -34,7 +34,8 @@
       <button class="ghost-btn" type="button" @click="clearSelection">取消选择</button>
     </div>
 
-    <div v-if="store.filteredWrongBookEntries.length === 0" class="empty-state">暂无错题记录</div>
+    <div v-if="store.filteredWrongBookEntries.length === 0 && !loading" class="empty-state">暂无错题记录</div>
+    <div v-else-if="loading" class="empty-state">加载中...</div>
     <div v-else class="table-wrap mobile-card-table">
       <table>
         <thead>
@@ -52,7 +53,7 @@
         </thead>
         <tbody>
           <tr
-            v-for="entry in store.filteredWrongBookEntries"
+            v-for="entry in (store.paginatedWrongBook as any)"
             :key="entry.id"
             :class="{ 'row-selected': selectedIds.has(entry.id) }"
           >
@@ -84,22 +85,68 @@
         </tbody>
       </table>
     </div>
+
+    <PaginationBar
+      :total="store.totalWrongBook"
+      :current-page="store.wrongBookCurrentPage"
+      :page-size="store.wrongBookPageSize"
+      :page-size-options="[10, 20, 50]"
+      @page-change="handlePageChange"
+      @page-size-change="handlePageSizeChange"
+    />
   </article>
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useAppStore } from '@/stores/app'
 import { typeLabel } from '@/utils/format'
 import QuotaBar from '@/components/common/QuotaBar.vue'
+import PaginationBar from '@/components/common/PaginationBar.vue'
 
 const store = useAppStore()
 const selectedIds = ref<Set<string>>(new Set())
+const loading = ref(false)
 
-// Load quota data on mount
+// Load quota data and first page on mount
 onMounted(async () => {
   await store.loadQuotaData()
+  loading.value = true
+  try {
+    await store.loadWrongBookPage(1)
+  } finally {
+    loading.value = false
+  }
 })
+
+// Watch subject filter changes to reload data
+watch(() => store.wrongBookSubjectFilter, async () => {
+  loading.value = true
+  try {
+    await store.loadWrongBookPage(1, store.wrongBookSubjectFilter || undefined)
+  } finally {
+    loading.value = false
+  }
+})
+
+async function handlePageChange(page: number) {
+  loading.value = true
+  try {
+    await store.loadWrongBookPage(page, store.wrongBookSubjectFilter || undefined)
+  } finally {
+    loading.value = false
+  }
+}
+
+async function handlePageSizeChange(size: number) {
+  store.wrongBookPageSize = size
+  loading.value = true
+  try {
+    await store.loadWrongBookPage(1, store.wrongBookSubjectFilter || undefined)
+  } finally {
+    loading.value = false
+  }
+}
 
 // Quota: use real API data if available, fallback to local count
 const wrongBookQuotaUsed = computed(() => {

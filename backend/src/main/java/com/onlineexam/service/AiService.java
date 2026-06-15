@@ -99,7 +99,7 @@ public class AiService {
   @Value("${ai.rate-limit-per-minute:30}")
   private int rateLimitPerMinute;
 
-  @Value("${ai.concurrent-limit:4}")
+  @Value("${ai.concurrent-limit:1}")
   private int concurrentLimit;
 
   // ========== 并发控制 ==========
@@ -246,6 +246,9 @@ public class AiService {
     Store store = storeService.readStore();
     Map<String, Object> user = find(store.users, userId);
     if (!isRole(user, "teacher")) return error(HttpStatus.FORBIDDEN, "Forbidden.");
+
+    var apiKeyError = checkApiKeyConfigured();
+    if (apiKeyError != null) return apiKeyError;
 
     // 熔断器检查
     if (!circuitBreaker.allowRequest("generate")) {
@@ -421,6 +424,9 @@ public class AiService {
     Map<String, Object> user = find(store.users, userId);
     if (!isRole(user, "teacher")) return error(HttpStatus.FORBIDDEN, "Forbidden.");
 
+    var apiKeyError = checkApiKeyConfigured();
+    if (apiKeyError != null) return apiKeyError;
+
     // 熔断器检查
     if (!circuitBreaker.allowRequest("grade")) {
       return error(HttpStatus.SERVICE_UNAVAILABLE, "AI 评分服务暂时不可用（熔断保护中），请稍后重试");
@@ -548,6 +554,9 @@ public class AiService {
     Map<String, Object> user = find(store.users, userId);
     if (!isRole(user, "student")) return error(HttpStatus.FORBIDDEN, "Forbidden.");
 
+    var apiKeyError = checkApiKeyConfigured();
+    if (apiKeyError != null) return apiKeyError;
+
     // 熔断器检查
     if (!circuitBreaker.allowRequest("practice")) {
       return error(HttpStatus.SERVICE_UNAVAILABLE, "AI 练习服务暂时不可用（熔断保护中），请稍后重试");
@@ -628,6 +637,9 @@ public class AiService {
     Store store = storeService.readStore();
     Map<String, Object> user = find(store.users, userId);
     if (user == null) return error(HttpStatus.UNAUTHORIZED, "Not authenticated.");
+
+    var apiKeyError = checkApiKeyConfigured();
+    if (apiKeyError != null) return apiKeyError;
 
     if (!checkRateLimit(userId)) {
       return error(HttpStatus.TOO_MANY_REQUESTS, "AI 调用频率过高，请稍后再试");
@@ -796,7 +808,7 @@ public class AiService {
                                SseEmitter emitter) {
     if (apiKey == null || apiKey.isBlank()) {
       log.error("[AiService SSE] API密钥未配置，无法发起流式请求");
-      try { emitter.send(SseEmitter.event().name("error").data("{\"error\":\"AI API密钥未配置\"}")); emitter.complete(); }
+      try { emitter.send(SseEmitter.event().name("error").data("{\"error\":\"AI 功能暂未启用，请联系管理员配置 AI API 密钥\"}")); emitter.complete(); }
       catch (Exception ignored) {}
       return;
     }
@@ -895,8 +907,8 @@ public class AiService {
         // 429/503 重试
         if ((responseCode == 429 || responseCode == 503) && attempt < maxRetries) {
           long waitMs = responseCode == 429
-            ? (long) (3000 * Math.pow(3, attempt - 1))
-            : (long) (2000 * Math.pow(2.5, attempt - 1));
+            ? (long) (5000 * Math.pow(3, attempt - 1))
+            : (long) (3000 * Math.pow(2.5, attempt - 1));
           log.info("[AiService SSE] [{}] 收到{}，{}ms后重试", threadId, responseCode, waitMs);
           conn.disconnect(); conn = null;
           try { Thread.sleep(waitMs); } catch (InterruptedException ie) { Thread.currentThread().interrupt(); }
@@ -1198,6 +1210,9 @@ public class AiService {
     Map<String, Object> user = find(store.users, userId);
     if (user == null) return error(HttpStatus.UNAUTHORIZED, "Not authenticated.");
 
+    var apiKeyError = checkApiKeyConfigured();
+    if (apiKeyError != null) return apiKeyError;
+
     // 熔断器检查
     if (!circuitBreaker.allowRequest("chat")) {
       return error(HttpStatus.SERVICE_UNAVAILABLE, "AI 对话服务暂时不可用（熔断保护中），请稍后重试");
@@ -1384,6 +1399,14 @@ public class AiService {
 
   // ========== 非流式 AI API 调用 ==========
 
+  /** 检查 AI API 密钥是否已配置，未配置时返回错误响应 */
+  private ResponseEntity<Map<String, Object>> checkApiKeyConfigured() {
+    if (apiKey == null || apiKey.isBlank()) {
+      return error(HttpStatus.SERVICE_UNAVAILABLE, "AI 功能暂未启用，请联系管理员配置 AI API 密钥");
+    }
+    return null;
+  }
+
   String callAiApi(String systemPrompt, String userPrompt) {
     if (apiKey == null || apiKey.isBlank()) {
       throw new RuntimeException("AI API 密钥未配置，请联系管理员设置 AI_API_KEY 环境变量");
@@ -1449,7 +1472,7 @@ public class AiService {
         String msg = e.getMessage() != null ? e.getMessage() : "";
 
         if (msg.contains("429") && attempt < maxRetries) {
-          long waitMs = (long) (3000 * Math.pow(3, attempt - 1));
+          long waitMs = (long) (5000 * Math.pow(3, attempt - 1));
           log.info("[AiService] 非流式请求429，{}ms后重试(第{}次)", waitMs, attempt);
           try { Thread.sleep(waitMs); } catch (InterruptedException ie) { Thread.currentThread().interrupt(); }
           continue;
@@ -2088,7 +2111,7 @@ public class AiService {
       } catch (RestClientException e) {
         String msg = e.getMessage() != null ? e.getMessage() : "";
         if ((msg.contains("429") || msg.contains("500") || msg.contains("503")) && attempt < maxRetries) {
-          long waitMs = (long) (2000 * Math.pow(2, attempt));
+          long waitMs = (long) (5000 * Math.pow(2, attempt));
           log.info("[AiService] 意图分析API {}，{}ms后重试(第{}次)", msg.substring(0, Math.min(30, msg.length())), waitMs, attempt + 1);
           try { Thread.sleep(waitMs); } catch (InterruptedException ie) { Thread.currentThread().interrupt(); }
           continue;

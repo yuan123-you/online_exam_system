@@ -161,6 +161,11 @@ rm -rf dist
 npx vite build
 echo "  Frontend built to dist/"
 
+# Sync dist to backend static dir (for JAR embedded serving)
+rm -rf backend/src/main/resources/static
+cp -r dist backend/src/main/resources/static
+echo "  Synced dist/ to backend/src/main/resources/static/"
+
 # Build Backend
 echo ""
 echo "  Building backend (this may take a few minutes)..."

@@ -3,7 +3,7 @@
     <div class="section-title">
       <div>
         <h3>考试管理</h3>
-        <p class="section-subtitle">共 {{ filteredExams.length }} 场考试{{ hasFilter ? '（已筛选）' : '' }}</p>
+        <p class="section-subtitle">共 {{ pagination.total.value }} 场考试{{ hasFilter ? '（已筛选）' : '' }}</p>
       </div>
       <div class="section-actions">
         <div class="search-box">
@@ -49,7 +49,7 @@
           </tr>
         </thead>
         <tbody>
-          <tr v-if="paginatedExams.length === 0">
+          <tr v-if="pagination.paginatedData.value.length === 0">
             <td colspan="6" class="empty-cell">
               <div class="empty-state-inline">
                 <svg viewBox="0 0 24 24" width="32" height="32" fill="none" stroke="var(--muted-light)" stroke-width="1.5" stroke-linecap="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
@@ -57,7 +57,7 @@
               </div>
             </td>
           </tr>
-          <tr v-for="exam in paginatedExams" :key="exam.id">
+          <tr v-for="exam in pagination.paginatedData.value" :key="exam.id">
             <td data-label="考试名称"><strong>{{ exam.name }}</strong></td>
             <td data-label="试卷">{{ getPaperName(exam.paperId) }}</td>
             <td data-label="班级">
@@ -76,11 +76,14 @@
     </div>
 
     <!-- 分页 -->
-    <div v-if="totalPages > 1" class="pagination-bar">
-      <button class="ghost-btn" type="button" :disabled="currentPage <= 1" @click="currentPage--">上一页</button>
-      <span class="pagination-info">{{ currentPage }} / {{ totalPages }}</span>
-      <button class="ghost-btn" type="button" :disabled="currentPage >= totalPages" @click="currentPage++">下一页</button>
-    </div>
+    <PaginationBar
+      :total="pagination.total.value"
+      :current-page="pagination.currentPage.value"
+      :page-size="pagination.pageSize.value"
+      :page-size-options="pagination.pageSizeOptions"
+      @page-change="pagination.goToPage"
+      @page-size-change="pagination.changePageSize"
+    />
   </article>
 </template>
 
@@ -89,14 +92,13 @@ import { computed, ref, watch } from 'vue'
 import { useAppStore } from '@/stores/app'
 import { formatDate } from '@/utils/format'
 import type { Exam } from '@/types'
+import PaginationBar from '@/components/common/PaginationBar.vue'
+import { useClientPagination } from '@/composables/usePagination'
 
 const store = useAppStore()
 
 const searchQuery = ref('')
 const statusFilter = ref('')
-const currentPage = ref(1)
-const pageSize = 15
-
 const hasFilter = computed(() => !!(searchQuery.value.trim() || statusFilter.value))
 
 const allExams = computed(() => store.bootstrap?.exams || [])
@@ -139,15 +141,10 @@ const filteredExams = computed(() => {
   return list
 })
 
-const totalPages = computed(() => Math.max(1, Math.ceil(filteredExams.value.length / pageSize)))
-
-const paginatedExams = computed(() => {
-  const start = (currentPage.value - 1) * pageSize
-  return filteredExams.value.slice(start, start + pageSize)
-})
+const pagination = useClientPagination(filteredExams, { defaultPageSize: 15, pageSizeOptions: [10, 15, 20, 50] })
 
 watch([searchQuery, statusFilter], () => {
-  currentPage.value = 1
+  pagination.resetPage()
 })
 
 function toggleStatusFilter(status: string) {

@@ -3,7 +3,7 @@
     <div class="section-title">
       <div>
         <h3>系统日志</h3>
-        <p class="section-subtitle">共 {{ filteredLogs.length }} 条操作记录{{ hasFilter ? '（已筛选）' : '' }}</p>
+        <p class="section-subtitle">共 {{ store.totalLogs }} 条操作记录</p>
       </div>
       <div class="section-actions">
         <div class="search-box">
@@ -30,7 +30,12 @@
           </tr>
         </thead>
         <tbody>
-          <tr v-if="paginatedLogs.length === 0">
+          <tr v-if="store.logsLoading">
+            <td colspan="4" class="empty-cell">
+              <span class="loading-spinner"></span> 加载中...
+            </td>
+          </tr>
+          <tr v-if="!store.logsLoading && (store.paginatedLogs as any[]).length === 0">
             <td colspan="4" class="empty-cell">
               <div class="empty-state-inline">
                 <svg viewBox="0 0 24 24" width="32" height="32" fill="none" stroke="var(--muted-light)" stroke-width="1.5" stroke-linecap="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
@@ -38,82 +43,72 @@
               </div>
             </td>
           </tr>
-          <tr v-for="log in paginatedLogs" :key="log.id">
-            <td data-label="时间" class="log-time-cell">{{ formatDate(log.time) }}</td>
+          <tr v-for="log in (store.paginatedLogs as any[])" :key="(log as any).id">
+            <td data-label="时间" class="log-time-cell">{{ formatDate((log as any).time) }}</td>
             <td data-label="操作人">
               <div class="actor-cell">
-                <div class="actor-avatar">{{ (log.actorId || '?').charAt(0) }}</div>
-                <span>{{ log.actorId }}</span>
+                <div class="actor-avatar">{{ ((log as any).actorId || '?').charAt(0) }}</div>
+                <span>{{ (log as any).actorId }}</span>
               </div>
             </td>
             <td data-label="动作">
-              <span class="tag" :class="getActionTagClass(log.action)">{{ log.action }}</span>
+              <span class="tag" :class="getActionTagClass((log as any).action)">{{ (log as any).action }}</span>
             </td>
-            <td data-label="详情" class="cell-sub">{{ log.detail }}</td>
+            <td data-label="详情" class="cell-sub">{{ (log as any).detail }}</td>
           </tr>
         </tbody>
       </table>
     </div>
 
     <!-- 分页 -->
-    <div v-if="totalPages > 1" class="pagination-bar">
-      <button class="ghost-btn" type="button" :disabled="currentPage <= 1" @click="currentPage--">上一页</button>
-      <span class="pagination-info">{{ currentPage }} / {{ totalPages }}</span>
-      <button class="ghost-btn" type="button" :disabled="currentPage >= totalPages" @click="currentPage++">下一页</button>
-    </div>
+    <PaginationBar
+      :total="store.totalLogs"
+      :current-page="store.logsCurrentPage"
+      :page-size="store.logsPageSize"
+      :page-size-options="[10, 20, 50, 100]"
+      @page-change="handlePageChange"
+      @page-size-change="handlePageSizeChange"
+    />
   </article>
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { ref, computed, watch, onMounted } from 'vue'
 import { useAppStore } from '@/stores/app'
 import { formatDate } from '@/utils/format'
+import PaginationBar from '@/components/common/PaginationBar.vue'
 
 const store = useAppStore()
 
 const searchQuery = ref('')
 const actionFilter = ref('')
-const currentPage = ref(1)
-const pageSize = 20
 
 const hasFilter = computed(() => !!(searchQuery.value.trim() || actionFilter.value))
 
+// Get unique actions from bootstrap data for the filter dropdown
 const uniqueActions = computed(() => {
   const actions = new Set<string>()
   store.sortedLogs.forEach(log => actions.add(log.action))
   return [...actions].sort()
 })
 
-const filteredLogs = computed(() => {
-  let list = store.sortedLogs
-  if (actionFilter.value) {
-    list = list.filter(log => log.action === actionFilter.value)
-  }
-  if (searchQuery.value.trim()) {
-    const q = searchQuery.value.trim().toLowerCase()
-    list = list.filter(log =>
-      (log.actorId || '').toLowerCase().includes(q) ||
-      log.action.toLowerCase().includes(q) ||
-      (log.detail || '').toLowerCase().includes(q)
-    )
-  }
-  return list
-})
-
-const totalPages = computed(() => Math.max(1, Math.ceil(filteredLogs.value.length / pageSize)))
-
-const paginatedLogs = computed(() => {
-  const start = (currentPage.value - 1) * pageSize
-  return filteredLogs.value.slice(start, start + pageSize)
-})
-
 watch([searchQuery, actionFilter], () => {
-  currentPage.value = 1
+  store.loadLogsPage(1, searchQuery.value || undefined, actionFilter.value || undefined)
 })
+
+function handlePageChange(page: number) {
+  store.loadLogsPage(page, searchQuery.value || undefined, actionFilter.value || undefined)
+}
+
+function handlePageSizeChange(size: number) {
+  store.logsPageSize = size
+  store.loadLogsPage(1, searchQuery.value || undefined, actionFilter.value || undefined)
+}
 
 function clearFilters() {
   searchQuery.value = ''
   actionFilter.value = ''
+  store.loadLogsPage(1)
 }
 
 function getActionTagClass(action: string): string {
@@ -123,6 +118,10 @@ function getActionTagClass(action: string): string {
   if (action.includes('登录')) return 'tag-login'
   return 'tag-default'
 }
+
+onMounted(() => {
+  store.loadLogsPage(1)
+})
 </script>
 
 <style scoped>
@@ -273,6 +272,22 @@ function getActionTagClass(action: string): string {
 .empty-state-inline p {
   margin: 0;
   font-size: 14px;
+}
+
+.loading-spinner {
+  display: inline-block;
+  width: 18px;
+  height: 18px;
+  border: 2px solid var(--border, var(--line-soft));
+  border-top-color: var(--primary);
+  border-radius: 50%;
+  animation: spin 0.6s linear infinite;
+  vertical-align: middle;
+  margin-right: 6px;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
 }
 
 @media (max-width: 767px) {

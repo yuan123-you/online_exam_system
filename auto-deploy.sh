@@ -31,6 +31,11 @@ npm install --production=false >> "$LOG_FILE" 2>&1
 npx vite build >> "$LOG_FILE" 2>&1
 echo "$(date -Iseconds) Frontend built to dist/" >> "$LOG_FILE"
 
+# 2b. Sync dist to backend static dir (for JAR embedded serving)
+echo "$(date -Iseconds) Syncing dist to backend static dir..." >> "$LOG_FILE"
+rm -rf "$APP_DIR/backend/src/main/resources/static"
+cp -r "$APP_DIR/dist" "$APP_DIR/backend/src/main/resources/static" >> "$LOG_FILE" 2>&1
+
 # 3. Rebuild backend
 echo "$(date -Iseconds) Building backend..." >> "$LOG_FILE"
 cd "$APP_DIR/backend"

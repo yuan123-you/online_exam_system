@@ -86,7 +86,7 @@
               </div>
             </td>
           </tr>
-          <tr v-for="p in filteredPapers" :key="p.id">
+          <tr v-for="p in pagination.paginatedData.value" :key="p.id">
             <td data-label="试卷名称"><span class="paper-name">{{ p.name }}</span></td>
             <td data-label="题量"><span class="badge">{{ p.questionIds.length }} 题</span></td>
             <td data-label="总分"><span class="score-value">{{ p.totalScore }}</span></td>
@@ -111,12 +111,23 @@
         </tbody>
       </table>
     </div>
+
+    <PaginationBar
+      :total="pagination.total.value"
+      :current-page="pagination.currentPage.value"
+      :page-size="pagination.pageSize.value"
+      :page-size-options="pagination.pageSizeOptions"
+      @page-change="pagination.goToPage"
+      @page-size-change="pagination.changePageSize"
+    />
   </article>
 </template>
 
 <script setup lang="ts">
 import { ref, computed } from 'vue'
 import { useAppStore } from '@/stores/app'
+import PaginationBar from '@/components/common/PaginationBar.vue'
+import { useClientPagination } from '@/composables/usePagination'
 
 const store = useAppStore()
 const searchQuery = ref('')
@@ -126,6 +137,8 @@ const filteredPapers = computed(() => {
   if (!q) return store.myPapers
   return store.myPapers.filter(p => p.name.toLowerCase().includes(q))
 })
+
+const pagination = useClientPagination(filteredPapers, { defaultPageSize: 15, pageSizeOptions: [10, 15, 20, 50] })
 
 const totalQuestions = computed(() =>
   store.myPapers.reduce((sum, p) => sum + p.questionIds.length, 0)

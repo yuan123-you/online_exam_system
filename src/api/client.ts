@@ -386,6 +386,64 @@ export function batchRemoveWrongBook(ids: string[]) {
   });
 }
 
+// ========== Generic Pagination API ==========
+
+export interface PageResult {
+  rows: Array<Record<string, unknown>>;
+  total: number;
+  page: number;
+  pageSize: number;
+}
+
+export function loadUsersPage(params: {
+  page: number;
+  pageSize: number;
+  keyword?: string;
+  role?: string;
+  classId?: string;
+  departmentId?: string;
+}) {
+  const query = new URLSearchParams({
+    page: String(params.page),
+    pageSize: String(params.pageSize),
+    keyword: params.keyword || '',
+    role: params.role || '',
+    classId: params.classId || '',
+    departmentId: params.departmentId || '',
+  });
+  return request<PageResult>(`/api/users/page?${query.toString()}`);
+}
+
+export function loadLogsPage(params: {
+  page: number;
+  pageSize: number;
+  keyword?: string;
+  action?: string;
+}) {
+  const query = new URLSearchParams({
+    page: String(params.page),
+    pageSize: String(params.pageSize),
+    keyword: params.keyword || '',
+    action: params.action || '',
+  });
+  return request<PageResult>(`/api/logs/page?${query.toString()}`);
+}
+
+export function loadWrongBookPage(params: {
+  page: number;
+  pageSize: number;
+  subject?: string;
+  status?: string;
+}) {
+  const query = new URLSearchParams({
+    page: String(params.page),
+    pageSize: String(params.pageSize),
+    subject: params.subject || '',
+    status: params.status || '',
+  });
+  return request<PageResult>(`/api/wrongbook/page?${query.toString()}`);
+}
+
 // ========== AI API Functions ==========
 
 /**

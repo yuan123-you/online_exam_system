@@ -1,0 +1,408 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>游源 - 前端开发工程师简历</title>
+<style>
+  @page { margin: 0; size: A4; }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html { font-size: 15px; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  body {
+    font-family: "PingFang SC", "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif;
+    color: #2c2c2c;
+    background: #e8e8e8;
+    line-height: 1.65;
+    letter-spacing: 0.02em;
+  }
+
+  .page {
+    width: 210mm;
+    min-height: 297mm;
+    margin: 20px auto;
+    background: #fff;
+    box-shadow: 0 2px 20px rgba(0,0,0,0.12);
+    display: grid;
+    grid-template-columns: 220px 1fr;
+    overflow: hidden;
+  }
+
+  /* ========== 左侧栏 ========== */
+  .sidebar {
+    background: linear-gradient(175deg, #1a3a5c 0%, #1b4d72 40%, #1a5c6e 100%);
+    color: #e8f0f8;
+    padding: 36px 22px 30px;
+    display: flex;
+    flex-direction: column;
+    gap: 22px;
+  }
+
+  .avatar-area { text-align: center; margin-bottom: 4px; }
+  .avatar {
+    width: 96px; height: 96px;
+    border-radius: 50%;
+    background: rgba(255,255,255,0.15);
+    border: 3px solid rgba(255,255,255,0.35);
+    display: flex; align-items: center; justify-content: center;
+    margin: 0 auto 12px;
+    font-size: 36px; font-weight: 700; color: #fff;
+    letter-spacing: 2px;
+  }
+  .avatar-area h1 {
+    font-size: 22px; font-weight: 700; color: #fff;
+    letter-spacing: 4px; margin-bottom: 4px;
+  }
+  .avatar-area .intent {
+    font-size: 12.5px; color: rgba(255,255,255,0.75);
+    letter-spacing: 1px;
+  }
+
+  .sidebar-section { }
+  .sidebar-section-title {
+    font-size: 12px; font-weight: 700; color: rgba(255,255,255,0.5);
+    text-transform: uppercase; letter-spacing: 3px;
+    margin-bottom: 10px;
+    padding-bottom: 6px;
+    border-bottom: 1px solid rgba(255,255,255,0.12);
+  }
+
+  .contact-list { list-style: none; }
+  .contact-list li {
+    font-size: 12.5px;
+    margin-bottom: 9px;
+    display: flex; align-items: flex-start; gap: 8px;
+    line-height: 1.5;
+    color: rgba(255,255,255,0.88);
+  }
+  .contact-list li .icon {
+    flex-shrink: 0; width: 16px; text-align: center;
+    opacity: 0.6; margin-top: 1px; font-size: 13px;
+  }
+
+  .skill-group { margin-bottom: 12px; }
+  .skill-group-label {
+    font-size: 12px; font-weight: 600; color: rgba(255,255,255,0.7);
+    margin-bottom: 5px;
+  }
+  .skill-tags { display: flex; flex-wrap: wrap; gap: 4px; }
+  .skill-tag {
+    font-size: 11px; padding: 2px 8px;
+    background: rgba(255,255,255,0.1);
+    border: 1px solid rgba(255,255,255,0.15);
+    border-radius: 3px;
+    color: rgba(255,255,255,0.9);
+    white-space: nowrap;
+  }
+  .skill-tag.highlight {
+    background: rgba(255,255,255,0.18);
+    border-color: rgba(255,255,255,0.3);
+    color: #fff; font-weight: 600;
+  }
+
+  /* ========== 右侧主体 ========== */
+  .main {
+    padding: 36px 32px 30px 30px;
+    display: flex; flex-direction: column; gap: 24px;
+  }
+
+  .section {}
+  .section-header {
+    display: flex; align-items: center; gap: 10px;
+    margin-bottom: 14px;
+  }
+  .section-header .dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: #1a5c6e; flex-shrink: 0;
+  }
+  .section-header h2 {
+    font-size: 16px; font-weight: 700; color: #1a3a5c;
+    letter-spacing: 2px;
+  }
+  .section-header::after {
+    content: ""; flex: 1; height: 1px;
+    background: linear-gradient(90deg, #c8d8e4 0%, transparent 100%);
+    margin-left: 4px;
+  }
+
+  /* 教育经历 */
+  .edu-card {
+    display: flex; justify-content: space-between;
+    align-items: flex-start;
+    padding: 10px 16px;
+    background: #f7fafc;
+    border-radius: 6px;
+    border-left: 3px solid #1a5c6e;
+  }
+  .edu-left {}
+  .edu-school { font-size: 15px; font-weight: 700; color: #1a3a5c; }
+  .edu-detail { font-size: 13px; color: #5a6a7a; margin-top: 3px; }
+  .edu-time {
+    font-size: 12px; color: #8a9aaa;
+    text-align: right; white-space: nowrap;
+    padding-top: 2px;
+  }
+
+  /* 项目经验 */
+  .project-card {
+    background: #f7fafc;
+    border-radius: 8px;
+    padding: 18px 20px;
+    border: 1px solid #e6ecf2;
+  }
+  .project-header {
+    display: flex; justify-content: space-between;
+    align-items: flex-start;
+    margin-bottom: 8px;
+  }
+  .project-title { font-size: 15px; font-weight: 700; color: #1a3a5c; }
+  .project-role-tag {
+    font-size: 11px; padding: 2px 10px;
+    background: #1a5c6e; color: #fff;
+    border-radius: 10px; white-space: nowrap;
+    font-weight: 600;
+  }
+  .project-desc {
+    font-size: 13px; color: #5a6a7a;
+    margin-bottom: 12px; line-height: 1.7;
+  }
+  .project-tech-bar {
+    display: flex; flex-wrap: wrap; gap: 5px;
+    margin-bottom: 14px;
+  }
+  .project-tech-tag {
+    font-size: 11px; padding: 2px 8px;
+    background: #e3eef6; color: #1a5c6e;
+    border-radius: 3px; font-weight: 600;
+  }
+
+  .feature-section { margin-bottom: 12px; }
+  .feature-section:last-child { margin-bottom: 0; }
+  .feature-label {
+    font-size: 12.5px; font-weight: 700; color: #2c4a66;
+    margin-bottom: 6px;
+    display: flex; align-items: center; gap: 6px;
+  }
+  .feature-label .fl-icon { font-size: 13px; opacity: 0.5; }
+
+  .feature-list { list-style: none; }
+  .feature-list li {
+    font-size: 12.5px; line-height: 1.7;
+    margin-bottom: 5px;
+    padding-left: 14px;
+    position: relative;
+    color: #3a4a5a;
+  }
+  .feature-list li::before {
+    content: "●"; position: absolute; left: 0; top: 0;
+    color: #1a5c6e; font-size: 8px; line-height: 1.7;
+    transform: translateY(3px);
+  }
+  .feature-list li strong { color: #1a3a5c; font-weight: 600; }
+  .feature-list li .metric {
+    color: #1a5c6e; font-weight: 700;
+  }
+
+  /* 打印优化 */
+  @media print {
+    body { background: #fff; }
+    .page {
+      margin: 0; box-shadow: none;
+      width: 100%; min-height: 100vh;
+    }
+  }
+
+  @media screen and (max-width: 800px) {
+    .page {
+      width: 100%; grid-template-columns: 1fr;
+      margin: 0;
+    }
+    .sidebar { padding: 24px 20px; }
+    .main { padding: 24px 20px; }
+  }
+</style>
+</head>
+<body>
+
+<div class="page">
+  <!-- ==================== 左侧栏 ==================== -->
+  <aside class="sidebar">
+    <div class="avatar-area">
+      <div class="avatar">游</div>
+      <h1>游 源</h1>
+      <p class="intent">前端开发工程师</p>
+    </div>
+
+    <!-- 基本信息 -->
+    <div class="sidebar-section">
+      <div class="sidebar-section-title">基本信息</div>
+      <ul class="contact-list">
+        <li><span class="icon">✉</span> 1628973345@qq.com</li>
+        <li><span class="icon">☎</span> 18371353179</li>
+        <li><span class="icon">♂</span> 男 · 21岁 · 2027届</li>
+        <li><span class="icon">🎓</span> 湖北师范大学<br>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 计算机科学与技术（本科）</li>
+      </ul>
+    </div>
+
+    <!-- 技术技能 -->
+    <div class="sidebar-section">
+      <div class="sidebar-section-title">技术技能</div>
+
+      <div class="skill-group">
+        <div class="skill-group-label">前端框架</div>
+        <div class="skill-tags">
+          <span class="skill-tag highlight">Vue 3</span>
+          <span class="skill-tag">Vue Router</span>
+          <span class="skill-tag">Pinia</span>
+          <span class="skill-tag">Composition API</span>
+        </div>
+      </div>
+
+      <div class="skill-group">
+        <div class="skill-group-label">语言 & 工程化</div>
+        <div class="skill-tags">
+          <span class="skill-tag highlight">TypeScript</span>
+          <span class="skill-tag">JavaScript</span>
+          <span class="skill-tag">Vite</span>
+          <span class="skill-tag">HTML5</span>
+          <span class="skill-tag">CSS3</span>
+        </div>
+      </div>
+
+      <div class="skill-group">
+        <div class="skill-group-label">可视化 & UI</div>
+        <div class="skill-tags">
+          <span class="skill-tag">ECharts</span>
+          <span class="skill-tag">响应式设计</span>
+          <span class="skill-tag">KaTeX</span>
+        </div>
+      </div>
+
+      <div class="skill-group">
+        <div class="skill-group-label">工具 & 协作</div>
+        <div class="skill-tags">
+          <span class="skill-tag">Git</span>
+          <span class="skill-tag">RESTful API</span>
+          <span class="skill-tag">Fetch API</span>
+          <span class="skill-tag">Docker</span>
+        </div>
+      </div>
+
+      <div class="skill-group">
+        <div class="skill-group-label">后端了解</div>
+        <div class="skill-tags">
+          <span class="skill-tag">Spring Boot</span>
+          <span class="skill-tag">MySQL</span>
+          <span class="skill-tag">Node.js</span>
+        </div>
+      </div>
+    </div>
+
+  </aside>
+
+  <!-- ==================== 右侧主体 ==================== -->
+  <main class="main">
+
+    <!-- 教育经历 -->
+    <section class="section">
+      <div class="section-header">
+        <span class="dot"></span>
+        <h2>教育经历</h2>
+      </div>
+      <div class="edu-card">
+        <div class="edu-left">
+          <div class="edu-school">湖北师范大学</div>
+          <div class="edu-detail">计算机科学与技术 · 本科 · 工学学士</div>
+        </div>
+        <div class="edu-time">2023.09 — 2027.06</div>
+      </div>
+    </section>
+
+    <!-- 项目经验 -->
+    <section class="section">
+      <div class="section-header">
+        <span class="dot"></span>
+        <h2>核心项目经验</h2>
+      </div>
+
+      <div class="project-card">
+        <div class="project-header">
+          <div class="project-title">在线考试系统 — 前端工程</div>
+          <span class="project-role-tag">前端负责人</span>
+        </div>
+        <p class="project-desc">
+          在线考试平台，支持管理员、教师、学生三端分角色使用，覆盖题库管理、组卷发布、在线答题、自动阅卷、成绩分析全链路。前端采用 Vue 3 + TypeScript + Vite，后端通过 AI 协作完成 Spring Boot 服务开发。
+        </p>
+
+        <div class="project-tech-bar">
+          <span class="project-tech-tag">Vue 3</span>
+          <span class="project-tech-tag">TypeScript</span>
+          <span class="project-tech-tag">Vite</span>
+          <span class="project-tech-tag">Pinia</span>
+          <span class="project-tech-tag">Vue Router</span>
+          <span class="project-tech-tag">ECharts</span>
+          <span class="project-tech-tag">Composition API</span>
+          <span class="project-tech-tag">KaTeX</span>
+        </div>
+
+        <!-- 前端架构 -->
+        <div class="feature-section">
+          <div class="feature-label">
+            <span class="fl-icon">◆</span> 前端架构设计
+          </div>
+          <ul class="feature-list">
+            <li>基于 <strong>Vue 3 Composition API</strong> 开发 <strong>20+ 功能组件</strong>，按 admin / teacher / student 三端分层组织</li>
+            <li>使用 <strong>Pinia</strong> 构建全局状态管理（67KB Store），统一管理认证、业务数据与弹窗状态</li>
+            <li>封装 <strong>Vue Router 路由守卫</strong>，实现基于角色的动态路由分发与权限拦截</li>
+            <li>定义 <strong>20+ TypeScript 核心接口</strong>，覆盖全业务数据模型</li>
+          </ul>
+        </div>
+
+        <!-- 核心功能实现 -->
+        <div class="feature-section">
+          <div class="feature-label">
+            <span class="fl-icon">◆</span> 核心功能实现
+          </div>
+          <ul class="feature-list">
+            <li>开发<strong>在线考试引擎</strong>：实现倒计时控制、答案自动保存、防切屏检测与超限自动交卷</li>
+            <li>集成 <strong>ECharts</strong>，开发成绩分布柱状图、科目掌握度雷达图、成绩趋势折线图等分析面板</li>
+            <li>开发 <strong>AI 功能模块</strong>：AI 出题、AI 阅卷、AI 练习助手，通过 SSE 流式接口实现实时响应渲染</li>
+            <li>实现<strong>错题本系统</strong>：自动归集错题、支持错题重练与掌握度追踪</li>
+            <li>自研<strong>轻量级 xlsx 解析器</strong>，基于 ZIP + XML 原生实现 Excel 批量导入，零第三方依赖</li>
+          </ul>
+        </div>
+
+        <!-- 工程化与体验 -->
+        <div class="feature-section">
+          <div class="feature-label">
+            <span class="fl-icon">◆</span> 工程化与用户体验
+          </div>
+          <ul class="feature-list">
+            <li>封装 <strong>RESTful API 客户端</strong>，集成认证令牌管理、统一错误处理（含 429/503 状态码）、响应数据标准化</li>
+            <li>编写 <strong>4 个自定义 Composables</strong>（useResponsiveLayout、useDeviceType、useSmoothScroll、useAutoScroll）</li>
+            <li>实现<strong>响应式布局系统</strong>，支持桌面 / 平板 / 手机三端自适应，表格切换卡片、紧凑、完整三种模式</li>
+            <li>构建全局 <strong>Toast 通知系统</strong>与弹窗管理器，统一异步操作反馈</li>
+            <li>使用 <strong>Vite</strong> 配置开发代理、路径别名与生产构建</li>
+          </ul>
+        </div>
+
+        <!-- 协作模式 -->
+        <div class="feature-section">
+          <div class="feature-label">
+            <span class="fl-icon">◆</span> 协作与交付
+          </div>
+          <ul class="feature-list">
+            <li>前端由本人负责开发，后端通过 <strong>AI 协作完成 Spring Boot 服务开发</strong></li>
+            <li>前端代码量 <span class="metric">5000+</span> 行，含 <strong>20+ Vue 组件、4 个 Composables、28KB API 客户端</strong></li>
+            <li>配套输出 <span class="metric">7 份</span> 项目文档（需求规格、系统设计、测试报告、用户手册、部署说明等）</li>
+            <li>编写 <span class="metric">8 个</span> 工具脚本（数据迁移、题库生成、烟雾测试等）</li>
+          </ul>
+        </div>
+
+      </div>
+    </section>
+
+  </main>
+</div>
+
+</body>
+</html>

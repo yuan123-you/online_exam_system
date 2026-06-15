@@ -13,11 +13,13 @@ import java.util.Objects;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
+import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
@@ -73,6 +75,36 @@ public class AdminController {
     }
     if (!created.isEmpty()) systemLogService.log(user, "batch import users", String.valueOf(created.size()));
     return ResponseEntity.ok(mapOf("importedCount", created.size(), "failedCount", errors.size(), "created", created, "errors", errors));
+  }
+
+  /**
+   * 用户分页查询（管理员）
+   */
+  @GetMapping("/users/page")
+  public ResponseEntity<?> usersPage(@RequestHeader(value = "X-User-Id", required = false) String userId,
+                                     @RequestParam(defaultValue = "1") int page,
+                                     @RequestParam(defaultValue = "20") int pageSize,
+                                     @RequestParam(defaultValue = "") String keyword,
+                                     @RequestParam(defaultValue = "") String role,
+                                     @RequestParam(defaultValue = "") String classId,
+                                     @RequestParam(defaultValue = "") String departmentId) {
+    Map<String, Object> user = find(storeService.readStore().users, userId);
+    if (!isRole(user, "admin")) return error(HttpStatus.FORBIDDEN, "Forbidden.");
+    return ResponseEntity.ok(storeService.queryUsersPage(role, page, pageSize, keyword, classId, departmentId));
+  }
+
+  /**
+   * 系统日志分页查询（管理员）
+   */
+  @GetMapping("/logs/page")
+  public ResponseEntity<?> logsPage(@RequestHeader(value = "X-User-Id", required = false) String userId,
+                                    @RequestParam(defaultValue = "1") int page,
+                                    @RequestParam(defaultValue = "20") int pageSize,
+                                    @RequestParam(defaultValue = "") String keyword,
+                                    @RequestParam(defaultValue = "") String action) {
+    Map<String, Object> user = find(storeService.readStore().users, userId);
+    if (!isRole(user, "admin")) return error(HttpStatus.FORBIDDEN, "Forbidden.");
+    return ResponseEntity.ok(storeService.queryLogsPage(page, pageSize, keyword, action));
   }
 
   private Map<String, Object> find(List<Map<String, Object>> rows, String id) {

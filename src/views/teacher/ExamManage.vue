@@ -47,7 +47,7 @@
           </tr>
         </thead>
         <tbody>
-          <tr v-for="e in filteredExams" :key="e.id">
+          <tr v-for="e in pagination.paginatedData.value" :key="e.id">
             <td data-label="考试名称"><strong>{{ e.name }}</strong></td>
             <td data-label="试卷">{{ e.paperName || '-' }}</td>
             <td data-label="时间">
@@ -77,6 +77,15 @@
         <p class="empty-desc">{{ searchQuery ? '请尝试其他关键词' : '点击上方「发布考试」按钮创建第一场考试' }}</p>
       </div>
     </div>
+
+    <PaginationBar
+      :total="pagination.total.value"
+      :current-page="pagination.currentPage.value"
+      :page-size="pagination.pageSize.value"
+      :page-size-options="pagination.pageSizeOptions"
+      @page-change="pagination.goToPage"
+      @page-size-change="pagination.changePageSize"
+    />
   </article>
 </template>
 
@@ -85,6 +94,8 @@ import { ref, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAppStore } from '@/stores/app'
 import { formatDate } from '@/utils/format'
+import PaginationBar from '@/components/common/PaginationBar.vue'
+import { useClientPagination } from '@/composables/usePagination'
 
 const store = useAppStore()
 const router = useRouter()
@@ -95,6 +106,8 @@ const filteredExams = computed(() => {
   if (!q) return store.myExams
   return store.myExams.filter(e => e.name.toLowerCase().includes(q))
 })
+
+const pagination = useClientPagination(filteredExams, { defaultPageSize: 15, pageSizeOptions: [10, 15, 20, 50] })
 
 const activeCount = computed(() =>
   store.myExams.filter(e => (e.statusText || '已发布') === '进行中').length

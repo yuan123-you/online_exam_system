@@ -1,4 +1,5 @@
 @echo off
+setlocal enabledelayedexpansion
 chcp 65001 >nul 2>&1
 title 在线考试系统
 
@@ -43,6 +44,18 @@ if %ERRORLEVEL% neq 0 (
 :: 启动应用
 echo [3/3] 正在启动应用...
 echo.
+
+:: 读取 .env 文件中的环境变量
+if exist ".env" (
+    for /f "usebackq tokens=1,* delims==" %%a in (".env") do (
+        set "line=%%a"
+        if not "!line:~0,1!"=="#" (
+            set "%%a=%%b"
+        )
+    )
+    echo   [env] Loaded .env file
+)
+
 echo   后端地址: http://localhost:8080
 echo   前端开发: npm run dev:web (另开终端)
 echo   停止服务: Ctrl+C

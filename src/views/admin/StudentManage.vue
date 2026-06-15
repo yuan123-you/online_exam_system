@@ -3,7 +3,7 @@
     <div class="section-title">
       <div>
         <h3>学生管理</h3>
-        <p class="section-subtitle">共 {{ filteredStudents.length }} 名学生{{ searchQuery ? '（已筛选）' : '' }}</p>
+        <p class="section-subtitle">共 {{ store.totalUsers }} 名学生{{ searchQuery ? '（已筛选）' : '' }}</p>
       </div>
       <div class="section-actions">
         <div class="search-box">
@@ -32,7 +32,12 @@
           </tr>
         </thead>
         <tbody>
-          <tr v-if="paginatedStudents.length === 0">
+          <tr v-if="store.usersLoading">
+            <td colspan="5" class="empty-cell">
+              <span class="loading-spinner"></span> 加载中...
+            </td>
+          </tr>
+          <tr v-if="!store.usersLoading && store.paginatedUsers.length === 0">
             <td colspan="5" class="empty-cell">
               <div class="empty-state-inline">
                 <svg viewBox="0 0 24 24" width="32" height="32" fill="none" stroke="var(--muted-light)" stroke-width="1.5" stroke-linecap="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
@@ -41,18 +46,18 @@
               </div>
             </td>
           </tr>
-          <tr v-for="user in paginatedStudents" :key="user.id">
-            <td data-label="学号"><code class="user-code">{{ user.username }}</code></td>
-            <td data-label="姓名"><strong>{{ user.name }}</strong></td>
+          <tr v-for="user in (store.paginatedUsers as any)" :key="(user as any).id">
+            <td data-label="学号"><code class="user-code">{{ (user as any).username }}</code></td>
+            <td data-label="姓名"><strong>{{ (user as any).name }}</strong></td>
             <td data-label="班级">
-              <span class="tag">{{ store.className(user.classId) }}</span>
+              <span class="tag">{{ store.className((user as any).classId) }}</span>
             </td>
-            <td data-label="专业">{{ user.major || '-' }}</td>
+            <td data-label="专业">{{ (user as any).major || '-' }}</td>
             <td data-label="操作">
               <div class="action-row">
                 <button class="ghost-btn" type="button" @click="store.openEditor('student', user)">编辑</button>
-                <button class="ghost-btn reset-pwd-btn" type="button" @click="handleResetPassword(user)">重置密码</button>
-                <button class="danger-btn" type="button" @click="store.removeEntity('users', user.id)">删除</button>
+                <button class="ghost-btn reset-pwd-btn" type="button" @click="handleResetPassword(user as any)">重置密码</button>
+                <button class="danger-btn" type="button" @click="store.removeEntity('users', (user as any).id)">删除</button>
               </div>
             </td>
           </tr>
@@ -61,55 +66,42 @@
     </div>
 
     <!-- 分页 -->
-    <div v-if="totalPages > 1" class="pagination-bar">
-      <button class="ghost-btn" type="button" :disabled="currentPage <= 1" @click="currentPage--">上一页</button>
-      <span class="pagination-info">{{ currentPage }} / {{ totalPages }}</span>
-      <button class="ghost-btn" type="button" :disabled="currentPage >= totalPages" @click="currentPage++">下一页</button>
-    </div>
+    <PaginationBar
+      :total="store.totalUsers"
+      :current-page="store.usersCurrentPage"
+      :page-size="store.usersPageSize"
+      :page-size-options="[10, 20, 50]"
+      @page-change="handlePageChange"
+      @page-size-change="handlePageSizeChange"
+    />
   </article>
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { ref, watch, onMounted } from 'vue'
 import { useAppStore } from '@/stores/app'
 import { resetPassword } from '@/api/client'
 import type { User } from '@/types'
+import PaginationBar from '@/components/common/PaginationBar.vue'
 
 const store = useAppStore()
 
 const searchQuery = ref('')
 const classFilter = ref('')
-const currentPage = ref(1)
-const pageSize = 20
 
-// 筛选后的学生列表
-const filteredStudents = computed(() => {
-  let list = store.students
-  if (classFilter.value) {
-    list = list.filter(u => u.classId === classFilter.value)
-  }
-  if (searchQuery.value.trim()) {
-    const q = searchQuery.value.trim().toLowerCase()
-    list = list.filter(u =>
-      u.username.toLowerCase().includes(q) ||
-      u.name.toLowerCase().includes(q) ||
-      (u.major || '').toLowerCase().includes(q)
-    )
-  }
-  return list
-})
-
-const totalPages = computed(() => Math.max(1, Math.ceil(filteredStudents.value.length / pageSize)))
-
-const paginatedStudents = computed(() => {
-  const start = (currentPage.value - 1) * pageSize
-  return filteredStudents.value.slice(start, start + pageSize)
-})
-
-// 搜索或筛选变化时重置页码
+// 搜索或筛选变化时重新查询
 watch([searchQuery, classFilter], () => {
-  currentPage.value = 1
+  store.loadUsersPage(1, searchQuery.value || undefined, 'student', classFilter.value || undefined)
 })
+
+function handlePageChange(page: number) {
+  store.loadUsersPage(page, searchQuery.value || undefined, 'student', classFilter.value || undefined)
+}
+
+function handlePageSizeChange(size: number) {
+  store.usersPageSize = size
+  store.loadUsersPage(1, searchQuery.value || undefined, 'student', classFilter.value || undefined)
+}
 
 async function handleResetPassword(user: User) {
   if (!confirm(`确定要重置 ${user.name} 的密码为 123456 吗？`)) return
@@ -120,6 +112,10 @@ async function handleResetPassword(user: User) {
     store.showToast(err?.message || '重置密码失败', 'error')
   }
 }
+
+onMounted(() => {
+  store.loadUsersPage(1, undefined, 'student')
+})
 </script>
 
 <style scoped>
@@ -241,6 +237,23 @@ async function handleResetPassword(user: User) {
 .empty-state-inline p {
   margin: 0;
   font-size: 14px;
+}
+
+/* 加载动画 */
+.loading-spinner {
+  display: inline-block;
+  width: 18px;
+  height: 18px;
+  border: 2px solid var(--border, var(--line-soft));
+  border-top-color: var(--primary);
+  border-radius: 50%;
+  animation: spin 0.6s linear infinite;
+  vertical-align: middle;
+  margin-right: 6px;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
 }
 
 /* 响应式 */

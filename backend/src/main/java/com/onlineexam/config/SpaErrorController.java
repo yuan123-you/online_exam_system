@@ -2,17 +2,16 @@ package com.onlineexam.config;
 
 import jakarta.servlet.RequestDispatcher;
 import jakarta.servlet.http.HttpServletRequest;
-import jakarta.servlet.http.HttpServletResponse;
-import org.springframework.boot.web.server.ErrorPage;
-import org.springframework.boot.web.server.ErrorPageRegistrar;
 import org.springframework.boot.web.servlet.error.ErrorController;
-import org.springframework.context.annotation.Bean;
+import org.springframework.core.io.ClassPathResource;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
-import org.springframework.stereotype.Controller;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
 
 import java.io.IOException;
-import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 
 /**
@@ -23,11 +22,11 @@ import java.nio.charset.StandardCharsets;
  * and Spring's resource handlers. The ErrorController only fires AFTER all
  * other handlers (resource, API) have failed to match.
  */
-@Controller
+@RestController
 public class SpaErrorController implements ErrorController {
 
   @RequestMapping("/error")
-  public void handleError(HttpServletRequest request, HttpServletResponse response) throws IOException {
+  public ResponseEntity<?> handleError(HttpServletRequest request) throws IOException {
     Object statusObj = request.getAttribute(RequestDispatcher.ERROR_STATUS_CODE);
     int statusCode;
     try {
@@ -41,15 +40,12 @@ public class SpaErrorController implements ErrorController {
       String path = pathObj instanceof String s ? s : null;
       // Only serve index.html for SPA routes (not API calls or missing static assets)
       if (path != null && !path.startsWith("/api/") && !path.startsWith("/assets/")) {
-        response.setStatus(200);
-        response.setContentType("text/html");
-        // Read index.html from classpath
-        try (InputStream in = getClass().getClassLoader().getResourceAsStream("static/index.html")) {
-          if (in != null) {
-            byte[] bytes = in.readAllBytes();
-            response.getOutputStream().write(bytes);
-            return;
-          }
+        ClassPathResource indexHtml = new ClassPathResource("static/index.html");
+        if (indexHtml.exists()) {
+          byte[] content = indexHtml.getInputStream().readAllBytes();
+          HttpHeaders headers = new HttpHeaders();
+          headers.setContentType(MediaType.TEXT_HTML);
+          return new ResponseEntity<>(content, headers, HttpStatus.OK);
         }
       }
     }
@@ -60,10 +56,8 @@ public class SpaErrorController implements ErrorController {
     } catch (IllegalArgumentException e) {
       errorPhrase = "Internal Server Error";
     }
-    response.setStatus(statusCode);
-    response.setContentType("application/json");
-    response.getOutputStream().write(
-      ("{\"status\":" + statusCode + ",\"error\":\"" + errorPhrase + "\"}").getBytes(StandardCharsets.UTF_8)
-    );
+    return ResponseEntity.status(statusCode)
+        .contentType(MediaType.APPLICATION_JSON)
+        .body(("{\"status\":" + statusCode + ",\"error\":\"" + errorPhrase + "\"}").getBytes(StandardCharsets.UTF_8));
   }
 }

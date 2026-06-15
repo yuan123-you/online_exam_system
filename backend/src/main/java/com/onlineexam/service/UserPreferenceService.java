@@ -2,6 +2,7 @@ package com.onlineexam.service;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import jakarta.annotation.PostConstruct;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
@@ -75,6 +76,23 @@ public class UserPreferenceService {
     this.jdbc = jdbc;
     this.aiService = aiService;
     this.objectMapper = objectMapper;
+  }
+
+  @PostConstruct
+  void initTables() {
+    try {
+      jdbc.execute("CREATE TABLE IF NOT EXISTS user_behavior_log (id VARCHAR(64) PRIMARY KEY, user_id VARCHAR(64) NOT NULL, action VARCHAR(50) NOT NULL, target_type VARCHAR(50), target_id VARCHAR(64), detail JSON, duration_ms INT DEFAULT 0, created_at DATETIME(3) NOT NULL, INDEX idx_behavior_user (user_id), INDEX idx_behavior_action (action), INDEX idx_behavior_time (created_at)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+    } catch (Exception e) { log.warn("创建user_behavior_log表失败: {}", e.getMessage()); }
+    try {
+      jdbc.execute("CREATE TABLE IF NOT EXISTS user_profile (id VARCHAR(64) PRIMARY KEY, user_id VARCHAR(64) NOT NULL UNIQUE, learning_style VARCHAR(20) DEFAULT 'balanced', difficulty_preference VARCHAR(20) DEFAULT 'medium', activity_level VARCHAR(20) DEFAULT 'moderate', subject_affinity JSON, knowledge_gaps JSON, study_patterns JSON, ai_summary TEXT, profile_version INT DEFAULT 1, created_at DATETIME(3) NOT NULL, updated_at DATETIME(3) NOT NULL, INDEX idx_profile_user (user_id)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+    } catch (Exception e) { log.warn("创建user_profile表失败: {}", e.getMessage()); }
+    try {
+      jdbc.execute("CREATE TABLE IF NOT EXISTS recommendation_feedback (id VARCHAR(64) PRIMARY KEY, user_id VARCHAR(64) NOT NULL, recommendation_type VARCHAR(50) NOT NULL, recommendation_content JSON, feedback_type VARCHAR(20) NOT NULL, feedback_detail TEXT, created_at DATETIME(3) NOT NULL, INDEX idx_feedback_user (user_id), INDEX idx_feedback_type (recommendation_type), INDEX idx_feedback_time (created_at)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+    } catch (Exception e) { log.warn("创建recommendation_feedback表失败: {}", e.getMessage()); }
+    // 修复旧表中 recommendation_content NOT NULL 约束
+    try {
+      jdbc.execute("ALTER TABLE recommendation_feedback MODIFY COLUMN recommendation_content JSON");
+    } catch (Exception e) { /* 列已是可空或表不存在，忽略 */ }
   }
 
   // ========== 用户行为记录 ==========
@@ -1032,13 +1050,18 @@ public class UserPreferenceService {
       if (content != null) contentJson = objectMapper.writeValueAsString(content);
     } catch (Exception e) { /* ignore */ }
 
-    jdbc.update(
-      "INSERT INTO recommendation_feedback (id, user_id, recommendation_type, recommendation_content, " +
-      "feedback_type, feedback_detail, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-      id, userId, recommendationType, contentJson, feedbackType,
-      str(body, "feedbackDetail"),
-      LocalDateTime.ofInstant(Instant.now(), ZoneId.systemDefault())
-    );
+    try {
+      jdbc.update(
+        "INSERT INTO recommendation_feedback (id, user_id, recommendation_type, recommendation_content, " +
+        "feedback_type, feedback_detail, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        id, userId, recommendationType, contentJson, feedbackType,
+        str(body, "feedbackDetail"),
+        LocalDateTime.ofInstant(Instant.now(), ZoneId.systemDefault())
+      );
+    } catch (Exception e) {
+      log.error("[UserPreferenceService] 推荐反馈写入失败(表可能不存在): {}", e.getMessage());
+      return ResponseEntity.ok(Map.of("submitted", true, "message", "感谢你的反馈，我们将持续优化推荐内容"));
+    }
 
     // 反馈后使推荐和画像缓存失效，下次请求时重新生成
     recommendationCache.remove(userId);
@@ -1063,7 +1086,9 @@ public class UserPreferenceService {
         objectMapper.writeValueAsString(Map.of("feedbackType", feedbackType)),
         LocalDateTime.ofInstant(Instant.now(), ZoneId.systemDefault())
       );
-    } catch (Exception e) { /* ignore */ }
+    } catch (Exception e) {
+      log.warn("[UserPreferenceService] 行为日志写入失败: {}", e.getMessage());
+    }
   }
 
   // ========== 兼容旧接口 ==========

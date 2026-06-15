@@ -18,11 +18,11 @@ spring:
 
 ai:
   api-url: https://open.bigmodel.cn/api/paas/v4/chat/completions
-  api-key: ${AI_API_KEY:}
+  api-key: ${AI_API_KEY:82f20bac24a545c595dc30f7eee3dfd1.eJmxuTgiNAxaDNEX}
   model: glm-4.7-flash
   timeout-ms: 120000
   rate-limit-per-minute: 30
-  concurrent-limit: 8
+  concurrent-limit: 1
   circuit-breaker:
     failure-threshold: 5
     reset-timeout-seconds: 30

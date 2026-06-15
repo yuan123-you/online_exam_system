@@ -11,6 +11,31 @@ if (!fs.existsSync(cpFile)) {
   process.exit(1);
 }
 
+// 读取 .env 文件并注入环境变量
+function loadEnv() {
+  const envPath = path.join(root, ".env");
+  const env = { ...process.env };
+  if (fs.existsSync(envPath)) {
+    const content = fs.readFileSync(envPath, "utf-8");
+    for (const line of content.split("\n")) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith("#")) continue;
+      const eqIndex = trimmed.indexOf("=");
+      if (eqIndex > 0) {
+        const key = trimmed.substring(0, eqIndex).trim();
+        const value = trimmed.substring(eqIndex + 1).trim();
+        if (key && !(key in env)) {
+          env[key] = value;
+        }
+      }
+    }
+    console.log("[env] Loaded .env file");
+  } else {
+    console.warn("[env] .env file not found, using system environment variables only");
+  }
+  return env;
+}
+
 const depClasspath = fs.readFileSync(cpFile, "utf-8").trim();
 const sep = process.platform === "win32" ? ";" : ":";
 const classpath = `${classesDir}${sep}${depClasspath}`;
@@ -18,7 +43,7 @@ const classpath = `${classesDir}${sep}${depClasspath}`;
 const child = spawn("java", ["-cp", classpath, "com.onlineexam.OnlineExamApplication"], {
   cwd: root,
   stdio: "inherit",
-  env: { ...process.env },
+  env: loadEnv(),
 });
 
 child.on("error", (err) => {

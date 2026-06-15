@@ -3,7 +3,7 @@
     <div class="section-title">
       <div>
         <h3>教师管理</h3>
-        <p class="section-subtitle">共 {{ filteredTeachers.length }} 名教师{{ searchQuery ? '（已筛选）' : '' }}</p>
+        <p class="section-subtitle">共 {{ store.totalUsers }} 名教师{{ searchQuery ? '（已筛选）' : '' }}</p>
       </div>
       <div class="section-actions">
         <div class="search-box">
@@ -31,7 +31,13 @@
           </tr>
         </thead>
         <tbody>
-          <tr v-if="paginatedTeachers.length === 0">
+          <tr v-if="store.usersLoading">
+            <td colspan="4" class="loading-cell">
+              <div class="loading-spinner"></div>
+              <span>加载中...</span>
+            </td>
+          </tr>
+          <tr v-else-if="(store.paginatedUsers as any).length === 0">
             <td colspan="4" class="empty-cell">
               <div class="empty-state-inline">
                 <svg viewBox="0 0 24 24" width="32" height="32" fill="none" stroke="var(--muted-light)" stroke-width="1.5" stroke-linecap="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
@@ -40,7 +46,7 @@
               </div>
             </td>
           </tr>
-          <tr v-for="user in paginatedTeachers" :key="user.id">
+          <tr v-for="user in (store.paginatedUsers as any)" :key="user.id">
             <td data-label="账号"><code class="user-code">{{ user.username }}</code></td>
             <td data-label="姓名"><strong>{{ user.name }}</strong></td>
             <td data-label="学院">
@@ -59,52 +65,41 @@
     </div>
 
     <!-- 分页 -->
-    <div v-if="totalPages > 1" class="pagination-bar">
-      <button class="ghost-btn" type="button" :disabled="currentPage <= 1" @click="currentPage--">上一页</button>
-      <span class="pagination-info">{{ currentPage }} / {{ totalPages }}</span>
-      <button class="ghost-btn" type="button" :disabled="currentPage >= totalPages" @click="currentPage++">下一页</button>
-    </div>
+    <PaginationBar
+      :total="store.totalUsers"
+      :current-page="store.usersCurrentPage"
+      :page-size="store.usersPageSize"
+      :page-size-options="[10, 20, 50]"
+      @page-change="handlePageChange"
+      @page-size-change="handlePageSizeChange"
+    />
   </article>
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { ref, watch, onMounted } from 'vue'
 import { useAppStore } from '@/stores/app'
 import { resetPassword } from '@/api/client'
 import type { User } from '@/types'
+import PaginationBar from '@/components/common/PaginationBar.vue'
 
 const store = useAppStore()
 
 const searchQuery = ref('')
 const deptFilter = ref('')
-const currentPage = ref(1)
-const pageSize = 20
-
-const filteredTeachers = computed(() => {
-  let list = store.teachers
-  if (deptFilter.value) {
-    list = list.filter(u => u.departmentId === deptFilter.value)
-  }
-  if (searchQuery.value.trim()) {
-    const q = searchQuery.value.trim().toLowerCase()
-    list = list.filter(u =>
-      u.username.toLowerCase().includes(q) ||
-      u.name.toLowerCase().includes(q)
-    )
-  }
-  return list
-})
-
-const totalPages = computed(() => Math.max(1, Math.ceil(filteredTeachers.value.length / pageSize)))
-
-const paginatedTeachers = computed(() => {
-  const start = (currentPage.value - 1) * pageSize
-  return filteredTeachers.value.slice(start, start + pageSize)
-})
 
 watch([searchQuery, deptFilter], () => {
-  currentPage.value = 1
+  store.loadUsersPage(1, searchQuery.value || undefined, 'teacher', undefined, deptFilter.value || undefined)
 })
+
+function handlePageChange(page: number) {
+  store.loadUsersPage(page, searchQuery.value || undefined, 'teacher', undefined, deptFilter.value || undefined)
+}
+
+function handlePageSizeChange(size: number) {
+  store.usersPageSize = size
+  store.loadUsersPage(1, searchQuery.value || undefined, 'teacher', undefined, deptFilter.value || undefined)
+}
 
 async function handleResetPassword(user: User) {
   if (!confirm(`确定要重置 ${user.name} 的密码为 123456 吗？`)) return
@@ -115,6 +110,10 @@ async function handleResetPassword(user: User) {
     store.showToast(err?.message || '重置密码失败', 'error')
   }
 }
+
+onMounted(() => {
+  store.loadUsersPage(1, undefined, 'teacher')
+})
 </script>
 
 <style scoped>
@@ -231,6 +230,32 @@ async function handleResetPassword(user: User) {
 .empty-state-inline p {
   margin: 0;
   font-size: 14px;
+}
+
+/* 加载状态 */
+.loading-cell {
+  text-align: center !important;
+  padding: 40px 20px !important;
+  display: table-cell;
+}
+
+.loading-cell > * {
+  display: inline-block;
+  vertical-align: middle;
+}
+
+.loading-spinner {
+  width: 20px;
+  height: 20px;
+  border: 2.5px solid var(--line-soft);
+  border-top-color: var(--primary);
+  border-radius: 50%;
+  animation: spin 0.6s linear infinite;
+  margin-right: 8px;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
 }
 
 @media (max-width: 767px) {

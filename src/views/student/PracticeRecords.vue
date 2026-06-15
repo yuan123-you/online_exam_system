@@ -29,7 +29,7 @@
           </tr>
         </thead>
         <tbody>
-          <tr v-for="r in practiceRecords" :key="r.id">
+          <tr v-for="r in pagination.paginatedData.value" :key="r.id">
             <td data-label="科目">{{ r.subject }}</td>
             <td data-label="题型"><span class="tag">{{ typeLabel(r.type as any) }}</span></td>
             <td data-label="题目" class="cell-title">{{ r.title?.slice(0, 30) }}{{ (r.title?.length || 0) > 30 ? '...' : '' }}</td>
@@ -43,6 +43,15 @@
         </tbody>
       </table>
     </div>
+
+    <PaginationBar
+      :total="pagination.total.value"
+      :current-page="pagination.currentPage.value"
+      :page-size="pagination.pageSize.value"
+      :page-size-options="pagination.pageSizeOptions"
+      @page-change="pagination.goToPage"
+      @page-size-change="pagination.changePageSize"
+    />
   </article>
 </template>
 
@@ -51,6 +60,8 @@ import { computed, onMounted } from 'vue'
 import { useAppStore } from '@/stores/app'
 import { typeLabel, formatDate } from '@/utils/format'
 import QuotaBar from '@/components/common/QuotaBar.vue'
+import PaginationBar from '@/components/common/PaginationBar.vue'
+import { useClientPagination } from '@/composables/usePagination'
 
 const store = useAppStore()
 
@@ -70,6 +81,8 @@ const practiceRecords = computed(() => {
     .filter(e => e.studentId === store.currentUser?.id && (e as any).status === 'practice')
     .map(e => ({ ...e, lastWrongAt: (e as any).lastWrongAt || (e as any).lastRetryAt || '' }))
 })
+
+const pagination = useClientPagination(practiceRecords, { defaultPageSize: 20, pageSizeOptions: [10, 20, 50] })
 </script>
 
 <style scoped>

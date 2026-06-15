@@ -7,9 +7,14 @@
     "dev": "npm run build:web && mvn -s .mvn/settings.xml -f backend/pom.xml -DskipTests compile -q && mvn -s .mvn/settings.xml -f backend/pom.xml dependency:build-classpath -Dmdep.outputFile=target/cp.txt -q && node scripts/run-backend.js",
     "backend:build": "mvn -s .mvn/settings.xml -f backend/pom.xml -DskipTests compile && mvn -s .mvn/settings.xml -f backend/pom.xml dependency:build-classpath -Dmdep.outputFile=target/cp.txt",
     "dev:web": "vite --host",
-    "build:web": "vite build",
+    "build:web": "vite build && node -e \"const fs=require('fs'),p=require('path');const s=p.join('dist'),d=p.join('backend','src','main','resources','static');fs.rmSync(d,{recursive:true,force:true});fs.cpSync(s,d,{recursive:true})\"",
     "preview:web": "vite preview",
-    "test:smoke": "node scripts/smoke-test.js"
+    "test:smoke": "node scripts/smoke-test.js",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "verify:build": "node scripts/verify-build-consistency.js",
+    "predeploy": "npm run build:web && npm run verify:build"
   },
   "keywords": [],
   "author": "",
@@ -27,8 +32,12 @@
   "devDependencies": {
     "@types/node": "^25.6.0",
     "@vitejs/plugin-vue": "^6.0.6",
+    "@vitest/coverage-v8": "^4.1.9",
+    "@vue/test-utils": "^2.4.11",
+    "happy-dom": "^20.10.3",
     "typescript": "^6.0.3",
     "vite": "^8.0.10",
+    "vitest": "^4.1.9",
     "vue-tsc": "^3.2.7"
   }
 }

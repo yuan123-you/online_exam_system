@@ -43,6 +43,9 @@ import {
   batchRestoreQuestions,
   batchRemoveWrongBook,
   loadQuestionsPage as apiLoadQuestionsPage,
+  loadUsersPage as apiLoadUsersPage,
+  loadLogsPage as apiLoadLogsPage,
+  loadWrongBookPage as apiLoadWrongBookPage,
   aiChat as apiAiChat,
   aiChatStream as apiAiChatStream,
   listConversations,
@@ -80,6 +83,7 @@ import type {
   AiExplainResult,
   QuotaResult,
   QuestionsPageResult,
+  PageResult,
   Conversation,
   ChatMessage,
   ChatResult,
@@ -200,6 +204,27 @@ export const useAppStore = defineStore('app', () => {
   const currentPage = ref(1)
   const pageSize = ref(50)
   const questionsLoading = ref(false)
+
+  // Users pagination state (admin)
+  const paginatedUsers = ref<Array<Record<string, unknown>>>([])
+  const totalUsers = ref(0)
+  const usersCurrentPage = ref(1)
+  const usersPageSize = ref(20)
+  const usersLoading = ref(false)
+
+  // Logs pagination state (admin)
+  const paginatedLogs = ref<Array<Record<string, unknown>>>([])
+  const totalLogs = ref(0)
+  const logsCurrentPage = ref(1)
+  const logsPageSize = ref(20)
+  const logsLoading = ref(false)
+
+  // Wrong book pagination state (student)
+  const paginatedWrongBook = ref<Array<Record<string, unknown>>>([])
+  const totalWrongBook = ref(0)
+  const wrongBookCurrentPage = ref(1)
+  const wrongBookPageSize = ref(20)
+  const wrongBookLoading = ref(false)
 
   // AI Features state
   const aiQuestions = ref<AiQuestion[]>([])
@@ -540,15 +565,27 @@ export const useAppStore = defineStore('app', () => {
     if (savedToken) {
       setCurrentAuthToken(savedToken)
       try {
-        bootstrap.value = await apiLoadBootstrap()
-        handleLoadConversations() // load conversation history in background
-        handleLoadPreferences()   // load user preferences for personalization
-        loadRecommendations()     // load personalized recommendations
-        loadNotificationData()    // load notification data
-      } catch {
-        setCurrentAuthToken('')
-        localStorage.removeItem('auth_token')
-        bootstrap.value = null
+        const data = await apiLoadBootstrap()
+        // 后端未登录时返回 200 + currentUser 为空字符串，需检测并清除 token
+        if (!data.currentUser || !data.currentUser.id) {
+          setCurrentAuthToken('')
+          localStorage.removeItem('auth_token')
+          bootstrap.value = null
+        } else {
+          bootstrap.value = data
+          handleLoadConversations() // load conversation history in background
+          handleLoadPreferences()   // load user preferences for personalization
+          loadRecommendations()     // load personalized recommendations
+          loadNotificationData()    // load notification data
+        }
+      } catch (err: any) {
+        // 仅在 401（未授权）时清除 token，服务端 500 等错误不应登出用户
+        if (err?.message?.includes('登录状态已失效') || err?.message?.includes('401')) {
+          setCurrentAuthToken('')
+          localStorage.removeItem('auth_token')
+          bootstrap.value = null
+        }
+        // 其他错误（如 500）保留 token，用户刷新页面可重试
       }
     }
     authReady.value = true
@@ -562,7 +599,17 @@ export const useAppStore = defineStore('app', () => {
       setCurrentAuthToken(result.user.id)
       localStorage.setItem('auth_token', result.user.id)
       bootstrap.value = null // clear stale data from previous user immediately
-      await loadData()       // ensure fresh data before UI renders
+      try {
+        await loadData()       // ensure fresh data before UI renders
+      } catch (loadErr: any) {
+        // loadData 失败意味着 bootstrap 数据不可用，用户无法正常使用系统
+        // 必须清除 token 并报告登录失败，确保提示与实际状态一致
+        setCurrentAuthToken('')
+        localStorage.removeItem('auth_token')
+        bootstrap.value = null
+        loginMessage.value = loadErr?.message || '登录成功但加载用户数据失败，请稍后重试。'
+        return false
+      }
       loadNotificationData() // load notifications for new user
       showToast('登录成功，欢迎回来！', 'success')
       return true
@@ -578,13 +625,15 @@ export const useAppStore = defineStore('app', () => {
     try {
       bootstrap.value = await apiLoadBootstrap()
     } catch (err: any) {
-      if (bootstrap.value) {
-        // silent refresh failure
-      } else {
+      if (err?.message?.includes('登录状态已失效') || err?.message?.includes('401')) {
+        // 仅 401 时清除 token
         setCurrentAuthToken('')
         localStorage.removeItem('auth_token')
         bootstrap.value = null
       }
+      // 始终向上抛出异常，让调用方决定如何处理
+      // （login 时需要知道 loadData 失败以避免误报"登录成功"）
+      throw err
     }
   }
 
@@ -605,6 +654,65 @@ export const useAppStore = defineStore('app', () => {
       showToast(err?.message || '加载题目失败', 'error')
     } finally {
       questionsLoading.value = false
+    }
+  }
+
+  async function loadUsersPage(page: number = 1, keyword?: string, role?: string, classId?: string, departmentId?: string) {
+    usersLoading.value = true
+    usersCurrentPage.value = page
+    try {
+      const result = await apiLoadUsersPage({
+        page,
+        pageSize: usersPageSize.value,
+        keyword,
+        role,
+        classId,
+        departmentId,
+      })
+      paginatedUsers.value = result.rows
+      totalUsers.value = result.total
+    } catch (err: any) {
+      showToast(err?.message || '加载用户列表失败', 'error')
+    } finally {
+      usersLoading.value = false
+    }
+  }
+
+  async function loadLogsPage(page: number = 1, keyword?: string, action?: string) {
+    logsLoading.value = true
+    logsCurrentPage.value = page
+    try {
+      const result = await apiLoadLogsPage({
+        page,
+        pageSize: logsPageSize.value,
+        keyword,
+        action,
+      })
+      paginatedLogs.value = result.rows
+      totalLogs.value = result.total
+    } catch (err: any) {
+      showToast(err?.message || '加载日志失败', 'error')
+    } finally {
+      logsLoading.value = false
+    }
+  }
+
+  async function loadWrongBookPage(page: number = 1, subject?: string, status?: string) {
+    wrongBookLoading.value = true
+    wrongBookCurrentPage.value = page
+    try {
+      const result = await apiLoadWrongBookPage({
+        page,
+        pageSize: wrongBookPageSize.value,
+        subject,
+        status,
+      })
+      paginatedWrongBook.value = result.rows
+      totalWrongBook.value = result.total
+    } catch (err: any) {
+      showToast(err?.message || '加载错题本失败', 'error')
+    } finally {
+      wrongBookLoading.value = false
     }
   }
 
@@ -740,7 +848,7 @@ export const useAppStore = defineStore('app', () => {
   function handleExamSubmitted() {
     activeExam.value = null
     showToast('交卷成功！', 'success')
-    loadData()
+    loadData().catch(() => { /* 静默处理刷新失败 */ })
   }
 
   function retryWrongEntry(entry: WrongBookEntry) {
@@ -1913,6 +2021,30 @@ export const useAppStore = defineStore('app', () => {
     pageSize,
     questionsLoading,
     loadQuestionsPage,
+
+    // Paginated users (admin)
+    paginatedUsers,
+    totalUsers,
+    usersCurrentPage,
+    usersPageSize,
+    usersLoading,
+    loadUsersPage,
+
+    // Paginated logs (admin)
+    paginatedLogs,
+    totalLogs,
+    logsCurrentPage,
+    logsPageSize,
+    logsLoading,
+    loadLogsPage,
+
+    // Paginated wrong book (student)
+    paginatedWrongBook,
+    totalWrongBook,
+    wrongBookCurrentPage,
+    wrongBookPageSize,
+    wrongBookLoading,
+    loadWrongBookPage,
 
     // Actions
     initAuth,

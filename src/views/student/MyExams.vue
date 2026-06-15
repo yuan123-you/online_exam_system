@@ -11,7 +11,7 @@
       <table>
         <thead><tr><th>考试</th><th>状态</th><th>成绩</th><th>排名</th><th>耗时</th></tr></thead>
         <tbody>
-          <tr v-for="s in store.mySubmissionRecords" :key="s.id">
+          <tr v-for="s in pagination.paginatedData.value" :key="s.id">
             <td data-label="考试"><strong>{{ s.examName || '-' }}</strong></td>
             <td data-label="状态"><span class="tag">{{ s.status }}</span></td>
             <td data-label="成绩"><strong style="color:var(--primary)">{{ s.finalScore ?? s.autoScore ?? 0 }}</strong> / {{ s.totalScore ?? '-' }}</td>
@@ -21,11 +21,26 @@
         </tbody>
       </table>
     </div>
+
+    <PaginationBar
+      :total="pagination.total.value"
+      :current-page="pagination.currentPage.value"
+      :page-size="pagination.pageSize.value"
+      :page-size-options="pagination.pageSizeOptions"
+      @page-change="pagination.goToPage"
+      @page-size-change="pagination.changePageSize"
+    />
   </article>
 </template>
 
 <script setup lang="ts">
+import { computed } from 'vue'
 import { useAppStore } from '@/stores/app'
+import PaginationBar from '@/components/common/PaginationBar.vue'
+import { useClientPagination } from '@/composables/usePagination'
 
 const store = useAppStore()
+
+const myRecords = computed(() => store.mySubmissionRecords as any[])
+const pagination = useClientPagination(myRecords, { defaultPageSize: 20, pageSizeOptions: [10, 20, 50] })
 </script>

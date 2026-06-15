@@ -1,4 +1,5 @@
 @echo off
+setlocal enabledelayedexpansion
 set "ROOT=%~dp0.."
 cd /d "%ROOT%"
 
@@ -19,4 +20,16 @@ if errorlevel 1 (
 )
 
 echo Starting backend...
+
+:: 读取 .env 文件中的环境变量
+if exist "%ROOT%\.env" (
+    for /f "usebackq tokens=1,* delims==" %%a in ("%ROOT%\.env") do (
+        set "line=%%a"
+        if not "!line:~0,1!"=="#" (
+            set "%%a=%%b"
+        )
+    )
+    echo   [env] Loaded .env file
+)
+
 node "%ROOT%\scripts\run-backend.js"

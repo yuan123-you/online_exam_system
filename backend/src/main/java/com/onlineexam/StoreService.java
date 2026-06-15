@@ -99,14 +99,19 @@ public class StoreService {
       "questionCount", asInt(row.get("question_count")),
       "createdAt", asIso(row.get("created_at"))
     ))).toList();
-    store.notifications = jdbc.queryForList("select * from notification order by created_at desc limit 200").stream().map(row -> compact(mapOf(
-      "id", row.get("id"), "senderId", row.get("sender_id"),
-      "targetRole", row.get("target_role"), "targetClassId", row.get("target_class_id"),
-      "targetUserId", row.get("target_user_id"),
-      "title", row.get("title"), "content", row.get("content"),
-      "type", row.get("type"), "isRead", asBool(row.get("is_read")),
-      "readAt", asIso(row.get("read_at")), "createdAt", asIso(row.get("created_at"))
-    ))).toList();
+    try {
+      store.notifications = jdbc.queryForList("select * from notification order by created_at desc limit 200").stream().map(row -> compact(mapOf(
+        "id", row.get("id"), "senderId", row.get("sender_id"),
+        "targetRole", row.get("target_role"), "targetClassId", row.get("target_class_id"),
+        "targetUserId", row.get("target_user_id"),
+        "title", row.get("title"), "content", row.get("content"),
+        "type", row.get("type"), "isRead", asBool(row.get("is_read")),
+        "readAt", asIso(row.get("read_at")), "createdAt", asIso(row.get("created_at"))
+      ))).toList();
+    } catch (Exception e) {
+      // notification 表可能尚未创建，容错处理
+      store.notifications = new ArrayList<>();
+    }
     return store;
   }
 
@@ -429,6 +434,125 @@ public class StoreService {
 
   public List<String> queryQuestionSubjects(String teacherId) {
     return jdbc.queryForList("SELECT DISTINCT subject FROM question WHERE teacher_id = ? ORDER BY subject", String.class, teacherId);
+  }
+
+  /**
+   * 通用分页查询 - 用户列表
+   */
+  public Map<String, Object> queryUsersPage(String role, int page, int pageSize, String keyword, String classId, String departmentId) {
+    StringBuilder where = new StringBuilder("WHERE 1=1");
+    List<Object> params = new ArrayList<>();
+    if (role != null && !role.isBlank()) {
+      where.append(" AND role = ?");
+      params.add(role);
+    }
+    if (keyword != null && !keyword.isBlank()) {
+      String escaped = keyword.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_");
+      where.append(" AND (username LIKE ? ESCAPE '\\\\' OR name LIKE ? ESCAPE '\\\\' OR major LIKE ? ESCAPE '\\\\')");
+      params.add("%" + escaped + "%");
+      params.add("%" + escaped + "%");
+      params.add("%" + escaped + "%");
+    }
+    if (classId != null && !classId.isBlank()) {
+      where.append(" AND class_id = ?");
+      params.add(classId);
+    }
+    if (departmentId != null && !departmentId.isBlank()) {
+      where.append(" AND department_id = ?");
+      params.add(departmentId);
+    }
+    int total = Optional.ofNullable(jdbc.queryForObject(
+      "SELECT COUNT(*) FROM user_account " + where, Integer.class, params.toArray())).orElse(0);
+    int offset = (Math.max(1, page) - 1) * pageSize;
+    List<Object> fullParams = new ArrayList<>(params);
+    fullParams.add(pageSize);
+    fullParams.add(offset);
+    List<Map<String, Object>> rows = jdbc.queryForList(
+      "SELECT id,role,username,name,department_id,class_id,major FROM user_account " + where + " ORDER BY id LIMIT ? OFFSET ?", fullParams.toArray()).stream()
+      .map(row -> compact(mapOf(
+        "id", row.get("id"), "role", row.get("role"), "username", row.get("username"),
+        "name", row.get("name"), "departmentId", row.get("department_id"), "classId", row.get("class_id"), "major", row.get("major")
+      ))).toList();
+    return mapOf("rows", rows, "total", total, "page", page, "pageSize", pageSize);
+  }
+
+  /**
+   * 通用分页查询 - 系统日志
+   */
+  public Map<String, Object> queryLogsPage(int page, int pageSize, String keyword, String action) {
+    StringBuilder where = new StringBuilder("WHERE 1=1");
+    List<Object> params = new ArrayList<>();
+    if (keyword != null && !keyword.isBlank()) {
+      String escaped = keyword.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_");
+      where.append(" AND (actor_id LIKE ? ESCAPE '\\\\' OR action LIKE ? ESCAPE '\\\\' OR detail LIKE ? ESCAPE '\\\\')");
+      params.add("%" + escaped + "%");
+      params.add("%" + escaped + "%");
+      params.add("%" + escaped + "%");
+    }
+    if (action != null && !action.isBlank()) {
+      where.append(" AND action = ?");
+      params.add(action);
+    }
+    int total = Optional.ofNullable(jdbc.queryForObject(
+      "SELECT COUNT(*) FROM system_log " + where, Integer.class, params.toArray())).orElse(0);
+    int offset = (Math.max(1, page) - 1) * pageSize;
+    List<Object> fullParams = new ArrayList<>(params);
+    fullParams.add(pageSize);
+    fullParams.add(offset);
+    // 需要先获取用户列表来解析 actorName
+    Store store = readStore();
+    List<Map<String, Object>> rows = jdbc.queryForList(
+      "SELECT id,actor_id,action,detail,time FROM system_log " + where + " ORDER BY time DESC LIMIT ? OFFSET ?", fullParams.toArray()).stream()
+      .map(row -> {
+        String actorId = str(row.get("actor_id"));
+        return compact(mapOf(
+          "id", row.get("id"), "actorId", actorId,
+          "actorName", resolveActorName(actorId, store),
+          "action", row.get("action"), "detail", row.get("detail"),
+          "time", asIso(row.get("time"))
+        ));
+      }).toList();
+    return mapOf("rows", rows, "total", total, "page", page, "pageSize", pageSize);
+  }
+
+  /**
+   * 通用分页查询 - 错题本
+   */
+  public Map<String, Object> queryWrongBookPage(String studentId, int page, int pageSize, String subject, String status) {
+    StringBuilder where = new StringBuilder("WHERE removable=0");
+    List<Object> params = new ArrayList<>();
+    if (studentId != null && !studentId.isBlank()) {
+      where.append(" AND student_id = ?");
+      params.add(studentId);
+    }
+    if (subject != null && !subject.isBlank()) {
+      where.append(" AND subject = ?");
+      params.add(subject);
+    }
+    if (status != null && !status.isBlank()) {
+      where.append(" AND status = ?");
+      params.add(status);
+    }
+    int total = Optional.ofNullable(jdbc.queryForObject(
+      "SELECT COUNT(*) FROM wrong_book_entry " + where, Integer.class, params.toArray())).orElse(0);
+    int offset = (Math.max(1, page) - 1) * pageSize;
+    List<Object> fullParams = new ArrayList<>(params);
+    fullParams.add(pageSize);
+    fullParams.add(offset);
+    List<Map<String, Object>> rows = jdbc.queryForList(
+      "SELECT * FROM wrong_book_entry " + where + " ORDER BY last_wrong_at DESC LIMIT ? OFFSET ?", fullParams.toArray()).stream()
+      .map(row -> compact(mapOf(
+        "id", row.get("id"), "studentId", row.get("student_id"), "studentName", row.get("student_name"),
+        "questionId", row.get("question_id"), "subject", row.get("subject"), "knowledgePoint", row.get("knowledge_point"),
+        "type", row.get("type"), "title", row.get("title"), "latestAnswer", readList(row.get("latest_answer_json")),
+        "expectedAnswer", readList(row.get("expected_answer_json")), "lastRetryAnswer", readList(row.get("last_retry_answer_json")),
+        "retryCount", asInt(row.get("retry_count")), "wrongCount", asInt(row.get("wrong_count")),
+        "fullScore", asInt(row.get("full_score")), "lastScore", asInt(row.get("last_score")),
+        "lastWrongAt", asIso(row.get("last_wrong_at")), "lastRetryAt", asIso(row.get("last_retry_at")),
+        "lastRetryCorrect", asBool(row.get("last_retry_correct")), "removable", asBool(row.get("removable")),
+        "status", row.get("status")
+      ))).toList();
+    return mapOf("rows", rows, "total", total, "page", page, "pageSize", pageSize);
   }
 
   private String normalizeStatus(String status) {

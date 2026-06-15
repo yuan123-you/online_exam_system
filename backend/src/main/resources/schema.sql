@@ -206,7 +206,7 @@ CREATE TABLE IF NOT EXISTS recommendation_feedback (
   id VARCHAR(64) PRIMARY KEY,
   user_id VARCHAR(64) NOT NULL,
   recommendation_type VARCHAR(50) NOT NULL COMMENT '推荐类型: practice/chat/subject_review/knowledge_gap/study_plan',
-  recommendation_content JSON NOT NULL COMMENT '推荐的具体内容',
+  recommendation_content JSON COMMENT '推荐的具体内容',
   feedback_type VARCHAR(20) NOT NULL COMMENT '反馈类型: helpful/not_helpful/irrelevant/too_easy/too_hard/bookmark',
   feedback_detail TEXT COMMENT '用户文字反馈',
   created_at DATETIME(3) NOT NULL,

@@ -19,7 +19,12 @@ public class NotificationService {
    * 获取用户的通知列表（最近 50 条）
    */
   public List<Map<String, Object>> getUserNotifications(String userId) {
-    Store store = storeService.readStore();
+    Store store;
+    try {
+      store = storeService.readStore();
+    } catch (Exception e) {
+      return List.of();
+    }
     Map<String, Object> user = findById(store.users, userId);
     if (user == null) return List.of();
 

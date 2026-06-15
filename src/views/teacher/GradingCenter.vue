@@ -43,7 +43,7 @@
           </tr>
         </thead>
         <tbody>
-          <tr v-for="s in filteredSubmissions" :key="s.id">
+          <tr v-for="s in pagination.paginatedData.value" :key="s.id">
             <td data-label="考试">{{ s.examName || '-' }}</td>
             <td data-label="学生"><strong>{{ s.studentName }}</strong></td>
             <td data-label="状态">
@@ -80,12 +80,23 @@
         <p class="empty-desc">{{ hasActiveFilter ? '请尝试调整筛选条件' : '学生提交答卷后将在此显示' }}</p>
       </div>
     </div>
+
+    <PaginationBar
+      :total="pagination.total.value"
+      :current-page="pagination.currentPage.value"
+      :page-size="pagination.pageSize.value"
+      :page-size-options="pagination.pageSizeOptions"
+      @page-change="pagination.goToPage"
+      @page-size-change="pagination.changePageSize"
+    />
   </article>
 </template>
 
 <script setup lang="ts">
 import { ref, computed } from 'vue'
 import { useAppStore } from '@/stores/app'
+import PaginationBar from '@/components/common/PaginationBar.vue'
+import { useClientPagination } from '@/composables/usePagination'
 
 const store = useAppStore()
 const statusFilter = ref<'all' | 'pending' | 'graded'>('all')
@@ -106,6 +117,8 @@ const filteredSubmissions = computed(() => {
   if (q) list = list.filter(s => s.studentName.toLowerCase().includes(q))
   return list
 })
+
+const pagination = useClientPagination(filteredSubmissions, { defaultPageSize: 15, pageSizeOptions: [10, 15, 20, 50] })
 
 const hasActiveFilter = computed(() => statusFilter.value !== 'all' || searchQuery.value.trim() !== '')
 

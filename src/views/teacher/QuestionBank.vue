@@ -142,21 +142,14 @@
     </div>
 
     <!-- Pagination -->
-    <div class="pagination-bar" v-if="totalPages > 1 || store.totalQuestions > 0">
-      <span class="pagination-info">
-        第 {{ store.currentPage }} / {{ totalPages }} 页，共 {{ store.totalQuestions }} 条
-      </span>
-      <div class="pagination-btns">
-        <button class="pagination-btn" :disabled="store.currentPage <= 1" @click="goPage(store.currentPage - 1)">‹ 上一页</button>
-        <button
-          v-for="p in visiblePages"
-          :key="p"
-          :class="['pagination-btn', { active: p === store.currentPage }]"
-          @click="goPage(p)"
-        >{{ p }}</button>
-        <button class="pagination-btn" :disabled="store.currentPage >= totalPages" @click="goPage(store.currentPage + 1)">下一页 ›</button>
-      </div>
-    </div>
+    <PaginationBar
+      :total="store.totalQuestions"
+      :current-page="store.currentPage"
+      :page-size="store.pageSize"
+      :page-size-options="[10, 20, 50, 100]"
+      @page-change="goPage"
+      @page-size-change="handlePageSizeChange"
+    />
   </article>
 </template>
 
@@ -168,6 +161,7 @@ import { backupQuestionBank, listQuestionBackups, restoreQuestionBackup } from '
 import type { QuestionBackup } from '@/api/client'
 import { useToast } from '@/composables/useToast'
 import type { QuestionType } from '@/types'
+import PaginationBar from '@/components/common/PaginationBar.vue'
 
 const store = useAppStore()
 const toast = useToast()
@@ -270,23 +264,14 @@ function truncate(s: string, len: number): string {
 // ---- Pagination ----
 const totalPages = computed(() => Math.max(1, Math.ceil(store.totalQuestions / store.pageSize)))
 
-const visiblePages = computed(() => {
-  const total = totalPages.value
-  const current = store.currentPage
-  const pages: number[] = []
-  let start = Math.max(1, current - 2)
-  let end = Math.min(total, current + 2)
-  if (end - start < 4) {
-    if (start === 1) end = Math.min(total, start + 4)
-    else start = Math.max(1, end - 4)
-  }
-  for (let i = start; i <= end; i++) pages.push(i)
-  return pages
-})
-
 function goPage(page: number) {
   if (page < 1 || page > totalPages.value) return
   store.loadQuestionsPage(page, filterKeyword.value || undefined, filterType.value || undefined, filterSubject.value || undefined)
+}
+
+function handlePageSizeChange(size: number) {
+  store.pageSize = size
+  store.loadQuestionsPage(1, filterKeyword.value || undefined, filterType.value || undefined, filterSubject.value || undefined)
 }
 
 // ---- Backup/Restore ----
@@ -692,61 +677,6 @@ onMounted(() => {
   to { transform: rotate(360deg); }
 }
 
-/* ---- Pagination ---- */
-.pagination-bar {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 8px;
-  padding: 16px 0;
-}
-
-.pagination-info {
-  font-size: 13px;
-  color: var(--muted);
-}
-
-.pagination-btns {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  flex-wrap: wrap;
-}
-
-.pagination-btn {
-  min-width: 36px;
-  height: 36px;
-  padding: 0 10px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  background: var(--card-bg, #fff);
-  color: var(--text);
-  font-size: 14px;
-  cursor: pointer;
-  transition: all 0.15s;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.pagination-btn:hover:not(:disabled):not(.active) {
-  border-color: var(--primary);
-  color: var(--primary);
-}
-
-.pagination-btn.active {
-  background: var(--primary);
-  color: #fff;
-  border-color: var(--primary);
-  font-weight: 600;
-}
-
-.pagination-btn:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
-}
-
 /* ---- Responsive: Tablet (768-1023px) ---- */
 @media (max-width: 1023px) and (min-width: 768px) {
   .table-wrap {
@@ -887,14 +817,5 @@ onMounted(() => {
     padding: 3px 10px;
   }
 
-  .pagination-bar {
-    flex-direction: column;
-    align-items: center;
-    gap: 10px;
-  }
-
-  .pagination-btns {
-    justify-content: center;
-  }
 }
 </style>
