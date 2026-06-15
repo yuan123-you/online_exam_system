@@ -9,7 +9,8 @@
 | 前端 | Vue 3 + TypeScript + Vite + ECharts |
 | 后端 | Spring Boot 3.3.5 + Java 21 + JDBC |
 | 数据库 | MySQL 8.x |
-| 独立版 | Node.js + 原生 HTML/CSS/JS |
+| Excel 导出 | Apache POI (poi-ooxml) |
+| 独立版 | Spring Boot 内置 static/ (原生 HTML/CSS/JS) |
 
 ## 目录结构
 
@@ -19,9 +20,44 @@ online-exam-system/
 │  ├─ pom.xml                       # Maven 项目配置
 │  └─ src/main/
 │     ├─ java/com/onlineexam/
-│     │  ├─ ApiController.java      # REST API 控制器（~780行）
-│     │  ├─ StoreService.java       # 数据访问服务（~350行）
-│     │  └─ OnlineExamApplication.java
+│     │  ├─ OnlineExamApplication.java
+│     │  ├─ StoreService.java       # 内存数据存储（兼容层）
+│     │  ├─ controller/             # 15 个 REST Controller
+│     │  │  ├─ AuthController.java
+│     │  │  ├─ AdminController.java
+│     │  │  ├─ TeacherController.java
+│     │  │  ├─ StudentController.java
+│     │  │  ├─ ExamController.java
+│     │  │  ├─ SubmissionController.java
+│     │  │  ├─ BootstrapController.java
+│     │  │  ├─ AiController.java
+│     │  │  ├─ WrongBookController.java
+│     │  │  ├─ ChatHistoryController.java
+│     │  │  ├─ PracticeSessionController.java
+│     │  │  ├─ RecommendationController.java
+│     │  │  ├─ QuotaController.java
+│     │  │  ├─ ClassAnalysisController.java
+│     │  │  └─ NotificationController.java
+│     │  ├─ service/                # 18 个业务 Service
+│     │  │  ├─ AuthService.java / ExamService.java / PaperService.java
+│     │  │  ├─ SubmissionService.java / QuestionService.java
+│     │  │  ├─ AnalysisService.java / WrongBookService.java
+│     │  │  ├─ EntityCrudService.java / BootstrapService.java
+│     │  │  ├─ DataIsolationService.java / SystemLogService.java
+│     │  │  ├─ AiService.java / AiCircuitBreaker.java
+│     │  │  ├─ ChatHistoryService.java / PracticeSessionService.java
+│     │  │  ├─ UserPreferenceService.java
+│     │  │  ├─ ExcelExportService.java  # Excel 成绩导出
+│     │  │  └─ NotificationService.java # 站内通知
+│     │  ├─ repository/             # 9 个数据仓库
+│     │  │  ├─ UserRepository.java / ExamRepository.java
+│     │  │  ├─ PaperRepository.java / QuestionRepository.java
+│     │  │  ├─ SubmissionRepository.java / WrongBookRepository.java
+│     │  │  ├─ ClassRoomRepository.java / DepartmentRepository.java
+│     │  │  └─ SystemLogRepository.java
+│     │  ├─ entity/                 # 9 个实体类
+│     │  ├─ common/                 # 工具类（JsonHelper, AuthHelper, ResponseHelper, StoreHelper）
+│     │  └─ config/                 # 配置类（WebConfig, AuthInterceptor, SecurityHeadersFilter 等）
 │     └─ resources/
 │        ├─ application.yml          # 应用配置
 │        ├─ schema.sql               # MySQL 建表脚本
@@ -32,10 +68,23 @@ online-exam-system/
 │  ├─ main.ts                       # Vue 入口
 │  ├─ types.ts                      # TypeScript 类型定义
 │  ├─ api/client.ts                 # API 请求封装
-│  ├─ utils/                        # 工具函数
-│  └─ components/                   # 12 个 Vue 组件
+│  ├─ router/index.ts               # Vue Router 路由配置
+│  ├─ stores/app.ts                 # Pinia 状态管理
+│  ├─ styles/theme.css              # 主题变量（浅色/深色/跟随系统）
+│  ├─ composables/                  # 8 个组合式函数（useTheme, useToast 等）
+│  ├─ utils/                        # 工具函数（format, validation, text）
+│  ├─ views/                        # 25+ 个页面视图
+│  │  ├─ admin/   (6)               # AdminOverview, StudentManage, TeacherManage, OrgManage, SystemLogs, ExamManageAdmin
+│  │  ├─ teacher/ (9)               # TeacherOverview, QuestionBank, PaperManage, ExamManage, ExamMonitor, GradingCenter, ScoreAnalysis, AiQuestionGen, ClassAnalysisView
+│  │  └─ student/ (8)               # AvailableExams, MyExams, Grades, WrongBook, AiPractice, PracticeRecords, ProfileView, LoginView
+│  └─ components/                   # 18+ 个可复用组件
+│     ├─ common/  (7)               # BaseModal, ChartCard, BatchUserImportModal, ProfilePanel, QuotaBar, EntityEditorModal, NotificationPanel
+│     ├─ auth/    (1)               # AuthLogin
+│     ├─ layout/  (1)               # AppShell
+│     ├─ student/ (2)               # ExamSessionModal, WrongBookRetryModal
+│     └─ teacher/ (4)               # AutoGenPaperModal, PaperFormModal, PaperPreviewModal, SubmissionReviewModal
 ├─ public/                          # 静态资源
-├─ docs/                            # 项目文档（7份）
+├─ docs/                            # 项目文档（12份）
 ├─ scripts/                         # 工具脚本（8个）
 ├─ database.sql                     # 完整 MySQL 建库脚本
 ├─ vite.config.ts                   # Vite 配置
@@ -110,11 +159,13 @@ npm run test:smoke      # 数据一致性烟雾测试
 
 ## 核心功能
 
-**管理员**：数据总览、学生管理（含批量导入）、教师管理、组织管理、系统日志
+**管理员**：数据总览、学生管理（含批量导入）、教师管理、组织管理（学院/班级）、系统日志、考试管理
 
-**教师**：题库管理（6种题型）、试卷组卷、考试发布、自动+人工阅卷、成绩分析图表
+**教师**：题库管理（6种题型）、AI智能出题、试卷组卷（含自动组卷）、考试发布与监控、自动+人工阅卷、成绩分析图表、班级成绩对比分析、Excel 成绩导出
 
-**学生**：在线考试（倒计时、自动保存、防作弊）、考试记录、错题本、个人信息
+**学生**：在线考试（倒计时、自动保存、防作弊）、AI刷题练习（含流式对话）、考试记录与成绩趋势、错题本（自动归集/重做/移除）、练习记录、个人信息
+
+**通用**：暗色模式（浅色/深色/跟随系统三档切换，CSS 变量驱动）、站内通知系统（教师/管理员发布，学生接收，支持单条/全部已读）
 
 ## 项目文档
 
@@ -125,3 +176,6 @@ npm run test:smoke      # 数据一致性烟雾测试
 - [05.项目总结报告](docs/05.项目总结报告.md)
 - [06.部署说明文档](docs/06.部署说明文档.md)
 - [07.答辩PPT提纲](docs/07.答辩PPT提纲.md)
+- [08.安全审计报告](docs/08.安全审计报告.md)
+- [08.测试报告（全阶段）](docs/08.测试报告.md)
+- [09.八阶段交付总结](docs/09.八阶段交付总结.md)

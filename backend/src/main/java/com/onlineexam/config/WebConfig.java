@@ -1,5 +1,7 @@
 package com.onlineexam.config;
 
+import java.util.List;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.web.servlet.config.annotation.CorsRegistry;
 import org.springframework.web.servlet.config.annotation.InterceptorRegistry;
@@ -16,17 +18,21 @@ import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 public class WebConfig implements WebMvcConfigurer {
 
   private final AuthInterceptor authInterceptor;
+  private final List<String> corsOrigins;
 
-  public WebConfig(AuthInterceptor authInterceptor) {
+  public WebConfig(AuthInterceptor authInterceptor,
+                   @Value("${cors.allowed-origins:http://localhost:*,http://127.0.0.1:*,https://web.novo.ccwu.cc,http://web.novo.ccwu.cc}") String corsOriginsStr) {
     this.authInterceptor = authInterceptor;
+    this.corsOrigins = List.of(corsOriginsStr.split(","));
   }
 
   @Override
   public void addCorsMappings(CorsRegistry registry) {
     registry.addMapping("/api/**")
-        .allowedOriginPatterns("http://localhost:*", "http://127.0.0.1:*", "https://web.novo.ccwu.cc", "http://web.novo.ccwu.cc", "http://54.179.150.131")
+        .allowedOriginPatterns(corsOrigins.toArray(new String[0]))
         .allowedMethods("GET", "POST", "PUT", "DELETE", "OPTIONS")
-        .allowedHeaders("*")
+        .allowedHeaders("Content-Type", "X-User-Id", "Authorization")
+        .exposedHeaders("X-RateLimit-Remaining")
         .allowCredentials(true)
         .maxAge(3600);
   }

@@ -25,6 +25,7 @@ import {
   removeWrongBook,
   monitorExam,
   exportScores,
+  exportExcelScores,
   questionAnalysis,
   autoGeneratePaper,
   scoreTrend,
@@ -61,6 +62,10 @@ import {
   savePracticeSessionAnswers,
   submitPracticeSession,
   deletePracticeSession as apiDeletePracticeSession,
+  loadNotifications,
+  markNotificationRead,
+  markAllNotificationsRead,
+  createNotification,
 } from '@/api/client'
 import type {
   MonitorResult,
@@ -83,6 +88,8 @@ import type {
   RecommendationItem,
   UserProfile,
   PracticeSession,
+  Notification,
+  NotificationListResult,
 } from '@/api/client'
 import { useToast } from '@/composables/useToast'
 export type { Toast } from '@/composables/useToast'
@@ -254,6 +261,10 @@ export const useAppStore = defineStore('app', () => {
 
   // Quota state
   const quotaData = ref<QuotaResult | null>(null)
+
+  // Notification state
+  const notifications = ref<Notification[]>([])
+  const unreadNotificationCount = ref(0)
 
   // Computed: User role
   const role = computed(() => bootstrap.value?.currentUser.role || 'student')
@@ -499,6 +510,7 @@ export const useAppStore = defineStore('app', () => {
         { key: 'monitor', label: '考试监控', description: '实时查看考生状态' },
         { key: 'grading', label: '阅卷中心', description: '评阅答卷' },
         { key: 'analysis', label: '成绩分析', description: '统计与图表' },
+        { key: 'class-analysis', label: '班级对比', description: '按班级维度分析成绩' },
         { key: 'profile', label: '个人信息', description: '修改密码' },
       ]
     }
@@ -532,6 +544,7 @@ export const useAppStore = defineStore('app', () => {
         handleLoadConversations() // load conversation history in background
         handleLoadPreferences()   // load user preferences for personalization
         loadRecommendations()     // load personalized recommendations
+        loadNotificationData()    // load notification data
       } catch {
         setCurrentAuthToken('')
         localStorage.removeItem('auth_token')
@@ -550,6 +563,7 @@ export const useAppStore = defineStore('app', () => {
       localStorage.setItem('auth_token', result.user.id)
       bootstrap.value = null // clear stale data from previous user immediately
       await loadData()       // ensure fresh data before UI renders
+      loadNotificationData() // load notifications for new user
       showToast('登录成功，欢迎回来！', 'success')
       return true
     } catch (err: any) {
@@ -621,6 +635,9 @@ export const useAppStore = defineStore('app', () => {
     activePracticeSession.value = null
     practiceSessionLoading.value = false
     if (practiceAnswerSaveTimer) { clearTimeout(practiceAnswerSaveTimer); practiceAnswerSaveTimer = null }
+    // 清理通知状态
+    notifications.value = []
+    unreadNotificationCount.value = 0
   }
 
   /** 关闭所有弹窗（页面切换时调用） */
@@ -779,18 +796,8 @@ export const useAppStore = defineStore('app', () => {
     if (!monitorExamId.value) return
     exportLoading.value = true
     try {
-      const result = await exportScores(monitorExamId.value)
-      const headers = ['学号', '姓名', '班级', '状态', '得分', '总分', '及格线', '排名']
-      const rows = result.rows.map((r) => [r.username, r.studentName, r.className, r.status, r.score ?? '', r.totalScore, r.passScore, r.rank ?? ''].join(','))
-      const csv = '\uFEFF' + [headers.join(','), ...rows].join('\n')
-      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' })
-      const url = URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = url
-      a.download = `${result.examName}_成绩表.csv`
-      a.click()
-      URL.revokeObjectURL(url)
-      showToast('成绩导出成功', 'success')
+      await exportExcelScores(monitorExamId.value)
+      showToast('成绩导出成功（Excel）', 'success')
     } catch (err: any) {
       showToast(err?.message || '导出失败', 'error')
     } finally {
@@ -1747,6 +1754,46 @@ export const useAppStore = defineStore('app', () => {
     }
   }
 
+  // ========== Notification Actions ==========
+
+  async function loadNotificationData() {
+    try {
+      const result = await loadNotifications()
+      notifications.value = result.notifications
+      unreadNotificationCount.value = result.unreadCount
+    } catch { /* silent */ }
+  }
+
+  async function handleMarkNotificationRead(id: string) {
+    try {
+      await markNotificationRead(id)
+      const notif = notifications.value.find(n => n.id === id)
+      if (notif) notif.isRead = true
+      unreadNotificationCount.value = Math.max(0, unreadNotificationCount.value - 1)
+    } catch (err: any) {
+      showToast(err?.message || '标记失败', 'error')
+    }
+  }
+
+  async function handleMarkAllNotificationsRead() {
+    try {
+      await markAllNotificationsRead()
+      notifications.value.forEach(n => { n.isRead = true })
+      unreadNotificationCount.value = 0
+    } catch (err: any) {
+      showToast(err?.message || '操作失败', 'error')
+    }
+  }
+
+  async function handleCreateNotification(data: { title: string; content: string; type?: string; targetRole?: string; targetClassId?: string }) {
+    try {
+      await createNotification(data)
+      showToast('通知发布成功', 'success')
+    } catch (err: any) {
+      showToast(err?.message || '发布失败', 'error')
+    }
+  }
+
   async function handleBatchDeleteQuestions(ids: string[]) {
     try {
       const result = await batchDeleteQuestions(ids)
@@ -1971,5 +2018,13 @@ export const useAppStore = defineStore('app', () => {
     handleBatchDeleteQuestions,
     handleBatchRestoreQuestions,
     handleBatchRemoveWrongBook,
+
+    // Notifications
+    notifications,
+    unreadNotificationCount,
+    loadNotificationData,
+    handleMarkNotificationRead,
+    handleMarkAllNotificationsRead,
+    handleCreateNotification,
   }
 })

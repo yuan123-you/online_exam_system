@@ -4,7 +4,9 @@ import com.onlineexam.StoreService;
 import com.onlineexam.StoreService.Store;
 import com.onlineexam.service.ExamService;
 import com.onlineexam.service.SubmissionService;
+import com.onlineexam.service.ExcelExportService;
 import com.onlineexam.service.SystemLogService;
+import java.io.IOException;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -15,7 +17,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -40,13 +44,16 @@ public class ExamController {
   private final ExamService examService;
   private final SubmissionService submissionService;
   private final SystemLogService systemLogService;
+  private final ExcelExportService excelExportService;
 
   public ExamController(StoreService storeService, ExamService examService,
-                        SubmissionService submissionService, SystemLogService systemLogService) {
+                        SubmissionService submissionService, SystemLogService systemLogService,
+                        ExcelExportService excelExportService) {
     this.storeService = storeService;
     this.examService = examService;
     this.submissionService = submissionService;
     this.systemLogService = systemLogService;
+    this.excelExportService = excelExportService;
   }
 
   @GetMapping("/exams/{examId}/detail")
@@ -162,6 +169,53 @@ public class ExamController {
     for (int i = 0; i < sorted.size(); i++) sorted.get(i).put("rank", i + 1);
     systemLogService.log(user, "export scores", examId);
     return ResponseEntity.ok(mapOf("examName", str(exam, "name"), "rows", rows));
+  }
+
+  @GetMapping("/exams/{examId}/export-excel")
+  public ResponseEntity<byte[]> exportExcel(@RequestHeader(value = "X-User-Id", required = false) String userId,
+                                             @PathVariable String examId) {
+    Store store = storeService.readStore();
+    Map<String, Object> user = find(store.users, userId);
+    if (!isRole(user, "teacher")) return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
+    Map<String, Object> exam = find(store.exams, examId);
+    if (exam == null || !Objects.equals(str(exam, "teacherId"), userId))
+      return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
+    Map<String, Object> paper = find(store.papers, str(exam, "paperId"));
+    Set<String> targetClassIds = new HashSet<>(asList(exam.get("targetClassIds")).stream().map(String::valueOf).toList());
+    List<Map<String, Object>> targetStudents = store.users.stream()
+      .filter(u -> isRole(u, "student") && targetClassIds.contains(str(u, "classId"))).toList();
+    List<Map<String, Object>> examSubmissions = store.submissions.stream()
+      .filter(s -> Objects.equals(str(s, "examId"), examId)).toList();
+    List<Map<String, Object>> rows = new ArrayList<>();
+    for (Map<String, Object> student : targetStudents) {
+      Map<String, Object> submission = examSubmissions.stream()
+        .filter(s -> Objects.equals(str(s, "studentId"), str(student, "id"))).findFirst().orElse(null);
+      Map<String, Object> row = new LinkedHashMap<>();
+      row.put("username", str(student, "username"));
+      row.put("studentName", str(student, "name"));
+      row.put("className", str(find(store.classes, str(student, "classId")), "name"));
+      row.put("status", submission == null ? "未开始" : str(submission, "status"));
+      row.put("score", submission == null ? null : asInt(submission.get("finalScore")));
+      row.put("totalScore", asInt(paper == null ? 0 : paper.get("totalScore")));
+      row.put("passScore", asInt(paper == null ? 0 : paper.get("passScore")));
+      row.put("rank", null);
+      rows.add(row);
+    }
+    List<Map<String, Object>> sorted = rows.stream()
+      .filter(r -> r.get("score") != null)
+      .sorted(Comparator.comparingInt((Map<String, Object> r) -> asInt(r.get("score"))).reversed()).toList();
+    for (int i = 0; i < sorted.size(); i++) sorted.get(i).put("rank", i + 1);
+    systemLogService.log(user, "export excel", examId);
+    try {
+      byte[] excelBytes = excelExportService.generateScoreExcel(str(exam, "name"), rows);
+      String filename = str(exam, "name") + "_成绩表.xlsx";
+      HttpHeaders headers = new HttpHeaders();
+      headers.setContentType(MediaType.parseMediaType("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"));
+      headers.setContentDispositionFormData("attachment", java.net.URLEncoder.encode(filename, "UTF-8"));
+      return new ResponseEntity<>(excelBytes, headers, HttpStatus.OK);
+    } catch (IOException e) {
+      return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
+    }
   }
 
   @PostMapping("/exams/{examId}/extend-student")

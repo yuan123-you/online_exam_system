@@ -263,3 +263,24 @@ CREATE TABLE IF NOT EXISTS question_backup (
   INDEX idx_backup_teacher (teacher_id),
   INDEX idx_backup_time (created_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- ========== 站内通知系统 ==========
+
+CREATE TABLE IF NOT EXISTS notification (
+  id VARCHAR(64) PRIMARY KEY,
+  sender_id VARCHAR(64) NOT NULL,
+  target_role VARCHAR(20) COMMENT '目标角色: student/teacher/all，NULL表示指定用户',
+  target_class_id VARCHAR(64) COMMENT '目标班级ID，NULL表示所有班级',
+  target_user_id VARCHAR(64) COMMENT '目标用户ID（单条通知），NULL表示批量',
+  title VARCHAR(200) NOT NULL,
+  content TEXT NOT NULL,
+  type VARCHAR(30) NOT NULL DEFAULT 'general' COMMENT '类型: general/exam/grade/system',
+  is_read TINYINT(1) NOT NULL DEFAULT 0,
+  read_at DATETIME(3),
+  created_at DATETIME(3) NOT NULL,
+  INDEX idx_notif_target_user (target_user_id),
+  INDEX idx_notif_target_role (target_role),
+  INDEX idx_notif_target_class (target_class_id),
+  INDEX idx_notif_created (created_at),
+  INDEX idx_notif_read (is_read)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

@@ -56,6 +56,14 @@
             </span>
             <span class="menu-footer-label">{{ refreshing ? '刷新中...' : '刷新数据' }}</span>
           </button>
+          <button type="button" @click="toggleTheme" :title="'主题: ' + themeLabel()">
+            <span class="menu-icon">
+              <svg v-if="currentTheme === 'light'" viewBox="0 0 24 24"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+              <svg v-else-if="currentTheme === 'dark'" viewBox="0 0 24 24"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+              <svg v-else viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+            </span>
+            <span class="menu-footer-label">{{ themeLabel() }}</span>
+          </button>
           <button class="danger-btn" type="button" @click="handleLogout">
             <span class="menu-icon">
               <svg viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
@@ -78,6 +86,16 @@
             <h1>{{ activeItem?.label || '工作台' }}</h1>
             <p class="muted" style="margin:2px 0 0;font-size:13px;">{{ activeItem?.description || '统一查看考试、题库与作答数据。' }}</p>
           </div>
+        </div>
+        <div style="position:relative;">
+          <button class="notif-bell-btn" type="button" @click="showNotifications = !showNotifications" title="通知">
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/>
+              <path d="M13.73 21a2 2 0 0 1-3.46 0"/>
+            </svg>
+            <span v-if="store.unreadNotificationCount > 0" class="notif-badge">{{ store.unreadNotificationCount > 99 ? '99+' : store.unreadNotificationCount }}</span>
+          </button>
+          <NotificationPanel :visible="showNotifications" @close="showNotifications = false" />
         </div>
       </header>
 
@@ -116,15 +134,19 @@ import { useAppStore } from '@/stores/app'
 import { roleLabel } from '@/utils/format'
 import { useDeviceType } from '@/composables/useDeviceType'
 import { useSmoothScroll } from '@/composables/useSmoothScroll'
+import { useTheme } from '@/composables/useTheme'
+import NotificationPanel from '@/components/common/NotificationPanel.vue'
 
 const router = useRouter()
 const route = useRoute()
 const store = useAppStore()
 const { isMobile } = useDeviceType()
+const { currentTheme, toggleTheme, themeLabel } = useTheme()
 useSmoothScroll()
 
 const sidebarOpen = ref(false)
 const sidebarCollapsed = ref(false)
+const showNotifications = ref(false)
 
 // ---- Touch gesture support for sidebar drawer ----
 const EDGE_SWIPE_ZONE = 40 // px from left edge to trigger open
@@ -243,6 +265,7 @@ async function handleReload() {
     if (key === 'wrong-book' || key === 'practice-records') {
       store.loadQuotaData()
     }
+    store.loadNotificationData()
     store.showToast('数据已刷新', 'success')
   } catch {
     store.showToast('刷新失败，请重试', 'error')
@@ -330,5 +353,43 @@ function getMenuIcon(key: string): string {
   .ai-hamburger-btn {
     display: flex;
   }
+}
+
+/* Notification bell button */
+.notif-bell-btn {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  border: 1px solid rgba(0,0,0,0.08);
+  background: transparent;
+  color: #374151;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+.notif-bell-btn:hover {
+  background: rgba(0,0,0,0.04);
+}
+.notif-bell-btn svg {
+  stroke: currentColor;
+}
+.notif-badge {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 18px;
+  text-align: center;
+  color: #fff;
+  background: #ef4444;
+  border-radius: 9px;
+  pointer-events: none;
 }
 </style>

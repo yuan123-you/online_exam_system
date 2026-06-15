@@ -99,6 +99,14 @@ public class StoreService {
       "questionCount", asInt(row.get("question_count")),
       "createdAt", asIso(row.get("created_at"))
     ))).toList();
+    store.notifications = jdbc.queryForList("select * from notification order by created_at desc limit 200").stream().map(row -> compact(mapOf(
+      "id", row.get("id"), "senderId", row.get("sender_id"),
+      "targetRole", row.get("target_role"), "targetClassId", row.get("target_class_id"),
+      "targetUserId", row.get("target_user_id"),
+      "title", row.get("title"), "content", row.get("content"),
+      "type", row.get("type"), "isRead", asBool(row.get("is_read")),
+      "readAt", asIso(row.get("read_at")), "createdAt", asIso(row.get("created_at"))
+    ))).toList();
     return store;
   }
 
@@ -115,6 +123,7 @@ public class StoreService {
       case "wrongBookEntries" -> upsertWrongBook(record);
       case "logs" -> upsertLog(record);
       case "backups" -> upsertBackup(record);
+      case "notifications" -> upsertNotification(record);
       default -> throw new IllegalArgumentException("Unknown entity: " + entity);
     }
   }
@@ -134,6 +143,7 @@ public class StoreService {
           case "submissions" -> "submission";
           case "wrongBookEntries" -> "wrong_book_entry";
           case "logs" -> "system_log";
+          case "notifications" -> "notification";
           default -> throw new IllegalArgumentException("Unknown entity: " + entity);
         };
         jdbc.update("delete from " + table + " where id=?", id);
@@ -249,6 +259,18 @@ public class StoreService {
       insert into question_backup(id,teacher_id,questions_json,question_count,created_at) values(?,?,?,?,?)
       on duplicate key update questions_json=values(questions_json),question_count=values(question_count),created_at=values(created_at)
       """, str(r, "id"), str(r, "teacherId"), json(r.get("questions")), number(r, "questionCount"), timestamp(r.get("createdAt")));
+  }
+
+  private void upsertNotification(Map<String, Object> r) {
+    jdbc.update("""
+      insert into notification(id,sender_id,target_role,target_class_id,target_user_id,title,content,type,is_read,read_at,created_at)
+      values(?,?,?,?,?,?,?,?,?,?,?)
+      on duplicate key update sender_id=values(sender_id),target_role=values(target_role),target_class_id=values(target_class_id),
+      target_user_id=values(target_user_id),title=values(title),content=values(content),type=values(type),
+      is_read=values(is_read),read_at=values(read_at),created_at=values(created_at)
+      """, str(r, "id"), str(r, "senderId"), nullableStr(r, "targetRole"), nullableStr(r, "targetClassId"),
+      nullableStr(r, "targetUserId"), str(r, "title"), str(r, "content"), str(r, "type"),
+      bool(r, "isRead"), timestamp(r.get("readAt")), timestamp(r.get("createdAt")));
   }
 
   private List<Object> readList(Object raw) {
@@ -431,6 +453,7 @@ public class StoreService {
     public List<Map<String, Object>> wrongBookEntries = new ArrayList<>();
     public List<Map<String, Object>> logs = new ArrayList<>();
     public List<Map<String, Object>> backups = new ArrayList<>();
+    public List<Map<String, Object>> notifications = new ArrayList<>();
 
     public List<Map<String, Object>> entity(String name) {
       return switch (name) {
@@ -444,6 +467,7 @@ public class StoreService {
         case "wrongBookEntries" -> wrongBookEntries;
         case "logs" -> logs;
         case "backups" -> backups;
+        case "notifications" -> notifications;
         default -> throw new IllegalArgumentException("Unknown entity: " + name);
       };
     }

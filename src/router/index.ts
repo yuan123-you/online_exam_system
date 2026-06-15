@@ -19,6 +19,7 @@ import ExamMonitor from '@/views/teacher/ExamMonitor.vue'
 import GradingCenter from '@/views/teacher/GradingCenter.vue'
 import ScoreAnalysis from '@/views/teacher/ScoreAnalysis.vue'
 import AiQuestionGen from '@/views/teacher/AiQuestionGen.vue'
+import ClassAnalysisView from '@/views/teacher/ClassAnalysisView.vue'
 
 // Student views
 import AvailableExams from '@/views/student/AvailableExams.vue'
@@ -140,6 +141,12 @@ const router = createRouter({
           path: 'analysis',
           name: 'analysis',
           component: ScoreAnalysis,
+          meta: { roles: ['teacher'] },
+        },
+        {
+          path: 'class-analysis',
+          name: 'class-analysis',
+          component: ClassAnalysisView,
           meta: { roles: ['teacher'] },
         },
         // Student routes

@@ -213,6 +213,36 @@ export function exportScores(examId: string) {
   return request<ExportScoresResult>(`/api/exams/${examId}/export-scores`);
 }
 
+export function exportExcelScores(examId: string): Promise<void> {
+  const headers = new Headers();
+  if (currentAuthToken) {
+    headers.set("X-User-Id", currentAuthToken);
+  }
+  return fetch(`/api/exams/${examId}/export-excel`, { headers })
+    .then(async (response) => {
+      if (!response.ok) {
+        throw new Error("导出失败");
+      }
+      const blob = await response.blob();
+      const disposition = response.headers.get("Content-Disposition");
+      let filename = "成绩表.xlsx";
+      if (disposition) {
+        const match = disposition.match(/filename\*?=(?:UTF-8'')?(.+)/i);
+        if (match) {
+          filename = decodeURIComponent(match[1].replace(/"/g, ""));
+        }
+      }
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    });
+}
+
 export interface QuestionAnalysisItem {
   questionId: string;
   title: string;
@@ -1046,3 +1076,86 @@ export function deletePracticeSession(sessionId: string) {
     method: 'DELETE',
   });
 }
+
+// ---- Class Analysis ----
+export interface ClassDistribution {
+  fail: number;
+  d60: number;
+  d70: number;
+  d80: number;
+  d90: number;
+}
+
+export interface ClassQuestionStat {
+  questionId: string;
+  title: string;
+  type: string;
+  knowledgePoint: string;
+  correctRate: number;
+  attemptCount: number;
+}
+
+export interface ClassAnalysisItem {
+  classId: string;
+  className: string;
+  totalStudents: number;
+  submittedCount: number;
+  notStartedCount: number;
+  runningCount: number;
+  avgScore: number | null;
+  maxScore: number | null;
+  minScore: number | null;
+  passRate: number;
+  distribution: ClassDistribution;
+  questionStats: ClassQuestionStat[];
+}
+
+export interface ClassAnalysisResult {
+  examName: string;
+  totalScore: number;
+  passScore: number;
+  classes: ClassAnalysisItem[];
+}
+
+export function classAnalysis(examId: string) {
+  return request<ClassAnalysisResult>(`/api/exams/${examId}/class-analysis`);
+}
+
+// ---- Notifications ----
+export interface Notification {
+  id: string;
+  senderId: string;
+  senderName: string;
+  title: string;
+  content: string;
+  type: string;
+  targetRole: string;
+  targetClassId: string;
+  isRead: boolean;
+  createdAt: string;
+}
+
+export interface NotificationListResult {
+  notifications: Notification[];
+  unreadCount: number;
+}
+
+export function loadNotifications() {
+  return request<NotificationListResult>("/api/notifications");
+}
+
+export function markNotificationRead(id: string) {
+  return request<{ success: boolean }>(`/api/notifications/${id}/read`, { method: "POST" });
+}
+
+export function markAllNotificationsRead() {
+  return request<{ success: boolean; count: number }>("/api/notifications/read-all", { method: "POST" });
+}
+
+export function createNotification(data: { title: string; content: string; type?: string; targetRole?: string; targetClassId?: string }) {
+  return request<{ notification: Notification }>("/api/notifications", {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
