@@ -93,8 +93,16 @@ public class AiService {
   @Value("${ai.api-key:}")
   private String apiKey;
 
-  @Value("${ai.model:glm-4.7-flash}")
+  @Value("${ai.model:glm-4-flash}")
   private String model;
+
+  /** 备用模型列表：主模型 429 时自动降级 */
+  private static final List<String> FALLBACK_MODELS = List.of("glm-4-flash", "glm-4-air", "glm-4-airx");
+
+  /** 获取当前可用的模型名称（排除已 429 的主模型后尝试备用模型） */
+  private volatile String activeModel = null;
+  private volatile long model429Time = 0;
+  private static final long MODEL_429_COOLDOWN_MS = 5 * 60 * 1000; // 5 分钟冷却
 
   @Value("${ai.rate-limit-per-minute:30}")
   private int rateLimitPerMinute;
@@ -175,6 +183,33 @@ public class AiService {
       }
     }
     return aiApiSemaphore;
+  }
+
+  /** 获取当前可用的模型名称，主模型 429 后自动降级到备用模型 */
+  private String getActiveModel() {
+    // 如果主模型冷却时间已过，恢复使用主模型
+    if (activeModel != null && !activeModel.equals(model)
+        && (System.currentTimeMillis() - model429Time) > MODEL_429_COOLDOWN_MS) {
+      log.info("[AiService] 主模型 {} 冷却时间已过，恢复使用", model);
+      activeModel = null;
+    }
+    return activeModel != null ? activeModel : model;
+  }
+
+  /** 主模型 429 时切换到备用模型 */
+  private void onModel429() {
+    if (activeModel != null) return; // 已经在用备用模型
+    model429Time = System.currentTimeMillis();
+    String currentModel = model;
+    for (String fallback : FALLBACK_MODELS) {
+      if (!fallback.equals(currentModel)) {
+        activeModel = fallback;
+        log.warn("[AiService] 主模型 {} 返回 429，切换到备用模型 {}", currentModel, fallback);
+        return;
+      }
+    }
+    // 没有可用的备用模型，保持原模型
+    log.warn("[AiService] 主模型 {} 返回 429，无可用备用模型", currentModel);
   }
 
   // ========== 定时清理任务 ==========
@@ -1437,7 +1472,7 @@ public class AiService {
     headers.setBearerAuth(apiKey);
 
     Map<String, Object> requestBody = new LinkedHashMap<>();
-    requestBody.put("model", model);
+    requestBody.put("model", getActiveModel());
     requestBody.put("messages", List.of(
       Map.of("role", "system", "content", systemPrompt),
       Map.of("role", "user", "content", userPrompt)
@@ -1472,6 +1507,7 @@ public class AiService {
         String msg = e.getMessage() != null ? e.getMessage() : "";
 
         if (msg.contains("429") && attempt < maxRetries) {
+          onModel429();
           long waitMs = (long) (5000 * Math.pow(3, attempt - 1));
           log.info("[AiService] 非流式请求429，{}ms后重试(第{}次)", waitMs, attempt);
           try { Thread.sleep(waitMs); } catch (InterruptedException ie) { Thread.currentThread().interrupt(); }
@@ -1711,7 +1747,7 @@ public class AiService {
   public ResponseEntity<?> getHealthStatus() {
     Map<String, Object> status = new LinkedHashMap<>();
     status.put("apiKeyConfigured", apiKey != null && !apiKey.isBlank());
-    status.put("model", model);
+    status.put("model", getActiveModel());
     status.put("activeSseConnections", activeSseConnections.get());
     status.put("cacheSize", responseCache.size());
     status.put("activeSessions", conversationSessions.size());
@@ -2056,20 +2092,13 @@ public class AiService {
     + "- count: 用户要求的题目数量，未指定则为0。";
 
   /**
-   * 通过AI大模型实时分析用户输入的语义和意图。
-   * 这是核心方法，替代所有正则匹配提取，实现真正的智能语义理解。
-   * 如果AI分析失败，降级到正则匹配作为兜底。
+   * 通过正则匹配快速分析用户输入的语义和意图。
+   * 不再调用 AI API 做意图分析，避免额外 API 消耗和 429 限流风险。
+   * 正则匹配已覆盖常见场景，足以满足出题意图识别需求。
    */
   UserIntent analyzeUserIntent(String userText) {
     if (userText == null || userText.isBlank()) return UserIntent.empty();
-
-    try {
-      String aiResponse = callAiApiForIntentAnalysis(userText);
-      return parseIntentResponse(aiResponse);
-    } catch (Exception e) {
-      log.warn("[AiService] AI意图分析失败，降级到正则匹配: {}", e.getMessage());
-      return fallbackRegexIntent(userText);
-    }
+    return fallbackRegexIntent(userText);
   }
 
   /** 调用AI API进行轻量级意图分析（低token、低延迟） */
