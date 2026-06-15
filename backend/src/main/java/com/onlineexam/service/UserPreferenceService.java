@@ -15,6 +15,8 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -26,6 +28,8 @@ import org.springframework.stereotype.Service;
  */
 @Service
 public class UserPreferenceService {
+
+  private static final Logger log = LoggerFactory.getLogger(UserPreferenceService.class);
 
   private final JdbcTemplate jdbc;
   private final AiService aiService;
@@ -564,7 +568,7 @@ public class UserPreferenceService {
     // 从对话分析获取科目偏好
     List<Map<String, Object>> chatSubjects = (List<Map<String, Object>>) chatAnalysis.getOrDefault("subjectScores", List.of());
     for (Map<String, Object> s : chatSubjects) {
-      String subject = str(s, "subject" != null ? "subject" : "key");
+      String subject = s.containsKey("subject") ? str(s, "subject") : str(s, "key");
       // 兼容两种格式
       if (subject.isBlank() && s.containsKey("key")) subject = str(s, "key");
       if (subject.isBlank()) {
@@ -1191,7 +1195,7 @@ public class UserPreferenceService {
     if (subjectAffinity.isEmpty()) return generateDefaultSuggestions();
 
     for (int i = 0; i < Math.min(3, subjectAffinity.size()); i++) {
-      String subject = String.valueOf(subjectAffinity.get(i).get("subject" != null ? "subject" : "name"));
+      String subject = subjectAffinity.get(i).containsKey("subject") ? String.valueOf(subjectAffinity.get(i).get("subject")) : String.valueOf(subjectAffinity.get(i).get("name"));
       if (subjectAffinity.get(i).containsKey("name")) subject = String.valueOf(subjectAffinity.get(i).get("name"));
       Map<String, Object> chip = new LinkedHashMap<>();
       chip.put("text", getSubjectQuestion(subject));
@@ -1215,7 +1219,7 @@ public class UserPreferenceService {
     if (subjectAffinity.isEmpty()) return generateDefaultPracticeTopics();
 
     for (int i = 0; i < Math.min(4, subjectAffinity.size()); i++) {
-      String subject = String.valueOf(subjectAffinity.get(i).get("subject" != null ? "subject" : "name"));
+      String subject = subjectAffinity.get(i).containsKey("subject") ? String.valueOf(subjectAffinity.get(i).get("subject")) : String.valueOf(subjectAffinity.get(i).get("name"));
       if (subjectAffinity.get(i).containsKey("name")) subject = String.valueOf(subjectAffinity.get(i).get("name"));
       Map<String, Object> topic = new LinkedHashMap<>();
       topic.put("icon", getSubjectIcon(subject));
@@ -1308,7 +1312,7 @@ public class UserPreferenceService {
       }
     } catch (Exception e) {
       // 持久化失败不影响服务
-      System.err.println("[UserPreferenceService] 画像持久化失败: " + e.getMessage());
+      log.error("画像持久化失败", e);
     }
   }
 

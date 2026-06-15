@@ -55,6 +55,12 @@ import {
   getUserProfile,
   logBehavior,
   submitRecommendationFeedback,
+  createPracticeSession,
+  getActivePracticeSession,
+  savePracticeSessionQuestions,
+  savePracticeSessionAnswers,
+  submitPracticeSession,
+  deletePracticeSession as apiDeletePracticeSession,
 } from '@/api/client'
 import type {
   MonitorResult,
@@ -76,13 +82,10 @@ import type {
   SearchResultConversation,
   RecommendationItem,
   UserProfile,
+  PracticeSession,
 } from '@/api/client'
-
-export interface Toast {
-  id: number
-  message: string
-  type: 'success' | 'error' | 'info'
-}
+import { useToast } from '@/composables/useToast'
+export type { Toast } from '@/composables/useToast'
 
 /**
  * 检测文本是否为 AI 思考/推理过程输出
@@ -144,15 +147,10 @@ function stripThinkingFromContent(raw: string): { content: string; thinking: str
 
 export const useAppStore = defineStore('app', () => {
   // Toast notification system
-  let toastId = 0
-  const toasts = ref<Toast[]>([])
+  const { toasts, show: showToastRaw, success: toastSuccess, error: toastError, warning: toastWarning, info: toastInfo } = useToast()
 
-  function showToast(message: string, type: 'success' | 'error' | 'info' = 'info') {
-    const id = ++toastId
-    toasts.value.push({ id, message, type })
-    setTimeout(() => {
-      toasts.value = toasts.value.filter((t) => t.id !== id)
-    }, 3000)
+  function showToast(message: string, type: 'success' | 'error' | 'info' | 'warning' = 'info') {
+    showToastRaw(message, type)
   }
 
   // Core state
@@ -248,6 +246,11 @@ export const useAppStore = defineStore('app', () => {
 
   // Current session tab ('chat' | 'practice')
   const activeTab = ref<'chat' | 'practice'>('chat')
+
+  // Practice session persistence state
+  const activePracticeSession = ref<PracticeSession | null>(null)
+  const practiceSessionLoading = ref(false)
+  let practiceAnswerSaveTimer: ReturnType<typeof setTimeout> | null = null
 
   // Quota state
   const quotaData = ref<QuotaResult | null>(null)
@@ -481,6 +484,7 @@ export const useAppStore = defineStore('app', () => {
         { key: 'students', label: '学生管理', description: '维护学生账号' },
         { key: 'teachers', label: '教师管理', description: '维护教师账号' },
         { key: 'org', label: '组织管理', description: '学院与班级' },
+        { key: 'admin-exams', label: '考试管理', description: '查看所有考试' },
         { key: 'logs', label: '系统日志', description: '操作记录' },
         { key: 'profile', label: '个人信息', description: '修改密码' },
       ]
@@ -570,13 +574,16 @@ export const useAppStore = defineStore('app', () => {
     }
   }
 
-  async function loadQuestionsPage(page: number = 1) {
+  async function loadQuestionsPage(page: number = 1, keyword?: string, type?: string, subject?: string) {
     questionsLoading.value = true
     currentPage.value = page
     try {
       const result = await apiLoadQuestionsPage({
         page,
         pageSize: pageSize.value,
+        keyword,
+        type,
+        subject,
       })
       paginatedQuestions.value = result.rows
       totalQuestions.value = result.total
@@ -588,6 +595,7 @@ export const useAppStore = defineStore('app', () => {
   }
 
   function logout() {
+    closeAllModals()
     setCurrentAuthToken('')
     localStorage.removeItem('auth_token')
     bootstrap.value = null
@@ -609,6 +617,22 @@ export const useAppStore = defineStore('app', () => {
     userPreferences.value = null
     preferencesLoading.value = false
     deepThinkingEnabled.value = false
+    // 清理练习会话状态
+    activePracticeSession.value = null
+    practiceSessionLoading.value = false
+    if (practiceAnswerSaveTimer) { clearTimeout(practiceAnswerSaveTimer); practiceAnswerSaveTimer = null }
+  }
+
+  /** 关闭所有弹窗（页面切换时调用） */
+  function closeAllModals() {
+    editorState.value.visible = false
+    paperFormVisible.value = false
+    previewPaperModel.value = null
+    reviewingSubmission.value = null
+    retryingEntry.value = null
+    batchImportRole.value = null
+    activeExam.value = null
+    autoGenVisible.value = false
   }
 
   function openEditor(kind: typeof editorState.value.kind, model: any) {
@@ -1437,6 +1461,28 @@ export const useAppStore = defineStore('app', () => {
       : ''
     const countMatch = message.match(/(\d+)\s*道/)
     const inferredCount = countMatch ? Math.min(parseInt(countMatch[1]), 20) : 0
+    // Extract subject from user message for practice session metadata
+    const subjectPatterns: [RegExp, string][] = [
+      [/高等数学|微积分|线性代数|高数/, '高等数学'],
+      [/大学语文|语文/, '大学语文'],
+      [/马克思主义|马原|马哲/, '马克思主义'],
+      [/政治|毛概|中特/, '政治'],
+      [/中国近现代史|近现代史|近代史/, '中国近现代史'],
+      [/大学英语|英语/, '大学英语'],
+      [/大学物理|物理/, '大学物理'],
+      [/计算机基础|计算机/, '计算机基础'],
+      [/计算机网络|网络/, '计算机网络'],
+      [/数据结构/, '数据结构'],
+      [/操作系统/, '操作系统'],
+      [/数据库/, '数据库'],
+      [/JavaScript|JS/i, 'JavaScript'],
+      [/Python/i, 'Python'],
+      [/Java(?!Script)/i, 'Java'],
+    ]
+    let inferredSubject = ''
+    for (const [pattern, subject] of subjectPatterns) {
+      if (pattern.test(message)) { inferredSubject = subject; break }
+    }
 
     practiceAbortController = aiPracticeQuestionsStream(
       {
@@ -1485,6 +1531,29 @@ export const useAppStore = defineStore('app', () => {
         }
         // Persist practice messages to conversation history
         handleSaveMessages(practiceMessages.value)
+
+        // 自动创建练习会话并保存生成的题目
+        try {
+          const cleaned = (data.content || '').replace(/^```[a-z]*\n?/i, '').replace(/\n?```$/i, '').trim()
+          const parsed = JSON.parse(cleaned)
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            handleCreatePracticeSession(parsed, inferredSubject || undefined)
+          }
+        } catch {
+          // Not valid JSON — try with the full content
+          try {
+            const content = data.content || ''
+            const arrStart = content.indexOf('[')
+            const arrEnd = content.lastIndexOf(']')
+            if (arrStart >= 0 && arrEnd > arrStart) {
+              const jsonStr = content.substring(arrStart, arrEnd + 1)
+              const parsed = JSON.parse(jsonStr)
+              if (Array.isArray(parsed) && parsed.length > 0) {
+                handleCreatePracticeSession(parsed, inferredSubject || undefined)
+              }
+            }
+          } catch { /* not parseable, skip session creation */ }
+        }
       },
       (error) => {
         if (practiceTimeoutId) { clearTimeout(practiceTimeoutId); practiceTimeoutId = null }
@@ -1522,6 +1591,113 @@ export const useAppStore = defineStore('app', () => {
     practiceStreamingContent.value = ''
     practiceStreamingReasoning.value = ''
     practiceStreamingActive.value = false
+  }
+
+  // ========== Practice Session Persistence Actions ==========
+
+  /** 恢复用户活跃的练习会话（页面刷新时调用） */
+  async function restorePracticeSession() {
+    if (!currentUser.value) return
+    practiceSessionLoading.value = true
+    try {
+      const result = await getActivePracticeSession()
+      if (result.session) {
+        activePracticeSession.value = result.session
+        // 恢复练习消息：从会话的题目数据重建 AI 消息
+        if (result.session.questions && result.session.questions.length > 0) {
+          // 重建用户消息（从 conversation 获取，或使用占位符）
+          const userMsg = result.session.subject
+            ? `帮我出关于「${result.session.subject}」的练习题`
+            : '帮我出练习题'
+
+          // 重建 AI 消息内容：将题目数据序列化为 JSON
+          const questionsData = result.session.questions.map(q => q.questionData)
+          const aiContent = JSON.stringify(questionsData)
+
+          practiceMessages.value = [
+            { role: 'user', content: userMsg },
+            { role: 'assistant', content: aiContent },
+          ]
+
+          // 标记已持久化的消息数
+          if (activeConversationId.value) {
+            persistedCount[`practice:${activeConversationId.value}`] = 2
+          }
+        }
+      }
+    } catch (err) {
+      console.warn('[PracticeSession] Failed to restore session:', err)
+    } finally {
+      practiceSessionLoading.value = false
+    }
+  }
+
+  /** 创建新的练习会话并保存题目 */
+  async function handleCreatePracticeSession(questions: AiQuestion[], subject?: string) {
+    if (!currentUser.value) return
+    try {
+      // 如果已有活跃会话，先将其标记为 abandoned
+      if (activePracticeSession.value && activePracticeSession.value.status === 'active') {
+        // 删除旧会话（未提交的）
+        try {
+          await apiDeletePracticeSession(activePracticeSession.value.id)
+        } catch { /* ignore */ }
+      }
+
+      // 创建新会话
+      const session = await createPracticeSession({
+        subject: subject || 'AI练习',
+        conversationId: activeConversationId.value || undefined,
+      })
+      activePracticeSession.value = session
+
+      // 保存题目到会话
+      if (questions.length > 0) {
+        await savePracticeSessionQuestions(session.id, questions)
+        activePracticeSession.value.questionCount = questions.length
+      }
+    } catch (err) {
+      console.error('[PracticeSession] Failed to create session:', err)
+    }
+  }
+
+  /** 自动保存用户答案（防抖，2秒延迟） */
+  function scheduleAnswerSave(sessionId: string, answers: Array<{ questionIndex: number; answer: string[] | string }>) {
+    if (practiceAnswerSaveTimer) clearTimeout(practiceAnswerSaveTimer)
+    practiceAnswerSaveTimer = setTimeout(async () => {
+      try {
+        await savePracticeSessionAnswers(sessionId, answers)
+      } catch (err) {
+        console.warn('[PracticeSession] Failed to auto-save answers:', err)
+      }
+    }, 2000)
+  }
+
+  /** 提交练习会话 */
+  async function handleSubmitPracticeSession(
+    sessionId: string,
+    answers: Array<{ questionIndex: number; answer: string[] | string }>,
+    records: Array<Record<string, unknown>>,
+  ) {
+    try {
+      const result = await submitPracticeSession(sessionId, answers)
+      // 同时保存练习记录到 wrong_book_entry（兼容现有逻辑）
+      if (records.length > 0) {
+        try { await savePracticeRecords(records) } catch { /* ignore */ }
+      }
+      // 更新本地状态
+      if (activePracticeSession.value?.id === sessionId) {
+        activePracticeSession.value.status = 'submitted'
+        activePracticeSession.value.correctCount = result.correctCount
+        activePracticeSession.value.totalScore = result.totalScore
+        activePracticeSession.value.earnedScore = result.earnedScore
+      }
+      await loadData()
+      return result
+    } catch (err: any) {
+      showToast(err?.message || '提交练习失败', 'error')
+      throw err
+    }
   }
 
   async function handleAiExplainAnswer(params: {
@@ -1696,6 +1872,7 @@ export const useAppStore = defineStore('app', () => {
     login,
     loadData,
     logout,
+    closeAllModals,
     openEditor,
     handleEntitySubmit,
     removeEntity,
@@ -1770,6 +1947,14 @@ export const useAppStore = defineStore('app', () => {
     handlePracticeSend,
     handlePracticeStop,
     clearPracticeMessages,
+
+    // Practice session persistence
+    activePracticeSession,
+    practiceSessionLoading,
+    restorePracticeSession,
+    handleCreatePracticeSession,
+    scheduleAnswerSave,
+    handleSubmitPracticeSession,
 
     handleAiGenerateQuestions,
     handleAiGenerateQuestionsStream,

@@ -381,7 +381,7 @@ label span {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 18px 16px 12px;
+  padding: 12px 12px 8px;
   border-bottom: 1px solid var(--sidebar-border);
   flex-shrink: 0;
 }
@@ -460,12 +460,13 @@ label span {
 
 .sidebar-body {
   flex: 1;
-  overflow-y: auto;
+  overflow-y: hidden;
   overflow-x: hidden;
-  padding: 12px 10px;
+  padding: 8px 10px;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 2px;
+  min-height: 0;
 }
 
 .sidebar-body::-webkit-scrollbar {
@@ -488,24 +489,25 @@ label span {
 
 /* Sidebar user panel */
 .sidebar-user {
-  padding: 12px;
+  padding: 8px 10px;
   background: var(--sidebar-surface);
   border: 1px solid var(--sidebar-border);
   border-radius: var(--radius);
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
+  flex-shrink: 0;
 }
 
 .sidebar-user-avatar {
-  width: 36px;
-  height: 36px;
+  width: 30px;
+  height: 30px;
   border-radius: 50%;
   background: linear-gradient(135deg, var(--primary), var(--sidebar-accent));
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 14px;
+  font-size: 12px;
   font-weight: 600;
   color: #fff;
   flex-shrink: 0;
@@ -538,8 +540,12 @@ label span {
 
 /* ---- Navigation Menu ---- */
 .menu-list {
-  display: grid;
-  gap: 2px;
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 0;
+  gap: 1px;
+  min-height: 0;
+  justify-content: space-evenly;
 }
 
 .menu-section-label {
@@ -559,13 +565,15 @@ label span {
   color: var(--sidebar-text);
   border: 1px solid transparent;
   border-radius: 8px;
-  padding: 10px 12px;
+  padding: 6px 10px;
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   position: relative;
   overflow: hidden;
   transition: all var(--duration) var(--ease);
+  flex-shrink: 1;
+  min-height: 0;
 }
 
 .menu-btn::before {
@@ -629,18 +637,8 @@ label span {
 
 .menu-btn .menu-label strong {
   display: block;
-  font-size: 13.5px;
+  font-size: 13px;
   font-weight: inherit;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.menu-btn .menu-label span {
-  display: block;
-  font-size: 11px;
-  opacity: 0.55;
-  margin-top: 1px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -649,10 +647,11 @@ label span {
 /* ---- Menu Footer ---- */
 .menu-footer {
   margin-top: auto;
-  padding-top: 8px;
+  padding-top: 6px;
   border-top: 1px solid var(--sidebar-border);
   display: grid;
-  gap: 4px;
+  gap: 2px;
+  flex-shrink: 0;
 }
 
 .menu-footer button {
@@ -660,8 +659,8 @@ label span {
   text-align: left;
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 9px 12px;
+  gap: 8px;
+  padding: 6px 10px;
   border-radius: 8px;
   background: transparent;
   color: var(--sidebar-text);
@@ -2520,6 +2519,7 @@ th {
 .content-panel--full {
   margin: 0 !important;
   padding: 0 !important;
+  padding-bottom: 0 !important;
   width: 100% !important;
   height: 100% !important;
   max-width: none !important;
@@ -2808,6 +2808,11 @@ th {
     display: block;
   }
 
+  /* Mobile drawer: allow scroll but make items compact to minimize need */
+  .sidebar-body {
+    overflow-y: auto;
+  }
+
   .main-panel {
     margin-left: 0 !important;
     width: 100% !important;
@@ -2845,6 +2850,11 @@ th {
 
   .sidebar-open .sidebar-overlay {
     display: block;
+  }
+
+  /* Tablet drawer: allow scroll but make items compact */
+  .sidebar-body {
+    overflow-y: auto;
   }
 
   .main-panel {
@@ -2907,6 +2917,11 @@ th {
   }
 
   .content-panel:not(.content-panel--full) {
+    padding-bottom: 72px !important;
+  }
+
+  /* AI assistant page also needs bottom padding for tab bar */
+  .content-panel--full {
     padding-bottom: 72px !important;
   }
 }
@@ -3093,7 +3108,7 @@ th {
   .mobile-card-table table,
   .table-card-mobile table {
     border-collapse: separate;
-    border-spacing: 0 6px;
+    border-spacing: 0 8px;
   }
 
   .mobile-card-table thead,
@@ -3107,8 +3122,8 @@ th {
     background: var(--panel);
     border: 1px solid var(--line-soft);
     border-radius: var(--radius);
-    padding: 10px 12px;
-    margin-bottom: 8px;
+    padding: 12px 14px;
+    margin-bottom: 10px;
     box-shadow: var(--shadow-sm);
   }
 
@@ -3117,9 +3132,11 @@ th {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    padding: 3px 0;
+    padding: 5px 0;
     border-bottom: 1px solid var(--line-soft);
     font-size: 13px;
+    min-height: 32px;
+    gap: 8px;
   }
 
   .mobile-card-table tbody td:last-child,
@@ -3132,9 +3149,85 @@ th {
     content: attr(data-label);
     font-weight: 600;
     color: var(--muted);
-    margin-right: 10px;
+    margin-right: 8px;
     flex-shrink: 0;
     font-size: 12px;
+    min-width: 60px;
+  }
+
+  /* Mobile card: value text should not be truncated */
+  .mobile-card-table tbody td::after,
+  .table-card-mobile tbody td::after {
+    content: '';
+    flex: 1;
+    min-width: 0;
+  }
+
+  /* Mobile card: action buttons full width at bottom */
+  .mobile-card-table tbody td .action-row,
+  .table-card-mobile tbody td .action-row {
+    display: flex;
+    gap: 8px;
+    width: 100%;
+    justify-content: flex-end;
+    flex-wrap: wrap;
+  }
+
+  .mobile-card-table tbody td .action-row button,
+  .table-card-mobile tbody td .action-row button {
+    min-height: 36px;
+    min-width: 64px;
+    font-size: 13px;
+    padding: 6px 14px;
+  }
+
+  /* Mobile card: checkbox cell alignment */
+  .mobile-card-table tbody td.checkbox-col,
+  .table-card-mobile tbody td.checkbox-col {
+    justify-content: flex-start;
+    border-bottom: 1px solid var(--line-soft);
+  }
+
+  .mobile-card-table tbody td.checkbox-col input[type="checkbox"],
+  .table-card-mobile tbody td.checkbox-col input[type="checkbox"] {
+    width: 20px;
+    height: 20px;
+    min-width: 20px;
+  }
+
+  /* Mobile card: hide columns marked as secondary on small screens */
+  .mobile-card-table tbody td.mobile-hide,
+  .table-card-mobile tbody td.mobile-hide {
+    display: none;
+  }
+
+  /* Mobile card: full-width action cell */
+  .mobile-card-table tbody td.mobile-action-cell,
+  .table-card-mobile tbody td.mobile-action-cell {
+    flex-direction: column;
+    align-items: stretch;
+    padding-top: 8px;
+    border-bottom: none;
+  }
+
+  .mobile-card-table tbody td.mobile-action-cell::before,
+  .table-card-mobile tbody td.mobile-action-cell::before {
+    display: none;
+  }
+
+  .mobile-card-table tbody td.mobile-action-cell .action-row,
+  .table-card-mobile tbody td.mobile-action-cell .action-row {
+    justify-content: center;
+  }
+
+  /* Non-card table: ensure horizontal scroll works well */
+  .table-wrap:not(.mobile-card-table .table-wrap) table {
+    font-size: 12px;
+  }
+
+  .table-wrap:not(.mobile-card-table .table-wrap) th,
+  .table-wrap:not(.mobile-card-table .table-wrap) td {
+    white-space: nowrap;
   }
 
   /* ---- Forms stack vertically ---- */
@@ -3151,6 +3244,68 @@ th {
     flex-direction: column;
     align-items: stretch;
     gap: 8px;
+  }
+
+  /* Mobile: section-actions inline when space allows */
+  .section-actions {
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .section-actions select,
+  .section-actions .monitor-select {
+    flex: 1 1 120px;
+    min-width: 120px;
+    min-height: 40px;
+    font-size: 14px;
+  }
+
+  .section-actions button {
+    flex: 0 0 auto;
+    min-height: 40px;
+  }
+
+  /* Mobile: compact stats cards */
+  .compact-card {
+    min-height: auto;
+    padding: 10px;
+  }
+
+  .compact-card strong {
+    font-size: 20px;
+    margin-top: 4px;
+  }
+
+  .compact-card span {
+    font-size: 11px;
+  }
+
+  /* Mobile: chart panels */
+  .chart-panel {
+    padding: 10px;
+  }
+
+  .chart-surface {
+    min-height: 200px !important;
+  }
+
+  /* Mobile: quota bar compact */
+  .quota-bar {
+    margin-bottom: 8px;
+  }
+
+  .quota-info {
+    font-size: 0.8rem;
+  }
+
+  /* Mobile: selection bar */
+  .selection-bar {
+    flex-wrap: wrap;
+    gap: 6px;
+    font-size: 0.8rem;
+    padding: 6px 10px;
   }
 
   .toolbar-form label,
@@ -3175,11 +3330,19 @@ th {
     display: none;
   }
 
-  /* ---- Buttons tighter ---- */
+  /* ---- Buttons: larger touch targets ---- */
   button,
   .btn {
     font-size: 14px;
-    padding: 8px 14px;
+    padding: 10px 16px;
+    min-height: 40px;
+  }
+
+  .ghost-btn,
+  .primary-btn,
+  .danger-btn {
+    min-height: 40px;
+    padding: 8px 16px;
   }
 
   /* ---- Sidebar drawer on mobile ---- */
@@ -3190,6 +3353,10 @@ th {
 
   .sidebar-collapse-btn {
     display: none;
+  }
+
+  .sidebar-top {
+    padding: 10px 10px 6px;
   }
 
   /* ---- Bottom tab bar adjustments ---- */
@@ -3231,6 +3398,10 @@ th {
   .sidebar {
     width: 260px;
     box-shadow: 4px 0 20px rgba(0, 0, 0, 0.18);
+  }
+
+  .sidebar-top {
+    padding: 10px 10px 6px;
   }
 
   /* ---- Tables remain with horizontal scroll ---- */
@@ -3878,5 +4049,99 @@ button:active:not(:disabled),
 @media (prefers-color-scheme: dark) {
   :root {
     /* Reserved for future dark mode tokens */
+  }
+}
+
+/* ============================================
+   PERFORMANCE & VISUAL ENHANCEMENTS
+   ============================================ */
+
+/* Page transition */
+.page-enter-active,
+.page-leave-active {
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+.page-enter-from {
+  opacity: 0;
+  transform: translateY(8px);
+}
+.page-leave-to {
+  opacity: 0;
+  transform: translateY(-4px);
+}
+
+/* Skeleton loading */
+.skeleton {
+  background: linear-gradient(90deg, #f0f0f0 25%, #e0e0e0 50%, #f0f0f0 75%);
+  background-size: 200% 100%;
+  animation: skeleton-loading 1.5s ease-in-out infinite;
+  border-radius: 6px;
+}
+@keyframes skeleton-loading {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+/* Toast notifications */
+.toast-container {
+  position: fixed;
+  top: 20px;
+  right: 20px;
+  z-index: 9999;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  pointer-events: none;
+}
+.toast {
+  padding: 12px 20px;
+  border-radius: 8px;
+  color: #fff;
+  font-size: 14px;
+  font-weight: 500;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+  pointer-events: auto;
+  animation: toast-in 0.3s ease;
+  max-width: 360px;
+}
+.toast-success { background: #10b981; }
+.toast-error { background: #ef4444; }
+.toast-warning { background: #f59e0b; }
+.toast-info { background: #6366f1; }
+@keyframes toast-in {
+  from { opacity: 0; transform: translateX(100%); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+/* Enhanced mobile card table */
+@media (max-width: 767px) {
+  .mobile-card-table table thead { display: none; }
+  .mobile-card-table table tbody tr {
+    display: block;
+    margin-bottom: 12px;
+    border: 1px solid var(--border, #e5e7eb);
+    border-radius: 10px;
+    padding: 12px;
+    background: var(--card-bg, #fff);
+    box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+  }
+  .mobile-card-table table tbody td {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 6px 0;
+    border: none !important;
+    border-bottom: 1px solid #f3f4f6 !important;
+  }
+  .mobile-card-table table tbody td:last-child {
+    border-bottom: none !important;
+  }
+  .mobile-card-table table tbody td::before {
+    content: attr(data-label);
+    font-weight: 600;
+    font-size: 12px;
+    color: var(--muted, #9ca3af);
+    margin-right: 12px;
+    flex-shrink: 0;
   }
 }

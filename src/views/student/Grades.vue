@@ -1,5 +1,5 @@
 <template>
-  <section class="two-column">
+  <section class="grades-page">
     <article class="panel" style="margin-bottom:1rem">
       <div class="section-title">
         <div>
@@ -16,18 +16,20 @@
         </section>
       </template>
     </article>
-    <ChartCard
-      v-if="store.scoreTrendData.length > 0"
-      title="成绩趋势"
-      description="历次考试得分变化"
-      :option="store.scoreTrendOption"
-    />
-    <ChartCard
-      v-if="store.subjectMasteryData.length > 0"
-      title="知识点掌握"
-      description="各科目掌握率雷达图"
-      :option="store.knowledgeRadarOption"
-    />
+    <div class="grades-charts">
+      <ChartCard
+        v-if="store.scoreTrendData.length > 0"
+        title="成绩趋势"
+        description="历次考试得分变化"
+        :option="store.scoreTrendOption"
+      />
+      <ChartCard
+        v-if="store.subjectMasteryData.length > 0"
+        title="知识点掌握"
+        description="各科目掌握率雷达图"
+        :option="store.knowledgeRadarOption"
+      />
+    </div>
   </section>
 </template>
 
@@ -42,3 +44,32 @@ onMounted(() => {
   store.loadStudentGrades()
 })
 </script>
+
+<style scoped>
+.grades-page {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.grades-charts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr));
+  gap: 1rem;
+}
+
+/* Mobile: stats grid 3 columns for compact cards */
+@media (max-width: 767px) {
+  .grades-charts {
+    grid-template-columns: 1fr;
+    gap: 0.75rem;
+  }
+}
+
+/* Tablet: 2 columns for charts */
+@media (min-width: 768px) and (max-width: 1023px) {
+  .grades-charts {
+    grid-template-columns: 1fr;
+  }
+}
+</style>

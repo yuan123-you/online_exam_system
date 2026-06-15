@@ -18,7 +18,7 @@ spring:
 
 ai:
   api-url: https://open.bigmodel.cn/api/paas/v4/chat/completions
-  api-key: 82f20bac24a545c595dc30f7eee3dfd1.eJmxuTgiNAxaDNEX
+  api-key: ${AI_API_KEY:}
   model: glm-4.7-flash
   timeout-ms: 120000
   rate-limit-per-minute: 30
@@ -31,6 +31,9 @@ ai:
     max-size: 32
     queue-capacity: 200
     keep-alive-seconds: 60
+
+cors:
+  allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:*,http://127.0.0.1:*,https://web.novo.ccwu.cc,http://web.novo.ccwu.cc}
 
 logging:
   level:

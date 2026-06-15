@@ -8,6 +8,7 @@ import StudentManage from '@/views/admin/StudentManage.vue'
 import TeacherManage from '@/views/admin/TeacherManage.vue'
 import OrgManage from '@/views/admin/OrgManage.vue'
 import SystemLogs from '@/views/admin/SystemLogs.vue'
+import ExamManageAdmin from '@/views/admin/ExamManageAdmin.vue'
 
 // Teacher views
 import TeacherOverview from '@/views/teacher/TeacherOverview.vue'
@@ -90,6 +91,12 @@ const router = createRouter({
           path: 'logs',
           name: 'logs',
           component: SystemLogs,
+          meta: { roles: ['admin'] },
+        },
+        {
+          path: 'admin-exams',
+          name: 'admin-exams',
+          component: ExamManageAdmin,
           meta: { roles: ['admin'] },
         },
         // Teacher routes
@@ -186,6 +193,11 @@ const router = createRouter({
 
 router.beforeEach((to, from, next) => {
   const store = useAppStore()
+
+  // 页面切换时关闭所有弹窗，防止弹窗残留
+  if (from.path !== to.path) {
+    store.closeAllModals()
+  }
 
   // 等待认证初始化完成（main.ts 中 await initAuth() 后 authReady 为 true）
   // 防御性逻辑：即使 main.ts 未 await，首次导航也不会误判

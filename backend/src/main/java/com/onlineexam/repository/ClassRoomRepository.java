@@ -57,7 +57,8 @@ public class ClassRoomRepository {
   }
 
   private Map<String, Object> compact(Map<String, Object> source) {
-    source.entrySet().removeIf(e -> e.getValue() == null || "".equals(e.getValue()));
-    return source;
+    Map<String, Object> result = new LinkedHashMap<>(source);
+    result.entrySet().removeIf(e -> e.getValue() == null || "".equals(e.getValue()));
+    return result;
   }
 }

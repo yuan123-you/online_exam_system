@@ -3,6 +3,7 @@ package com.onlineexam.controller;
 import com.onlineexam.service.AiService;
 import com.onlineexam.service.AnalysisService;
 import java.util.Map;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -98,6 +99,51 @@ public class AiController {
   }
 
   /**
+   * AI 结构化出题（教师端，增强版参数验证）
+   */
+  @PostMapping("/ai/generate-questions-structured")
+  public ResponseEntity<?> aiGenerateQuestionsStructured(@RequestHeader(value = "X-User-Id", required = false) String userId,
+                                                         @RequestBody Map<String, Object> body) {
+    return aiService.generateQuestions(userId, body);
+  }
+
+  /**
+   * AI 结构化出题 - 流式 SSE（教师端，增强版参数验证）
+   */
+  @PostMapping(value = "/ai/generate-questions-structured/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+  public SseEmitter aiGenerateQuestionsStructuredStream(@RequestHeader(value = "X-User-Id", required = false) String userId,
+                                                         @RequestBody Map<String, Object> body) {
+    SseEmitter emitter = new SseEmitter(180_000L);
+    aiService.generateQuestionsStream(userId, body, emitter);
+    return emitter;
+  }
+
+  /**
+   * 题库备份（教师端）
+   */
+  @PostMapping("/ai/backup-question-bank")
+  public ResponseEntity<?> aiBackupQuestionBank(@RequestHeader(value = "X-User-Id", required = false) String userId) {
+    return ResponseEntity.status(HttpStatus.NOT_IMPLEMENTED).body(Map.of("message", "题库备份功能暂未实现"));
+  }
+
+  /**
+   * 列出题库备份（教师端）
+   */
+  @GetMapping("/ai/backups")
+  public ResponseEntity<?> aiListBackups(@RequestHeader(value = "X-User-Id", required = false) String userId) {
+    return ResponseEntity.status(HttpStatus.NOT_IMPLEMENTED).body(Map.of("message", "题库备份功能暂未实现"));
+  }
+
+  /**
+   * 从备份恢复题库（教师端）
+   */
+  @PostMapping("/ai/restore-backup")
+  public ResponseEntity<?> aiRestoreBackup(@RequestHeader(value = "X-User-Id", required = false) String userId,
+                                            @RequestBody Map<String, Object> body) {
+    return ResponseEntity.status(HttpStatus.NOT_IMPLEMENTED).body(Map.of("message", "题库备份功能暂未实现"));
+  }
+
+  /**
    * AI 自由对话 - 普通模式（学生端，任何已认证用户）
    */
   @PostMapping("/ai/chat")
@@ -139,5 +185,13 @@ public class AiController {
   public ResponseEntity<?> questionAnalysis(@RequestHeader(value = "X-User-Id", required = false) String userId,
                                             @PathVariable String examId) {
     return analysisService.questionAnalysis(userId, examId);
+  }
+
+  /**
+   * AI 服务健康检查（含熔断器状态、活跃连接数等）
+   */
+  @GetMapping("/ai/health")
+  public ResponseEntity<?> aiHealth() {
+    return aiService.getHealthStatus();
   }
 }

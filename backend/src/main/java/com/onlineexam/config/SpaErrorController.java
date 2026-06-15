@@ -29,10 +29,16 @@ public class SpaErrorController implements ErrorController {
   @RequestMapping("/error")
   public void handleError(HttpServletRequest request, HttpServletResponse response) throws IOException {
     Object statusObj = request.getAttribute(RequestDispatcher.ERROR_STATUS_CODE);
-    int statusCode = statusObj != null ? Integer.parseInt(statusObj.toString()) : 500;
+    int statusCode;
+    try {
+      statusCode = statusObj != null ? Integer.parseInt(statusObj.toString()) : 500;
+    } catch (NumberFormatException e) {
+      statusCode = 500;
+    }
 
     if (statusCode == HttpStatus.NOT_FOUND.value()) {
-      String path = (String) request.getAttribute(RequestDispatcher.ERROR_REQUEST_URI);
+      Object pathObj = request.getAttribute(RequestDispatcher.ERROR_REQUEST_URI);
+      String path = pathObj instanceof String s ? s : null;
       // Only serve index.html for SPA routes (not API calls or missing static assets)
       if (path != null && !path.startsWith("/api/") && !path.startsWith("/assets/")) {
         response.setStatus(200);
@@ -47,11 +53,17 @@ public class SpaErrorController implements ErrorController {
         }
       }
     }
-    // For all other errors, return a simple JSON error
+    // For all other errors, return a JSON error with matching status description
+    String errorPhrase;
+    try {
+      errorPhrase = HttpStatus.valueOf(statusCode).getReasonPhrase();
+    } catch (IllegalArgumentException e) {
+      errorPhrase = "Internal Server Error";
+    }
     response.setStatus(statusCode);
     response.setContentType("application/json");
     response.getOutputStream().write(
-      ("{\"status\":" + statusCode + ",\"error\":\"Not Found\"}").getBytes(StandardCharsets.UTF_8)
+      ("{\"status\":" + statusCode + ",\"error\":\"" + errorPhrase + "\"}").getBytes(StandardCharsets.UTF_8)
     );
   }
 }

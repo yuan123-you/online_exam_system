@@ -22,8 +22,8 @@ public class SecurityHeadersFilter implements Filter {
     if (response instanceof HttpServletResponse httpResponse) {
       httpResponse.setHeader("X-Content-Type-Options", "nosniff");
       httpResponse.setHeader("X-Frame-Options", "DENY");
-      httpResponse.setHeader("X-XSS-Protection", "1; mode=block");
       httpResponse.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
+      httpResponse.setHeader("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
       // Disable proxy buffering for SSE streams (critical for AI streaming responses)
       httpResponse.setHeader("X-Accel-Buffering", "no");
       httpResponse.setHeader("Cache-Control", "no-cache");

@@ -7,6 +7,8 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -20,6 +22,7 @@ import com.onlineexam.StoreService;
 @Service
 public class ChatHistoryService {
 
+  private static final Logger log = LoggerFactory.getLogger(ChatHistoryService.class);
   private static final int MAX_CONVERSATIONS = 200;
 
   private final JdbcTemplate jdbc;
@@ -38,7 +41,7 @@ public class ChatHistoryService {
       try { jdbc.execute("ALTER TABLE chat_conversation ADD COLUMN session_type VARCHAR(20) NOT NULL DEFAULT 'chat'"); } catch (Exception ignored) {}
       jdbc.execute("CREATE TABLE IF NOT EXISTS chat_message (id VARCHAR(64) PRIMARY KEY, conversation_id VARCHAR(64) NOT NULL, role VARCHAR(20) NOT NULL, content TEXT NOT NULL, reasoning TEXT, created_at DATETIME(3) NOT NULL, INDEX idx_chat_msg_conv (conversation_id)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
     } catch (Exception e) {
-      System.err.println("[ChatHistory] Failed to initialize tables: " + e.getMessage());
+      log.error("Failed to initialize tables: {}", e.getMessage());
     }
   }
 
@@ -72,7 +75,7 @@ public class ChatHistoryService {
       }
       return ResponseEntity.ok(mapOf("conversations", conversations));
     } catch (Exception e) {
-      System.err.println("[ChatHistory] Failed to list conversations: " + e.getMessage());
+      log.error("Failed to list conversations: {}", e.getMessage());
       return ResponseEntity.ok(mapOf("conversations", List.of()));
     }
   }
@@ -132,7 +135,7 @@ public class ChatHistoryService {
       }
       enforceLimit(userId);
     } catch (Exception e) {
-      System.err.println("[ChatHistory] Failed to insert conversation: " + e.getMessage());
+      log.error("Failed to insert conversation: {}", e.getMessage());
       return error(HttpStatus.INTERNAL_SERVER_ERROR, "Failed to create conversation.");
     }
 
@@ -205,7 +208,7 @@ public class ChatHistoryService {
 
       return ResponseEntity.ok(mapOf("saved", saved));
     } catch (Exception e) {
-      System.err.println("[ChatHistory] Failed to append messages: " + e.getMessage());
+      log.error("Failed to append messages: {}", e.getMessage());
       return ResponseEntity.ok(mapOf("saved", 0));
     }
   }
@@ -230,7 +233,8 @@ public class ChatHistoryService {
     if (keyword == null || keyword.isBlank()) return listConversations(userId);
 
     try {
-      String pattern = "%" + keyword + "%";
+      String escaped = keyword.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_");
+      String pattern = "%" + escaped + "%";
       // Search in both conversation titles and message content
       List<Map<String, Object>> rows;
       try {
@@ -238,7 +242,7 @@ public class ChatHistoryService {
           "SELECT DISTINCT c.id, c.title, c.role, c.session_type, c.created_at, c.updated_at " +
           "FROM chat_conversation c " +
           "LEFT JOIN chat_message m ON m.conversation_id = c.id " +
-          "WHERE c.user_id = ? AND (c.title LIKE ? OR m.content LIKE ?) " +
+          "WHERE c.user_id = ? AND (c.title LIKE ? ESCAPE '\\\\' OR m.content LIKE ? ESCAPE '\\\\') " +
           "ORDER BY c.updated_at DESC LIMIT ?",
           userId, pattern, pattern, MAX_CONVERSATIONS);
       } catch (Exception e) {
@@ -246,7 +250,7 @@ public class ChatHistoryService {
           "SELECT DISTINCT c.id, c.title, c.role, c.created_at, c.updated_at " +
           "FROM chat_conversation c " +
           "LEFT JOIN chat_message m ON m.conversation_id = c.id " +
-          "WHERE c.user_id = ? AND (c.title LIKE ? OR m.content LIKE ?) " +
+          "WHERE c.user_id = ? AND (c.title LIKE ? ESCAPE '\\\\' OR m.content LIKE ? ESCAPE '\\\\') " +
           "ORDER BY c.updated_at DESC LIMIT ?",
           userId, pattern, pattern, MAX_CONVERSATIONS);
       }

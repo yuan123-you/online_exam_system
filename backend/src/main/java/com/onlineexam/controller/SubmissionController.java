@@ -29,10 +29,10 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/api")
 public class SubmissionController {
 
-  private static final String RUNNING = "\u8fdb\u884c\u4e2d";
-  private static final String ENDED = "\u5df2\u7ed3\u675f";
-  private static final String PENDING = "\u5f85\u9605\u5377";
-  private static final String COMPLETED = "\u5df2\u5b8c\u6210";
+  private static final String RUNNING = "进行中";
+  private static final String ENDED = "已结束";
+  private static final String PENDING = "待阅卷";
+  private static final String COMPLETED = "已完成";
 
   private final StoreService storeService;
   private final ExamService examService;
@@ -83,7 +83,7 @@ public class SubmissionController {
     submission.put("answers", asList(body.get("answers")));
     submission.put("switchCount", asInt(body.get("switchCount")));
     List<String> reasons = new ArrayList<>();
-    if (asInt(submission.get("switchCount")) > asInt(exam.get("antiCheatLimit"))) reasons.add("\u5207\u5c4f\u6b21\u6570\u8d85\u9650");
+    if (asInt(submission.get("switchCount")) > asInt(exam.get("antiCheatLimit"))) reasons.add("切屏次数超限");
     Instant submitStartedAt = parseInstant(str(submission, "startedAt")).orElse(null);
     Instant submitDeadline = parseInstant(str(submission, "deadlineAt")).orElse(null);
     if (submitStartedAt != null && submitDeadline != null) {
@@ -180,6 +180,7 @@ public class SubmissionController {
   }
 
   private Map<String, Object> mapOf(Object... pairs) {
+    if (pairs.length % 2 != 0) { throw new IllegalArgumentException("mapOf 参数个数必须为偶数，当前为 " + pairs.length); }
     Map<String, Object> map = new LinkedHashMap<>();
     for (int i = 0; i < pairs.length; i += 2) map.put(String.valueOf(pairs[i]), pairs[i + 1]);
     return map;

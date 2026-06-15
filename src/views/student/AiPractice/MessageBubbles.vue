@@ -20,7 +20,7 @@
           class="reasoning-block"
         >
           <details open>
-            <summary>💭 深度思考中...</summary>
+            <summary>💭 深度思考中... <span class="live-timer">{{ liveTimerText }}</span></summary>
             <div class="reasoning-text" v-html="formatReasoning(streamingReasoning)"></div>
           </details>
         </div>
@@ -36,20 +36,29 @@
           </details>
         </div>
 
-        <!-- Rendered Markdown content -->
+        <!-- Rendered Markdown content with typewriter effect -->
         <div
           v-if="msg.content"
           class="message-content"
-          :class="{ streaming: msg.role === 'assistant' && isLast(idx) && streamingActive }"
+          :class="{
+            streaming: msg.role === 'assistant' && isLast(idx) && streamingActive,
+            'typewriter-active': msg.role === 'assistant' && isLast(idx) && streamingActive,
+            'fade-in': msg.role === 'assistant' && !streamingActive && isNewlyCompleted(idx)
+          }"
           v-html="renderContent(msg.content, msg.role, idx)"
         ></div>
       </div>
 
-      <!-- Duration + Copy row (AI only, after streaming) -->
-      <div v-if="msg.role === 'assistant' && msg.content && !(isLast(idx) && streamingActive)" class="msg-meta">
-        <span v-if="msg.duration != null" class="msg-duration">{{ formatDuration(msg.duration) }}</span>
-        <button v-if="(msg as any)._retryMessage" class="retry-btn" @click="retryMessage(idx)">🔄 重新生成</button>
-        <button class="copy-btn" @click="copyPlain(msg.content, idx)">📋 复制</button>
+      <!-- Duration + Copy row (AI only) — show during and after streaming -->
+      <div v-if="msg.role === 'assistant' && msg.content" class="msg-meta">
+        <!-- Live timer during streaming -->
+        <span v-if="isLast(idx) && streamingActive" class="msg-duration live-duration">
+          ⏱ {{ liveTimerText }}
+        </span>
+        <!-- Final duration after streaming -->
+        <span v-else-if="msg.duration != null" class="msg-duration">⏱ {{ formatDuration(msg.duration) }}</span>
+        <button v-if="!(isLast(idx) && streamingActive) && (msg as any)._retryMessage" class="retry-btn" @click="retryMessage(idx)">🔄 重新生成</button>
+        <button v-if="!(isLast(idx) && streamingActive)" class="copy-btn" @click="copyPlain(msg.content, idx)">📋 复制</button>
       </div>
 
       <!-- Copy row for user messages -->
@@ -123,6 +132,7 @@
               :placeholder="q.type === 'coding' ? '请输入代码...' : '请输入答案...'"
               :disabled="submitted[idx]"
               rows="3"
+              @input="autoSaveAnswers(idx)"
             ></textarea>
           </div>
 
@@ -162,10 +172,11 @@
 </template>
 
 <script setup lang="ts">
-import { reactive, ref } from 'vue'
+import { reactive, ref, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { useAppStore } from '@/stores/app'
 import { typeLabel } from '@/utils/format'
 import type { AiQuestion } from '@/api/client'
+import type { PracticeSession } from '@/api/client'
 import katex from 'katex'
 import 'katex/dist/katex.min.css'
 import { savePracticeRecords } from '@/api/client'
@@ -181,6 +192,72 @@ const props = defineProps<{
 const store = useAppStore()
 
 const copiedIdx = ref<number | null>(null)
+
+// ===== Live timer during streaming =====
+const liveTimerText = ref('0s')
+let liveTimerInterval: ReturnType<typeof setInterval> | null = null
+let streamStartTime = 0
+
+function startLiveTimer() {
+  streamStartTime = Date.now()
+  liveTimerText.value = '0s'
+  if (liveTimerInterval) clearInterval(liveTimerInterval)
+  liveTimerInterval = setInterval(() => {
+    const elapsed = Math.floor((Date.now() - streamStartTime) / 1000)
+    if (elapsed < 60) {
+      liveTimerText.value = elapsed + 's'
+    } else {
+      const m = Math.floor(elapsed / 60)
+      const s = elapsed % 60
+      liveTimerText.value = m + 'm ' + s + 's'
+    }
+  }, 1000)
+}
+
+function stopLiveTimer() {
+  if (liveTimerInterval) {
+    clearInterval(liveTimerInterval)
+    liveTimerInterval = null
+  }
+}
+
+// Start/stop live timer based on streaming state
+watch(() => props.streamingActive, (active) => {
+  if (active) {
+    startLiveTimer()
+  } else {
+    stopLiveTimer()
+  }
+}, { immediate: true })
+
+// 监听练习会话恢复，自动加载已保存的答案
+watch(() => store.activePracticeSession, (session) => {
+  if (session && session.status !== 'submitted') {
+    nextTick(() => loadAnswersFromSession(session))
+  }
+}, { immediate: true })
+
+onUnmounted(() => {
+  stopLiveTimer()
+})
+
+// ===== Newly completed message tracking (for fade-in effect) =====
+const newlyCompletedSet = ref(new Set<number>())
+
+watch(() => props.streamingActive, (active, wasActive) => {
+  if (!active && wasActive && props.messages.length > 0) {
+    const lastIdx = props.messages.length - 1
+    newlyCompletedSet.value.add(lastIdx)
+    // Remove fade-in class after animation completes
+    setTimeout(() => {
+      newlyCompletedSet.value.delete(lastIdx)
+    }, 600)
+  }
+})
+
+function isNewlyCompleted(idx: number): boolean {
+  return newlyCompletedSet.value.has(idx)
+}
 
 function formatDuration(seconds: number): string {
   if (seconds < 60) return seconds.toFixed(1) + 's'
@@ -678,6 +755,7 @@ function ensure(msgIdx: number, qi: number) {
 function setSingle(msgIdx: number, qi: number, key: string) {
   ensure(msgIdx, qi)
   answers[msgIdx][qi] = [key]
+  autoSaveAnswers(msgIdx)
 }
 
 function toggleMulti(msgIdx: number, qi: number, key: string) {
@@ -686,6 +764,7 @@ function toggleMulti(msgIdx: number, qi: number, key: string) {
   const pos = arr.indexOf(key)
   if (pos >= 0) arr.splice(pos, 1)
   else arr.push(key)
+  autoSaveAnswers(msgIdx)
 }
 
 function optionClass(msgIdx: number, qi: number, opt: string): string {
@@ -699,6 +778,74 @@ function optionClass(msgIdx: number, qi: number, opt: string): string {
   if (correct) return 'correct'
   if (sel && !correct) return 'wrong'
   return ''
+}
+
+/** 自动保存当前消息的所有答案到练习会话（防抖） */
+function autoSaveAnswers(msgIdx: number) {
+  const session = store.activePracticeSession
+  if (!session || session.status !== 'active') return
+
+  const qs = parsedQuestions(msgIdx)
+  const answerEntries: Array<{ questionIndex: number; answer: string[] | string }> = []
+
+  for (let qi = 0; qi < qs.length; qi++) {
+    const q = qs[qi]
+    if (q.type === 'fill' || q.type === 'short' || q.type === 'coding') {
+      const textVal = textAnswers[msgIdx]?.[qi]
+      if (textVal) {
+        answerEntries.push({ questionIndex: qi, answer: textVal })
+      }
+    } else {
+      const sel = answers[msgIdx]?.[qi]
+      if (sel && sel.length > 0) {
+        answerEntries.push({ questionIndex: qi, answer: sel })
+      }
+    }
+  }
+
+  if (answerEntries.length > 0) {
+    store.scheduleAnswerSave(session.id, answerEntries)
+  }
+}
+
+/** 从恢复的练习会话中加载已保存的答案和提交状态 */
+function loadAnswersFromSession(session: PracticeSession | null) {
+  if (!session || !session.questions) return
+
+  // 找到包含题目的 AI 消息索引
+  for (let msgIdx = 0; msgIdx < props.messages.length; msgIdx++) {
+    const msg = props.messages[msgIdx]
+    if (msg.role !== 'assistant') continue
+    const qs = parsedQuestions(msgIdx)
+    if (qs.length === 0) continue
+
+    // 检查题目数量是否匹配
+    if (qs.length !== session.questions.length) continue
+
+    // 加载每道题的答案和状态
+    for (let qi = 0; qi < session.questions.length; qi++) {
+      const savedQ = session.questions[qi]
+      ensure(msgIdx, qi)
+
+      // 恢复用户答案
+      if (savedQ.userAnswer && savedQ.userAnswer.length > 0) {
+        const q = qs[qi]
+        if (q.type === 'fill' || q.type === 'short' || q.type === 'coding') {
+          textAnswers[msgIdx][qi] = savedQ.userAnswer.join(', ')
+        } else {
+          answers[msgIdx][qi] = savedQ.userAnswer
+        }
+      }
+
+      // 恢复提交状态
+      if (savedQ.isSubmitted) {
+        submitted[msgIdx] = true
+        if (!results[msgIdx]) results[msgIdx] = {}
+        results[msgIdx][qi] = savedQ.isCorrect ?? false
+      }
+    }
+    break // 只处理第一个匹配的消息
+  }
 }
 
 function scoreSummary(msgIdx: number): string {
@@ -772,6 +919,22 @@ async function submitAnswers(msgIdx: number) {
 
   // Auto-save to practice records (async, non-blocking)
   savePracticeRecordsSilent(records)
+
+  // 同时通过练习会话 API 持久化提交
+  const session = store.activePracticeSession
+  if (session && session.status === 'active') {
+    const answerEntries: Array<{ questionIndex: number; answer: string[] | string }> = []
+    for (let qi = 0; qi < qs.length; qi++) {
+      const q = qs[qi]
+      if (q.type === 'fill' || q.type === 'short' || q.type === 'coding') {
+        const textVal = textAnswers[msgIdx]?.[qi] || ''
+        answerEntries.push({ questionIndex: qi, answer: textVal })
+      } else {
+        answerEntries.push({ questionIndex: qi, answer: (answers[msgIdx]?.[qi] || []).sort() })
+      }
+    }
+    store.handleSubmitPracticeSession(session.id, answerEntries, records).catch(() => {})
+  }
 
   store.showToast(`练习完成！正确 ${cc}/${qs.length}`, cc === qs.length ? 'success' : 'info')
 }
@@ -1053,6 +1216,39 @@ function escapeHtml(s: string) {
   margin-left: 1px;
   font-weight: 300;
 }
+
+/* Typewriter effect — smooth character reveal during streaming */
+.message-content.typewriter-active {
+  overflow: hidden;
+}
+.message-content.typewriter-active :deep(.md-p) {
+  animation: typewriter-para 0.3s ease-out both;
+}
+.message-content.typewriter-active :deep(.md-code) {
+  animation: typewriter-para 0.4s ease-out both;
+}
+.message-content.typewriter-active :deep(.md-h3),
+.message-content.typewriter-active :deep(.md-h4),
+.message-content.typewriter-active :deep(.md-h5) {
+  animation: typewriter-para 0.3s ease-out both;
+}
+.message-content.typewriter-active :deep(.md-li) {
+  animation: typewriter-para 0.2s ease-out both;
+}
+@keyframes typewriter-para {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* Fade-in effect when streaming completes */
+.message-content.fade-in {
+  animation: fade-in-complete 0.5s ease-out both;
+}
+@keyframes fade-in-complete {
+  from { opacity: 0.7; }
+  to { opacity: 1; }
+}
+
 @keyframes cursor-pulse {
   0%, 100% { opacity: 0.25; }
   50% { opacity: 1; }
@@ -1351,6 +1547,26 @@ function escapeHtml(s: string) {
 .msg-duration {
   font-size: 11px;
   color: #9ca3af;
+}
+
+/* Live timer during streaming */
+.live-duration {
+  color: #6366f1;
+  font-weight: 500;
+  animation: timer-pulse 2s ease-in-out infinite;
+}
+@keyframes timer-pulse {
+  0%, 100% { opacity: 0.7; }
+  50% { opacity: 1; }
+}
+
+/* Live timer inside reasoning summary */
+.live-timer {
+  font-size: 11px;
+  color: #6366f1;
+  font-weight: 500;
+  margin-left: 8px;
+  animation: timer-pulse 2s ease-in-out infinite;
 }
 
 /* Simple copy button */

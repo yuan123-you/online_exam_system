@@ -16,6 +16,9 @@ public final class ResponseHelper {
    * 构建键值对 Map（用于响应体）
    */
   public static Map<String, Object> mapOf(Object... pairs) {
+    if (pairs.length % 2 != 0) {
+      throw new IllegalArgumentException("mapOf 参数个数必须为偶数，当前为 " + pairs.length);
+    }
     Map<String, Object> map = new LinkedHashMap<>();
     for (int i = 0; i < pairs.length; i += 2) {
       map.put(String.valueOf(pairs[i]), pairs[i + 1]);

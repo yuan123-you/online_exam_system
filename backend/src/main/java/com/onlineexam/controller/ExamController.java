@@ -32,9 +32,9 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/api")
 public class ExamController {
 
-  private static final String RUNNING = "\u8fdb\u884c\u4e2d";
-  private static final String PENDING = "\u5f85\u9605\u5377";
-  private static final String COMPLETED = "\u5df2\u5b8c\u6210";
+  private static final String RUNNING = "进行中";
+  private static final String PENDING = "待阅卷";
+  private static final String COMPLETED = "已完成";
 
   private final StoreService storeService;
   private final ExamService examService;

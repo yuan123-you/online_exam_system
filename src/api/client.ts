@@ -387,8 +387,34 @@ function sseStream(
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
   if (currentAuthToken) headers['X-User-Id'] = currentAuthToken;
 
+  const HEARTBEAT_TIMEOUT_MS = 30_000;
+  let heartbeatTimer: ReturnType<typeof setTimeout> | null = null;
+
+  const clearHeartbeat = () => {
+    if (heartbeatTimer !== null) {
+      clearTimeout(heartbeatTimer);
+      heartbeatTimer = null;
+    }
+  };
+
+  const resetHeartbeat = () => {
+    clearHeartbeat();
+    heartbeatTimer = setTimeout(() => {
+      console.log('[SSE] 心跳超时（30秒无数据），自动断开连接');
+      controller.abort();
+    }, HEARTBEAT_TIMEOUT_MS);
+  };
+
+  const replaceCircuitBreakerMsg = (msg: string): string => {
+    if (msg.includes('熔断保护')) {
+      return 'AI 服务正在恢复中，请等待约30秒后重试';
+    }
+    return msg;
+  };
+
   const doFetch = async (attempt: number): Promise<void> => {
     try {
+      resetHeartbeat();
       const response = await fetch(endpoint, {
         method: 'POST',
         headers,
@@ -423,7 +449,9 @@ function sseStream(
         }
         if (response.status === 429) friendlyMsg = 'AI 服务当前请求过多，请稍等片刻再试';
         else if (response.status === 503) friendlyMsg = 'AI 服务暂时不可用，请稍后重试';
+        friendlyMsg = replaceCircuitBreakerMsg(friendlyMsg);
         onError(friendlyMsg);
+        clearHeartbeat();
         onFinally?.();
         return;
       }
@@ -431,6 +459,7 @@ function sseStream(
       const reader = response.body?.getReader();
       if (!reader) {
         onError('响应数据不可读取');
+        clearHeartbeat();
         onFinally?.();
         return;
       }
@@ -442,6 +471,7 @@ function sseStream(
         while (true) {
           const { done, value } = await reader.read();
           if (done) break;
+          resetHeartbeat();
 
           buffer += decoder.decode(value, { stream: true });
           const lines = buffer.split('\n');
@@ -468,7 +498,7 @@ function sseStream(
                   } else if (currentEvent === 'complete') {
                     onComplete(parsed as SseComplete);
                   } else if (currentEvent === 'error') {
-                    onError(parsed.error || 'AI 请求出错');
+                    onError(replaceCircuitBreakerMsg(parsed.error || 'AI 请求出错'));
                   }
                 } catch { /* skip malformed JSON */ }
               }
@@ -479,24 +509,31 @@ function sseStream(
         }
       } catch (err: unknown) {
         // Silently ignore abort errors (e.g., user navigated away or clicked stop)
-        if ((err as Error)?.name === 'AbortError') return;
+        if ((err as Error)?.name === 'AbortError') {
+          clearHeartbeat();
+          return;
+        }
         onError(String(err));
       } finally {
+        clearHeartbeat();
         try { reader.releaseLock(); } catch { /* ignore */ }
         onFinally?.();
       }
     } catch (err: unknown) {
       // Silently ignore abort errors from fetch() itself
       if ((err as Error)?.name === 'AbortError') {
+        clearHeartbeat();
         onFinally?.();
         return;
       }
       // Retry on network errors
       if (attempt < maxRetries) {
         const waitMs = 1000 * (attempt + 1);
+        console.log(`[SSE] 网络错误，${waitMs}ms 后重试 (第${attempt + 1}次)`);
         await new Promise(r => setTimeout(r, waitMs));
         if (!controller.signal.aborted) return doFetch(attempt + 1);
       }
+      clearHeartbeat();
       onError('网络连接失败，请检查网络后重试');
       onFinally?.();
     }
@@ -618,6 +655,60 @@ export function aiImportQuestions(questions: AiQuestion[]) {
   return request<AiImportResult>("/api/ai/import-questions", {
     method: "POST",
     body: JSON.stringify({ questions }),
+  });
+}
+
+export function aiGenerateQuestionsStructured(params: {
+  subject: string;
+  knowledgePoint?: string;
+  type: string;
+  difficulty: string;
+  count: number;
+}) {
+  return request<AiGenerateResult>("/api/ai/generate-questions-structured", {
+    method: "POST",
+    body: JSON.stringify(params),
+  });
+}
+
+export function aiGenerateQuestionsStructuredStream(
+  params: {
+    subject: string;
+    knowledgePoint?: string;
+    type: string;
+    difficulty: string;
+    count: number;
+    deepThinking?: boolean;
+  },
+  onChunk: (chunk: SseChunk) => void,
+  onComplete: (data: SseComplete) => void,
+  onError: (error: string) => void,
+  onFinally?: () => void
+): AbortController {
+  return sseStream('/api/ai/generate-questions-structured/stream', params, onChunk, onComplete, onError, onFinally);
+}
+
+export interface QuestionBackup {
+  id: string;
+  teacherId: string;
+  questionCount: number;
+  createdAt: string;
+}
+
+export function backupQuestionBank() {
+  return request<{ backupId: string; questionCount: number }>("/api/ai/backup-question-bank", {
+    method: "POST",
+  });
+}
+
+export function listQuestionBackups() {
+  return request<{ backups: QuestionBackup[] }>("/api/ai/backups");
+}
+
+export function restoreQuestionBackup(backupId: string) {
+  return request<{ restoredCount: number; backupId: string }>("/api/ai/restore-backup", {
+    method: "POST",
+    body: JSON.stringify({ backupId }),
   });
 }
 
@@ -858,5 +949,100 @@ export function submitRecommendationFeedback(params: {
   return request<{ submitted: boolean; message: string }>('/api/recommendations/feedback', {
     method: 'POST',
     body: JSON.stringify(params),
+  });
+}
+
+// ========== Practice Session API (练习会话持久化) ==========
+
+/** 练习会话 */
+export interface PracticeSession {
+  id: string;
+  userId: string;
+  conversationId: string;
+  subject: string;
+  questionCount: number;
+  correctCount: number;
+  totalScore: number;
+  earnedScore: number;
+  status: 'active' | 'submitted' | 'abandoned';
+  createdAt: string;
+  updatedAt: string;
+  submittedAt?: string;
+  questions?: PracticeSessionQuestion[];
+}
+
+/** 练习会话中的题目（含答题状态） */
+export interface PracticeSessionQuestion {
+  id: string;
+  sessionId: string;
+  questionIndex: number;
+  questionData: AiQuestion;
+  userAnswer: string[] | null;
+  isCorrect: boolean | null;
+  isSubmitted: boolean;
+  createdAt: string;
+  updatedAt: string;
+  submittedAt?: string;
+}
+
+/** 创建新的练习会话 */
+export function createPracticeSession(params: { subject?: string; conversationId?: string }) {
+  return request<PracticeSession>('/api/practice/sessions', {
+    method: 'POST',
+    body: JSON.stringify(params),
+  });
+}
+
+/** 获取用户的练习会话列表 */
+export function listPracticeSessions() {
+  return request<{ sessions: PracticeSession[] }>('/api/practice/sessions');
+}
+
+/** 获取指定练习会话的完整状态 */
+export function getPracticeSession(sessionId: string) {
+  return request<PracticeSession>(`/api/practice/sessions/${sessionId}`);
+}
+
+/** 获取用户当前活跃的练习会话（用于页面刷新恢复） */
+export function getActivePracticeSession() {
+  return request<{ session: PracticeSession | null }>('/api/practice/sessions/active');
+}
+
+/** 保存/更新练习会话的题目列表 */
+export function savePracticeSessionQuestions(sessionId: string, questions: AiQuestion[]) {
+  return request<{ savedCount: number; sessionId: string }>(`/api/practice/sessions/${sessionId}/questions`, {
+    method: 'PUT',
+    body: JSON.stringify({ questions }),
+  });
+}
+
+/** 批量保存用户答案 */
+export function savePracticeSessionAnswers(sessionId: string, answers: Array<{ questionIndex: number; answer: string[] | string }>) {
+  return request<{ savedCount: number }>(`/api/practice/sessions/${sessionId}/answers`, {
+    method: 'PUT',
+    body: JSON.stringify({ answers }),
+  });
+}
+
+/** 保存单道题的用户答案 */
+export function savePracticeQuestionAnswer(questionId: string, answer: string[] | string) {
+  return request<{ saved: boolean; questionId: string }>(`/api/practice/questions/${questionId}/answer`, {
+    method: 'PUT',
+    body: JSON.stringify({ answer }),
+  });
+}
+
+/** 提交整个练习会话的所有答案 */
+export function submitPracticeSession(sessionId: string, answers?: Array<{ questionIndex: number; answer: string[] | string }>) {
+  return request<{ sessionId: string; correctCount: number; totalScore: number; earnedScore: number; status: string }>(`/api/practice/sessions/${sessionId}/submit`, {
+    method: 'POST',
+    body: JSON.stringify(answers ? { answers } : {}),
+  });
+}
+
+/** 删除练习会话 */
+export function deletePracticeSession(sessionId: string) {
+  return request<{ deleted: boolean }>(`/api/practice/sessions/${sessionId}`, {
+    method: 'DELETE',
   });
 }

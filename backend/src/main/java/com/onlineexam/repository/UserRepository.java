@@ -20,14 +20,13 @@ public class UserRepository {
     this.json = json;
   }
 
-  /** 查询所有用户 */
+  /** 查询所有用户（不返回密码字段） */
   public List<Map<String, Object>> findAll() {
-    return jdbc.queryForList("select id,role,username,password,name,department_id,class_id,major from user_account order by id").stream().map(row -> {
+    return jdbc.queryForList("select id,role,username,name,department_id,class_id,major from user_account order by id").stream().map(row -> {
       Map<String, Object> m = new LinkedHashMap<>();
       m.put("id", row.get("id"));
       m.put("role", row.get("role"));
       m.put("username", row.get("username"));
-      m.put("password", row.get("password"));
       m.put("name", row.get("name"));
       m.put("departmentId", row.get("department_id"));
       m.put("classId", row.get("class_id"));
@@ -62,7 +61,8 @@ public class UserRepository {
   }
 
   private Map<String, Object> compact(Map<String, Object> source) {
-    source.entrySet().removeIf(e -> e.getValue() == null || "".equals(e.getValue()));
-    return source;
+    Map<String, Object> result = new LinkedHashMap<>(source);
+    result.entrySet().removeIf(e -> e.getValue() == null || "".equals(e.getValue()));
+    return result;
   }
 }

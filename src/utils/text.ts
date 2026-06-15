@@ -1,30 +1,30 @@
-const replacements: Array<[string, string]> = [
+const replacementEntries: Array<[string, string]> = [
   ["鍦ㄧ嚎鑰冭瘯绯荤粺", "在线考试系统"],
   ["鐧诲綍绯荤粺", "登录系统"],
   ["绯荤粺绠＄悊鍛?", "系统管理员"],
   ["鏁欏笀", "教师"],
   ["瀛︾敓", "学生"],
-  ["鏁版嵁鎬昏", "数据总览"],
+  ["鏁版嵁鎬昏", "数据总览"],
   ["瀛︾敓绠＄悊", "学生管理"],
   ["鏁欏笀绠＄悊", "教师管理"],
   ["缁勭粐绠＄悊", "组织管理"],
   ["绯荤粺鏃ュ織", "系统日志"],
-  ["鏁欏鐪嬫澘", "教学看板"],
+  ["鏁欏鐪嬫澘", "教学看板"],
   ["棰樺簱绠＄悊", "题库管理"],
   ["璇曞嵎绠＄悊", "试卷管理"],
   ["鑰冭瘯绠＄悊", "考试管理"],
-  ["闃呭嵎涓績", "阅卷中心"],
+  ["闃呭嵎涓績", "阅卷中心"],
   ["鎴愮哗鍒嗘瀽", "成绩分析"],
   ["鍦ㄧ嚎鑰冭瘯", "在线考试"],
   ["鑰冭瘯璁板綍", "考试记录"],
-  ["閿欓鏈?", "错题本"],
-  ["涓汉淇℃伅", "个人信息"],
-  ["杩涜涓?", "进行中"],
-  ["鏈紑濮?", "未开始"],
+  ["閿欓鏈?", "错题本"],
+  ["涓汉淇℃伅", "个人信息"],
+  ["杩涜涓?", "进行中"],
+  ["鏈紑濮?", "未开始"],
   ["宸茬粨鏉?", "已结束"],
   ["宸插畬鎴?", "已完成"],
   ["寰呴槄鍗?", "待阅卷"],
-  ["鏈綔绛?", "未作答"],
+  ["鏈綔绛?", "未作答"],
   ["姝ｅ父", "正常"],
   ["鐤戜技寮傚父", "疑似异常"],
   ["鐧诲綍", "登录"],
@@ -40,44 +40,50 @@ const replacements: Array<[string, string]> = [
   ["鎿嶄綔", "操作"],
   ["鍒犻櫎", "删除"],
   ["缂栬緫", "编辑"],
-  ["棰勮", "预览"],
+  ["棰勮", "预览"],
   ["鐩戞帶", "监控"],
   ["寤舵椂", "延时"],
-  ["HTTP 榛樿绔彛鏄紵", "HTTP 默认端口是？"],
-  ["涓嬪垪鍝簺灞炰簬 MVC 鍒嗗眰涓殑甯歌灞傛锛?", "下列哪些属于 MVC 分层中的常见层次？"],
-  ["璇峰～鍐欐祻瑙堝櫒鏈湴鎸佷箙鍖栧瓨鍌?API 鍚嶇О銆?", "请填写浏览器本地持久化存储 API 名称。"],
-  ["绠€杩板湪绾胯€冭瘯绯荤粺涓袱绉嶉槻浣滃紛璁捐銆?", "简述在线考试系统中两种防作弊设计。"],
+  ["HTTP 榛樿绔彛鏄紵", "HTTP 默认端口是？"],
+  ["涓嬪垪鍝簺灞炰簬 MVC 鍒嗗眰涓殑甯歌灞傛锛?", "下列哪些属于 MVC 分层中的常见层次？"],
+  ["璇峰～鍐欐祻瑙堝櫒鏈湴鎸佷箙鍖栧瓨鍌?API 鍚嶇О銆?", "请填写浏览器本地持久化存储 API 名称。"],
+  ["绠€杩板湪绾胯€冭瘯绯荤粺涓袱绉嶉槻浣滃紛璁捐銆?", "简述在线考试系统中两种防作弊设计。"],
   ["鏁版嵁搴?", "数据库"],
-  ["鍓嶇寮€鍙?", "前端开发"],
-  ["杞欢宸ョ▼", "软件工程"],
-  ["绯荤粺璁捐", "系统设计"],
+  ["鍓嶇寮€鍙?", "前端开发"],
+  ["杞欢宸ョ▼", "软件工程"],
+  ["绯荤粺璁捐", "系统设计"],
   ["浜嬪姟", "事务"],
-  ["璁＄畻鏈哄闄?", "计算机学院"],
+  ["璁＄畻鏈哄", "计算机学院"],
   ["淇℃伅宸ョ▼瀛﹂櫌", "信息工程学院"],
-  ["璁＄畻鏈虹瀛︿笌鎶€鏈?", "计算机科学与技术"],
+  ["璁＄畻鏈虹瀛︿笌鎶€鏈?", "计算机科学与技术"],
   ["寮犱笁", "张三"],
   ["鏉庡洓", "李四"],
   ["闄堣€佸笀", "陈老师"],
 ];
 
+/** 使用 Map 替代数组遍历，提升查找性能 */
+const replacementMap = new Map<string, string>(replacementEntries);
+
 export function normalizeText(text: string): string {
   let next = text ?? "";
-  replacements.forEach(([from, to]) => {
-    next = next.split(from).join(to);
-  });
+  for (const [from, to] of replacementMap) {
+    if (next.includes(from)) {
+      next = next.split(from).join(to);
+    }
+  }
   return next;
 }
 
-export function normalizeApiData<T>(value: T): T {
+export function normalizeApiData<T>(value: T, depth: number = 0): T {
+  if (depth > 10) return value;
   if (typeof value === "string") {
     return normalizeText(value) as T;
   }
   if (Array.isArray(value)) {
-    return value.map((item) => normalizeApiData(item)) as T;
+    return value.map((item) => normalizeApiData(item, depth + 1)) as T;
   }
   if (value && typeof value === "object") {
     return Object.fromEntries(
-      Object.entries(value as Record<string, unknown>).map(([key, item]) => [key, normalizeApiData(item)])
+      Object.entries(value as Record<string, unknown>).map(([key, item]) => [key, normalizeApiData(item, depth + 1)])
     ) as T;
   }
   return value;

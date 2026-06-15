@@ -83,23 +83,34 @@ public class SubmissionRepository {
   private boolean asBool(Object value) {
     if (value instanceof Boolean b) return b;
     if (value instanceof Number n) return n.intValue() != 0;
-    return value != null && Boolean.parseBoolean(String.valueOf(value));
+    // TINYINT(1) may arrive as Integer — handle gracefully
+    if (value != null) {
+      try { return Integer.parseInt(String.valueOf(value)) != 0; } catch (NumberFormatException ignored) {}
+    }
+    return false;
   }
 
   private String normalizeStatus(String status) {
     if (status == null) return "";
-    if (status.contains("\u5df2\u5b8c\u6210") || status.contains("\u5b8c\u6210")) return "\u5df2\u5b8c\u6210";
-    if (status.contains("\u5f85\u9605\u5377")) return "\u5f85\u9605\u5377";
-    if (status.contains("\u8fdb\u884c\u4e2d")) return "\u8fdb\u884c\u4e2d";
-    return status;
+    return switch (status) {
+      case "已完成", "完成" -> "已完成";
+      case "待阅卷" -> "待阅卷";
+      case "进行中" -> "进行中";
+      case "已结束" -> "已结束";
+      default -> status;
+    };
   }
 
   private Map<String, Object> compact(Map<String, Object> source) {
-    source.entrySet().removeIf(e -> e.getValue() == null || "".equals(e.getValue()));
-    return source;
+    Map<String, Object> result = new LinkedHashMap<>(source);
+    result.entrySet().removeIf(e -> e.getValue() == null || "".equals(e.getValue()));
+    return result;
   }
 
   private Map<String, Object> mapOf(Object... pairs) {
+    if (pairs.length % 2 != 0) {
+      throw new IllegalArgumentException("mapOf 参数个数必须为偶数，当前为 " + pairs.length);
+    }
     Map<String, Object> map = new LinkedHashMap<>();
     for (int i = 0; i < pairs.length; i += 2) map.put(String.valueOf(pairs[i]), pairs[i + 1]);
     return map;

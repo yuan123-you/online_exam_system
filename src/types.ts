@@ -18,7 +18,6 @@ export interface User {
   role: Role;
   username: string;
   name: string;
-  password?: string;
   classId?: string;
   departmentId?: string;
   major?: string;

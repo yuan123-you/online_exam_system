@@ -214,3 +214,52 @@ CREATE TABLE IF NOT EXISTS recommendation_feedback (
   INDEX idx_feedback_type (recommendation_type),
   INDEX idx_feedback_time (created_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- ========== 练习会话持久化相关表 ==========
+
+-- 练习会话：记录用户每次练习的整体状态
+CREATE TABLE IF NOT EXISTS practice_session (
+  id VARCHAR(64) PRIMARY KEY,
+  user_id VARCHAR(64) NOT NULL,
+  conversation_id VARCHAR(64) COMMENT '关联的聊天会话ID',
+  subject VARCHAR(100) COMMENT '练习科目',
+  question_count INT NOT NULL DEFAULT 0 COMMENT '题目数量',
+  correct_count INT NOT NULL DEFAULT 0 COMMENT '正确数量',
+  total_score INT NOT NULL DEFAULT 0 COMMENT '总分数',
+  earned_score INT NOT NULL DEFAULT 0 COMMENT '获得分数',
+  status VARCHAR(20) NOT NULL DEFAULT 'active' COMMENT '状态: active/submitted/abandoned',
+  created_at DATETIME(3) NOT NULL,
+  updated_at DATETIME(3) NOT NULL,
+  submitted_at DATETIME(3) COMMENT '提交时间',
+  INDEX idx_ps_user (user_id),
+  INDEX idx_ps_status (status),
+  INDEX idx_ps_updated (updated_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- 练习题目：记录每道练习题的详细内容和用户答题状态
+CREATE TABLE IF NOT EXISTS practice_question (
+  id VARCHAR(64) PRIMARY KEY,
+  session_id VARCHAR(64) NOT NULL COMMENT '所属练习会话ID',
+  user_id VARCHAR(64) NOT NULL,
+  question_index INT NOT NULL DEFAULT 0 COMMENT '题目在会话中的序号',
+  question_data JSON NOT NULL COMMENT '完整题目数据(title,type,options,answer,score,explanation等)',
+  user_answer_json JSON COMMENT '用户答案',
+  is_correct TINYINT(1) COMMENT '是否正确',
+  is_submitted TINYINT(1) NOT NULL DEFAULT 0 COMMENT '是否已提交',
+  created_at DATETIME(3) NOT NULL,
+  updated_at DATETIME(3) NOT NULL,
+  submitted_at DATETIME(3) COMMENT '提交时间',
+  INDEX idx_pq_session (session_id),
+  INDEX idx_pq_user (user_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- 题库备份：教师题库快照
+CREATE TABLE IF NOT EXISTS question_backup (
+  id VARCHAR(64) PRIMARY KEY,
+  teacher_id VARCHAR(64) NOT NULL,
+  questions_json JSON NOT NULL COMMENT '备份的题目数据快照',
+  question_count INT NOT NULL DEFAULT 0 COMMENT '备份题目数量',
+  created_at DATETIME(3) NOT NULL,
+  INDEX idx_backup_teacher (teacher_id),
+  INDEX idx_backup_time (created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

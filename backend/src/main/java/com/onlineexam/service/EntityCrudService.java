@@ -63,7 +63,9 @@ public class EntityCrudService {
     if (!validation.isBlank()) return error(HttpStatus.BAD_REQUEST, validation);
     storeService.saveRecord(entity, record);
     systemLogService.log(user, "create " + entity, str(record, "id"));
-    return ResponseEntity.ok(mapOf("record", record));
+    Map<String, Object> safeRecord = new LinkedHashMap<>(record);
+    if ("users".equals(entity)) safeRecord.remove("password");
+    return ResponseEntity.ok(mapOf("record", safeRecord));
   }
 
   /**
@@ -102,7 +104,9 @@ public class EntityCrudService {
     if (!validation.isBlank()) return error(HttpStatus.BAD_REQUEST, validation);
     storeService.saveRecord(entity, next);
     systemLogService.log(user, "update " + entity, str(next, "id"));
-    return ResponseEntity.ok(mapOf("record", next));
+    Map<String, Object> safeNext = new LinkedHashMap<>(next);
+    if ("users".equals(entity)) safeNext.remove("password");
+    return ResponseEntity.ok(mapOf("record", safeNext));
   }
 
   /**

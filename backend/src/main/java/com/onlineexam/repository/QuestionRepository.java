@@ -63,9 +63,10 @@ public class QuestionRepository {
       params.add(teacherId);
     }
     if (keyword != null && !keyword.isBlank()) {
-      where.append(" AND (title LIKE ? OR knowledge_point LIKE ?)");
-      params.add("%" + keyword + "%");
-      params.add("%" + keyword + "%");
+      String escaped = keyword.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_");
+      where.append(" AND (title LIKE ? ESCAPE '\\\\' OR knowledge_point LIKE ? ESCAPE '\\\\')");
+      params.add("%" + escaped + "%");
+      params.add("%" + escaped + "%");
     }
     if (type != null && !type.equals("all")) {
       where.append(" AND type = ?");
@@ -134,11 +135,13 @@ public class QuestionRepository {
   }
 
   private Map<String, Object> compact(Map<String, Object> source) {
-    source.entrySet().removeIf(e -> e.getValue() == null || "".equals(e.getValue()));
-    return source;
+    Map<String, Object> result = new LinkedHashMap<>(source);
+    result.entrySet().removeIf(e -> e.getValue() == null || "".equals(e.getValue()));
+    return result;
   }
 
   private Map<String, Object> mapOf(Object... pairs) {
+    if (pairs.length % 2 != 0) { throw new IllegalArgumentException("mapOf 参数个数必须为偶数，当前为 " + pairs.length); }
     Map<String, Object> map = new LinkedHashMap<>();
     for (int i = 0; i < pairs.length; i += 2) map.put(String.valueOf(pairs[i]), pairs[i + 1]);
     return map;

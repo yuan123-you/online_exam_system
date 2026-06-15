@@ -35,10 +35,10 @@ public class StoreService {
     store.classes = jdbc.queryForList("select id,name,major,department_id from class_info order by id").stream().map(row -> mapOf(
       "id", row.get("id"), "name", row.get("name"), "major", row.get("major"), "departmentId", row.get("department_id"), "createdBy", null
     )).toList();
-    store.users = jdbc.queryForList("select id,role,username,password,name,department_id,class_id,major from user_account order by id").stream().map(row -> mapOf(
-      "id", row.get("id"), "role", row.get("role"), "username", row.get("username"), "password", row.get("password"),
+    store.users = jdbc.queryForList("select id,role,username,name,department_id,class_id,major from user_account order by id").stream().map(row -> compact(mapOf(
+      "id", row.get("id"), "role", row.get("role"), "username", row.get("username"),
       "name", row.get("name"), "departmentId", row.get("department_id"), "classId", row.get("class_id"), "major", row.get("major")
-    )).map(this::compact).toList();
+    ))).toList();
     store.questions = jdbc.queryForList("select * from question order by id").stream().map(row -> compact(mapOf(
       "id", row.get("id"), "teacherId", row.get("teacher_id"), "subject", row.get("subject"),
       "knowledgePoint", row.get("knowledge_point"), "difficulty", row.get("difficulty"), "type", row.get("type"),
@@ -92,6 +92,13 @@ public class StoreService {
         "time", asIso(row.get("time"))
       ));
     }).toList();
+    store.backups = jdbc.queryForList("select id,teacher_id,questions_json,question_count,created_at from question_backup order by created_at desc").stream().map(row -> compact(mapOf(
+      "id", row.get("id"),
+      "teacherId", row.get("teacher_id"),
+      "questions", readList(row.get("questions_json")),
+      "questionCount", asInt(row.get("question_count")),
+      "createdAt", asIso(row.get("created_at"))
+    ))).toList();
     return store;
   }
 
@@ -107,6 +114,7 @@ public class StoreService {
       case "submissions" -> upsertSubmission(record);
       case "wrongBookEntries" -> upsertWrongBook(record);
       case "logs" -> upsertLog(record);
+      case "backups" -> upsertBackup(record);
       default -> throw new IllegalArgumentException("Unknown entity: " + entity);
     }
   }
@@ -117,6 +125,7 @@ public class StoreService {
       case "questions" -> jdbc.update("delete from question where id=?", id);
       case "papers" -> jdbc.update("delete from paper where id=?", id);
       case "exams" -> jdbc.update("delete from exam where id=?", id);
+      case "backups" -> jdbc.update("delete from question_backup where id=?", id);
       default -> {
         String table = switch (entity) {
           case "departments" -> "department";
@@ -235,6 +244,13 @@ public class StoreService {
       """, str(r, "id"), str(r, "actorId"), str(r, "action"), nullableStr(r, "detail"), timestamp(r.get("time")));
   }
 
+  private void upsertBackup(Map<String, Object> r) {
+    jdbc.update("""
+      insert into question_backup(id,teacher_id,questions_json,question_count,created_at) values(?,?,?,?,?)
+      on duplicate key update questions_json=values(questions_json),question_count=values(question_count),created_at=values(created_at)
+      """, str(r, "id"), str(r, "teacherId"), json(r.get("questions")), number(r, "questionCount"), timestamp(r.get("createdAt")));
+  }
+
   private List<Object> readList(Object raw) {
     if (raw == null) return new ArrayList<>();
     try {
@@ -335,11 +351,15 @@ public class StoreService {
   }
 
   private Map<String, Object> compact(Map<String, Object> source) {
-    source.entrySet().removeIf(e -> e.getValue() == null || "".equals(e.getValue()));
-    return source;
+    Map<String, Object> result = new LinkedHashMap<>(source);
+    result.entrySet().removeIf(e -> e.getValue() == null || "".equals(e.getValue()));
+    return result;
   }
 
   private Map<String, Object> mapOf(Object... pairs) {
+    if (pairs.length % 2 != 0) {
+      throw new IllegalArgumentException("mapOf 参数个数必须为偶数，当前为 " + pairs.length);
+    }
     Map<String, Object> map = new LinkedHashMap<>();
     for (int i = 0; i < pairs.length; i += 2) {
       map.put(String.valueOf(pairs[i]), pairs[i + 1]);
@@ -355,9 +375,10 @@ public class StoreService {
       params.add(teacherId);
     }
     if (keyword != null && !keyword.isBlank()) {
-      where.append(" AND (title LIKE ? OR knowledge_point LIKE ?)");
-      params.add("%" + keyword + "%");
-      params.add("%" + keyword + "%");
+      String escaped = keyword.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_");
+      where.append(" AND (title LIKE ? ESCAPE '\\\\' OR knowledge_point LIKE ? ESCAPE '\\\\')");
+      params.add("%" + escaped + "%");
+      params.add("%" + escaped + "%");
     }
     if (type != null && !type.equals("all")) {
       where.append(" AND type = ?");
@@ -390,16 +411,13 @@ public class StoreService {
 
   private String normalizeStatus(String status) {
     if (status == null) return "";
-    if (status.contains("\u5df2\u5b8c\u6210") || status.contains("\u5b8c\u6210")) {
-      return "\u5df2\u5b8c\u6210";
-    }
-    if (status.contains("\u5f85\u9605\u5377")) {
-      return "\u5f85\u9605\u5377";
-    }
-    if (status.contains("\u8fdb\u884c\u4e2d")) {
-      return "\u8fdb\u884c\u4e2d";
-    }
-    return status;
+    return switch (status) {
+      case "已完成", "完成" -> "已完成";
+      case "待阅卷" -> "待阅卷";
+      case "进行中" -> "进行中";
+      case "已结束" -> "已结束";
+      default -> status;
+    };
   }
 
   public static class Store {
@@ -412,6 +430,7 @@ public class StoreService {
     public List<Map<String, Object>> submissions = new ArrayList<>();
     public List<Map<String, Object>> wrongBookEntries = new ArrayList<>();
     public List<Map<String, Object>> logs = new ArrayList<>();
+    public List<Map<String, Object>> backups = new ArrayList<>();
 
     public List<Map<String, Object>> entity(String name) {
       return switch (name) {
@@ -424,7 +443,8 @@ public class StoreService {
         case "submissions" -> submissions;
         case "wrongBookEntries" -> wrongBookEntries;
         case "logs" -> logs;
-        default -> null;
+        case "backups" -> backups;
+        default -> throw new IllegalArgumentException("Unknown entity: " + name);
       };
     }
   }

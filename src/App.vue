@@ -67,8 +67,8 @@
   <!-- Toast Notifications -->
   <div class="toast-container">
     <transition-group name="toast">
-      <div v-for="t in store.toasts" :key="t.id" :class="['toast', 'toast-' + t.type]">
-        <span class="toast-icon">{{ t.type === 'success' ? '&#10003;' : t.type === 'error' ? '&#10005;' : '&#8505;' }}</span>
+      <div v-for="t in toasts" :key="t.id" :class="['toast', 'toast-' + t.type]">
+        <span class="toast-icon">{{ t.type === 'success' ? '&#10003;' : t.type === 'error' ? '&#10005;' : t.type === 'warning' ? '&#9888;' : '&#8505;' }}</span>
         <span class="toast-msg">{{ t.message }}</span>
       </div>
     </transition-group>
@@ -77,6 +77,7 @@
 
 <script setup lang="ts">
 import { useAppStore } from '@/stores/app'
+import { useToast } from '@/composables/useToast'
 import EntityEditorModal from '@/components/common/EntityEditorModal.vue'
 import BatchUserImportModal from '@/components/common/BatchUserImportModal.vue'
 import ExamSessionModal from '@/components/student/ExamSessionModal.vue'
@@ -87,4 +88,5 @@ import SubmissionReviewModal from '@/components/teacher/SubmissionReviewModal.vu
 import AutoGenPaperModal from '@/components/teacher/AutoGenPaperModal.vue'
 
 const store = useAppStore()
+const { toasts } = useToast()
 </script>

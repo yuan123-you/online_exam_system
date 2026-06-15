@@ -16,7 +16,8 @@
       <button class="ghost-btn" type="button" @click="$router.push('/ai-practice')">AI 助手</button>
     </div>
 
-    <div class="table-wrap">
+    <div v-if="practiceRecords.length === 0" class="empty-state">暂无练习记录</div>
+    <div v-else class="table-wrap mobile-card-table">
       <table>
         <thead>
           <tr>
@@ -28,19 +29,16 @@
           </tr>
         </thead>
         <tbody>
-          <tr v-if="practiceRecords.length === 0">
-            <td colspan="5" style="text-align:center;color:var(--muted);padding:32px;">暂无练习记录</td>
-          </tr>
           <tr v-for="r in practiceRecords" :key="r.id">
-            <td>{{ r.subject }}</td>
-            <td><span class="tag">{{ typeLabel(r.type as any) }}</span></td>
-            <td>{{ r.title?.slice(0, 30) }}{{ (r.title?.length || 0) > 30 ? '...' : '' }}</td>
-            <td>
+            <td data-label="科目">{{ r.subject }}</td>
+            <td data-label="题型"><span class="tag">{{ typeLabel(r.type as any) }}</span></td>
+            <td data-label="题目" class="cell-title">{{ r.title?.slice(0, 30) }}{{ (r.title?.length || 0) > 30 ? '...' : '' }}</td>
+            <td data-label="结果">
               <span :class="r.lastRetryCorrect ? 'text-success' : 'text-danger'">
                 {{ r.lastRetryCorrect ? '正确' : '错误' }}
               </span>
             </td>
-            <td class="muted">{{ r.lastWrongAt ? formatDate(r.lastWrongAt) : '-' }}</td>
+            <td data-label="时间" class="muted">{{ r.lastWrongAt ? formatDate(r.lastWrongAt) : '-' }}</td>
           </tr>
         </tbody>
       </table>
@@ -83,5 +81,16 @@ const practiceRecords = computed(() => {
 .text-danger {
   color: #ef4444;
   font-weight: 600;
+}
+
+.cell-title {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+@media (max-width: 767px) {
+  .cell-title {
+    font-size: 13px;
+  }
 }
 </style>

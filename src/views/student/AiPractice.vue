@@ -73,6 +73,15 @@
         />
       </div>
 
+      <!-- 返回底部按钮 -->
+      <transition name="scroll-btn-fade">
+        <button v-if="showScrollToBottom" class="scroll-to-bottom-btn" @click="handleScrollToBottom" title="返回底部">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="6 9 12 15 18 9"/>
+          </svg>
+        </button>
+      </transition>
+
       <!-- Bottom input area -->
       <div class="bottom-area">
         <!-- Tab switcher -->
@@ -140,6 +149,7 @@
 import { ref, computed, watch, nextTick, onMounted, onUnmounted } from 'vue'
 import { useAppStore } from '@/stores/app'
 import type { RecommendationItem } from '@/api/client'
+import { useAutoScroll } from '@/composables/useAutoScroll'
 import MessageBubbles from './AiPractice/MessageBubbles.vue'
 import ChatSidebar from './AiPractice/ChatSidebar.vue'
 
@@ -217,7 +227,7 @@ const personalizedRecommendations = computed(() => {
 
 function switchTab(tab: 'chat' | 'practice') {
   activeTab.value = tab
-  nextTick(() => scrollToBottom(300))
+  nextTick(() => scrollToBottom())
 }
 
 function send(text: string) {
@@ -301,82 +311,44 @@ function refreshRecommendations() {
   store.loadRecommendations()
 }
 
-// Smart auto-scroll: pauses when user scrolls up, resumes on new message
-const userScrolledUp = ref(false)
-const nearBottomThreshold = 80 // px from bottom considered "at bottom"
-let scrollRafId = 0
-
-function onChatScroll() {
-  const el = getScrollContainer()
-  if (!el) return
-  const distFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight
-  // User scrolled up → pause auto-scroll. Scrolled back to bottom → resume.
-  userScrolledUp.value = distFromBottom > nearBottomThreshold
-}
-
-watch(() => currentMessages.value.length, () => {
-  userScrolledUp.value = false  // new message → resume auto-scroll
-  nextTick(() => scrollToBottom(300))
-})
-watch(() => activeTab.value === 'chat' ? store.chatStreamingContent : store.practiceStreamingContent,
-  () => { if (!userScrolledUp.value) scrollToBottom(0) })
-watch(() => activeTab.value === 'chat' ? store.chatStreamingReasoning : store.practiceStreamingReasoning,
-  () => { if (!userScrolledUp.value) scrollToBottom(0) })
-
-/** Find the scrollable element (.chat-main which has overflow-y:auto) */
+// Smart auto-scroll using composable
 function getScrollContainer(): HTMLElement | null {
   return msgList.value?.closest('.chat-main') as HTMLElement | null
 }
 
-function scrollToBottom(duration: number) {
-  const el = getScrollContainer()
-  if (!el) return
-  // Cancel any pending scroll animation
-  if (scrollRafId) cancelAnimationFrame(scrollRafId)
+const {
+  userScrolledUp,
+  showScrollToBottom,
+  scrollToBottom,
+  onStreamingUpdate,
+  onNewMessage,
+  handleScrollToBottom,
+} = useAutoScroll(getScrollContainer, {
+  nearBottomRatio: 0.2,   // 20% 视窗高度
+  scrollDuration: 300,
+  streamingScrollDuration: 0,
+})
 
-  if (duration <= 0) {
-    el.scrollTop = el.scrollHeight
-    return
-  }
-
-  // Use requestAnimationFrame for smooth, jank-free scrolling
-  const startTop = el.scrollTop
-  const targetTop = el.scrollHeight - el.clientHeight
-  const distance = targetTop - startTop
-  if (distance <= 0) return
-
-  const startTime = performance.now()
-  function animate(now: number) {
-    const elapsed = now - startTime
-    const progress = Math.min(elapsed / duration, 1)
-    // Ease-out cubic for natural deceleration
-    const eased = 1 - Math.pow(1 - progress, 3)
-    if (el) el.scrollTop = startTop + distance * eased
-    if (progress < 1) {
-      scrollRafId = requestAnimationFrame(animate)
-    } else {
-      scrollRafId = 0
-    }
-  }
-  scrollRafId = requestAnimationFrame(animate)
-}
+watch(() => currentMessages.value.length, () => {
+  nextTick(() => onNewMessage())
+})
+watch(() => activeTab.value === 'chat' ? store.chatStreamingContent : store.practiceStreamingContent,
+  () => onStreamingUpdate())
+watch(() => activeTab.value === 'chat' ? store.chatStreamingReasoning : store.practiceStreamingReasoning,
+  () => onStreamingUpdate())
 
 // 行为自动采集：页面停留时间
 let pageEnterTime = 0
 
-// Attach/detach scroll listener
+// Attach/detach scroll listener (composable handles scroll event, we only handle lifecycle)
 onMounted(() => {
   pageEnterTime = Date.now()
-  nextTick(() => {
-    getScrollContainer()?.addEventListener('scroll', onChatScroll, { passive: true })
-  })
   // 记录页面访问行为
   store.trackBehavior('page_view', 'page', undefined, { page: 'ai-practice' })
+  // 恢复练习会话（页面刷新时恢复用户进度）
+  store.restorePracticeSession()
 })
 onUnmounted(() => {
-  getScrollContainer()?.removeEventListener('scroll', onChatScroll)
-  if (scrollRafId) cancelAnimationFrame(scrollRafId)
-  // 记录页面停留时长
   if (pageEnterTime > 0) {
     const durationMs = Date.now() - pageEnterTime
     store.trackBehavior('page_leave', 'page', undefined, { page: 'ai-practice' }, durationMs)
@@ -429,6 +401,51 @@ onUnmounted(() => {
   -webkit-overflow-scrolling: touch;
   scrollbar-width: thin;
   scrollbar-color: #d1d5db transparent;
+  position: relative;
+}
+
+/* ===== 返回底部按钮 ===== */
+.scroll-to-bottom-btn {
+  position: absolute;
+  bottom: 80px;
+  right: 20px;
+  width: 40px;
+  height: 40px;
+  border: none;
+  border-radius: 50%;
+  background: #6366f1;
+  color: #fff;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 2px 12px rgba(99, 102, 241, 0.4);
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  z-index: 10;
+}
+.scroll-to-bottom-btn:hover {
+  background: #4f46e5;
+  transform: scale(1.1);
+  box-shadow: 0 4px 16px rgba(99, 102, 241, 0.5);
+}
+.scroll-to-bottom-btn:active {
+  transform: scale(0.95);
+}
+
+/* 返回底部按钮过渡动画 */
+.scroll-btn-fade-enter-active {
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.scroll-btn-fade-leave-active {
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.scroll-btn-fade-enter-from {
+  opacity: 0;
+  transform: translateY(10px) scale(0.8);
+}
+.scroll-btn-fade-leave-to {
+  opacity: 0;
+  transform: translateY(10px) scale(0.8);
 }
 
 /* ===== Tab switcher (moved to bottom area) ===== */
@@ -759,17 +776,19 @@ onUnmounted(() => {
     height: 100%;
   }
 
+  /* Space for floating hamburger button */
+  .msg-area {
+    padding: 12px 8px;
+    padding-top: 56px;
+    gap: 8px;
+  }
+
   .tab-switcher button {
     padding: 4px 10px;
     font-size: 11px;
   }
 
-  .msg-area {
-    padding: 12px 8px;
-    gap: 8px;
-  }
-
-  .welcome { padding: 20px 10px; }
+  .welcome { padding: 20px 10px; padding-top: 40px; }
   .welcome h3 { font-size: 15px; }
   .wc-chip { font-size: 11px; padding: 4px 8px; }
 
@@ -790,6 +809,20 @@ onUnmounted(() => {
 
   .rec-list {
     grid-template-columns: 1fr;
+  }
+
+  .scroll-to-bottom-btn {
+    bottom: 70px;
+    right: 12px;
+    width: 36px;
+    height: 36px;
+  }
+}
+
+/* ===== Responsive — Tablet (768-1023) ===== */
+@media (min-width: 769px) and (max-width: 1023px) {
+  .msg-area {
+    padding-top: 56px;
   }
 }
 

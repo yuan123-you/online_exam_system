@@ -47,7 +47,7 @@
                 @change="toggleSelectAll"
               />
             </th>
-            <th>科目</th><th>知识点</th><th>题型</th><th>题目</th><th>错误次数</th><th>重做次数</th><th>状态</th><th>操作</th>
+            <th>科目</th><th>知识点</th><th>题型</th><th>题目</th><th class="hide-mobile">错误次数</th><th class="hide-mobile">重做次数</th><th>状态</th><th>操作</th>
           </tr>
         </thead>
         <tbody>
@@ -66,15 +66,15 @@
             <td data-label="科目">{{ entry.subject }}</td>
             <td data-label="知识点">{{ entry.knowledgePoint }}</td>
             <td data-label="题型"><span class="tag">{{ typeLabel(entry.type) }}</span></td>
-            <td data-label="题目">{{ entry.title.slice(0, 40) }}{{ entry.title.length > 40 ? '...' : '' }}</td>
-            <td data-label="错误次数"><strong style="color:var(--danger)">{{ entry.wrongCount }}</strong></td>
-            <td data-label="重做次数">{{ entry.retryCount }}</td>
+            <td data-label="题目" class="cell-title">{{ entry.title.slice(0, 40) }}{{ entry.title.length > 40 ? '...' : '' }}</td>
+            <td data-label="错误次数" class="hide-mobile"><strong style="color:var(--danger)">{{ entry.wrongCount }}</strong></td>
+            <td data-label="重做次数" class="hide-mobile">{{ entry.retryCount }}</td>
             <td data-label="状态">
               <span :class="entry.lastRetryCorrect ? 'status-ok' : 'status-pending'">
                 {{ entry.lastRetryCorrect ? '已掌握' : '待重做' }}
               </span>
             </td>
-            <td data-label="操作">
+            <td data-label="操作" class="mobile-action-cell">
               <div class="action-row">
                 <button class="primary-btn" type="button" @click="store.retryWrongEntry(entry)">重做</button>
                 <button v-if="entry.removable" class="ghost-btn" type="button" @click="store.removeWrongEntry(entry.id)">移除</button>
@@ -206,17 +206,34 @@ async function handleBatchRemove() {
   font-size: 0.85rem;
 }
 
+.cell-title {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+/* Desktop: hide mobile-only class */
+.hide-mobile {
+  /* visible by default on desktop */
+}
+
 /* Mobile card-table: hide less important columns */
 @media (max-width: 767px) {
   .checkbox-col {
     width: auto;
   }
 
-  /* On mobile, the card layout handles overflow naturally */
+  .hide-mobile {
+    display: none !important;
+  }
+
   .selection-bar {
     flex-wrap: wrap;
     gap: 6px;
     font-size: 0.8rem;
+  }
+
+  .cell-title {
+    font-size: 13px;
   }
 }
 </style>
