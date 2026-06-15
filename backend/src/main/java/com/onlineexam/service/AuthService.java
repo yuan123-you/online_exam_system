@@ -59,8 +59,9 @@ public class AuthService {
     // Clear failed attempts on successful login
     loginAttempts.remove(inputUsername);
     if (needsPasswordUpgrade(str(matchedUser, "password"))) {
-      matchedUser.put("password", hashPassword(str(body, "password")));
-      storeService.saveRecord("users", matchedUser);
+      // 直接用 JDBC 更新密码字段，避免 JDBC 返回的 snake_case key 与 upsertUser 期望的 camelCase key 不匹配导致数据损坏
+      String hashedPw = hashPassword(str(body, "password"));
+      jdbc.update("update user_account set password=? where id=?", hashedPw, str(matchedUser, "id"));
     }
     systemLogService.log(matchedUser, "login", str(matchedUser, "role") + ":" + str(matchedUser, "name"));
     return ResponseEntity.ok(mapOf("user", sanitizeUser(matchedUser)));

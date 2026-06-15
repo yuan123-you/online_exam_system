@@ -141,7 +141,7 @@ const visibleMessage = ref("")
 watch(() => props.message, (val) => { if (val) { visibleMessage.value = val; emit("clearMessage") } })
 
 function submitLogin() {
-  if (!username.value.trim()) { visibleMessage.value = '账号仅支持 6-20 位字母和数字，不能包含空格、下划线及任何特殊符号'; return }
+  if (!username.value.trim()) { visibleMessage.value = '账号仅支持 4-20 位字母和数字，不能包含空格、下划线及任何特殊符号'; return }
   if (!password.value) { visibleMessage.value = '密码仅支持 6-18 位字母和数字，不能包含特殊符号'; return }
   const u = validateUsername(username.value); if (!u.valid) { visibleMessage.value = u.message; return }
   const p = validatePassword(password.value); if (!p.valid) { visibleMessage.value = p.message; return }

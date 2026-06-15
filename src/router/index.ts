@@ -43,6 +43,12 @@ const router = createRouter({
       meta: { public: true },
     },
     {
+      path: '/:pathMatch(.*)*',
+      name: 'not-found',
+      component: LoginView,
+      meta: { public: true },
+    },
+    {
       path: '/',
       component: AppShell,
       meta: { requiresAuth: true },

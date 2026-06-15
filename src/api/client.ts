@@ -15,7 +15,13 @@ async function request<T>(url: string, options: RequestInit = {}): Promise<T> {
   }
   const response = await fetch(url, { ...options, headers });
   const raw = await response.text();
-  const payload = raw ? normalizeApiData(JSON.parse(raw)) : ({} as T);
+  let payload: T;
+  try {
+    payload = raw ? normalizeApiData(JSON.parse(raw)) : ({} as T);
+  } catch {
+    if (!response.ok) throw new Error("请求失败，请稍后重试。");
+    throw new Error("服务器返回了无效的响应格式");
+  }
   if (!response.ok) {
     const apiMessage = (payload as { message?: string })?.message;
     let errorMessage: string;
@@ -516,9 +522,9 @@ function sseStream(
             } else if (line.startsWith('event:')) {
               currentEvent = line.substring(6).trim();
             } else if (line.startsWith('data: ')) {
-              currentData = line.substring(6).trim();
+              currentData += (currentData ? '\n' : '') + line.substring(6).trim()
             } else if (line.startsWith('data:')) {
-              currentData = line.substring(5).trim();
+              currentData += (currentData ? '\n' : '') + line.substring(5).trim();
             } else if (line === '') {
               if (currentData) {
                 try {
