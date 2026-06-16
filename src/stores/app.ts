@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import type { EChartsOption } from 'echarts'
 import type {
   BootstrapData,
@@ -1373,11 +1373,16 @@ export const useAppStore = defineStore('app', () => {
 
   /** Load conversation list from server */
   async function handleLoadConversations() {
-    if (!currentUser.value) return
+    if (!currentUser.value || conversationsLoading.value) return
     conversationsLoading.value = true
     try {
       const result = await listConversations()
       conversations.value = result.conversations
+      // Auto-restore the most recent conversation if none is active (page refresh)
+      if (!activeConversationId.value && result.conversations.length > 0) {
+        const latest = result.conversations[0]
+        await handleSwitchConversation(latest.id)
+      }
     } catch (err: any) {
       showToast(err?.message || '加载历史会话失败', 'error')
     } finally {

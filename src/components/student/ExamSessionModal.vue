@@ -49,7 +49,7 @@
 
         <div class="exam-sidebar-actions">
           <button class="ghost-btn" type="button" @click="saveDraft(false)">保存答卷</button>
-          <button class="primary-btn" type="button" @click="submitPaper">提交试卷</button>
+          <button class="primary-btn" type="button" :disabled="submitting" @click="submitPaper">{{ submitting ? '提交中...' : '提交试卷' }}</button>
         </div>
         <p class="message" style="color:#60a5fa;">{{ message }}</p>
       </aside>
@@ -123,22 +123,27 @@ const answerMap = ref<Record<string, string[]>>(
 );
 const deadlineAt = ref(props.exam.session?.deadlineAt || new Date().toISOString());
 const switchCount = ref(props.exam.session?.switchCount || 0);
+const submitting = ref(false);
 const message = ref("");
 
 const singleAnswer = ref("");
 const multipleAnswer = ref<string[]>([]);
 const textAnswer = ref("");
 
+// Reactive now — updated every second to drive countdown display
+const now = ref(Date.now());
+
 const currentQuestion = computed(() => props.exam.questions[currentIndex.value]);
-const countdown = computed(() => formatDuration(Math.max(0, new Date(deadlineAt.value).getTime() - Date.now())));
+const countdown = computed(() => formatDuration(Math.max(0, new Date(deadlineAt.value).getTime() - now.value)));
 const answeredCount = computed(() => Object.values(answerMap.value).filter((a) => a.length > 0).length);
 const progressPercent = computed(() => Math.round((answeredCount.value / props.exam.questions.length) * 100));
 const isUrgent = computed(() => {
-  const remaining = new Date(deadlineAt.value).getTime() - Date.now();
+  const remaining = new Date(deadlineAt.value).getTime() - now.value;
   return remaining > 0 && remaining < 5 * 60 * 1000;
 });
 
 let timer: number | undefined;
+let countdownTimer: number | undefined;
 let autoSaveTimer: number | undefined;
 
 function hydrateCurrentInput() {
@@ -183,9 +188,15 @@ async function saveDraft(silent = true) {
 }
 
 async function submitPaper() {
-  persistCurrentAnswer();
-  await submitSubmission(props.exam.id, buildAnswers(), switchCount.value);
-  emit("submitted");
+  if (submitting.value) return;
+  submitting.value = true;
+  try {
+    persistCurrentAnswer();
+    await submitSubmission(props.exam.id, buildAnswers(), switchCount.value);
+    emit("submitted");
+  } finally {
+    submitting.value = false;
+  }
 }
 
 function jumpTo(index: number) {
@@ -203,6 +214,10 @@ async function handleVisibilityChange() {
   }
 }
 
+function handleBeforeUnload(e: BeforeUnloadEvent) {
+  e.preventDefault();
+}
+
 async function handleClose() {
   try {
     await saveDraft(true);
@@ -215,6 +230,10 @@ async function handleClose() {
 watch(currentQuestion, hydrateCurrentInput, { immediate: true });
 
 onMounted(() => {
+  // Update reactive `now` every second so countdown display refreshes in real-time
+  countdownTimer = window.setInterval(() => {
+    now.value = Date.now();
+  }, 1000);
   timer = window.setInterval(() => {
     if (new Date(deadlineAt.value).getTime() <= Date.now()) {
       submitPaper().catch(() => undefined);
@@ -224,11 +243,15 @@ onMounted(() => {
     saveDraft(true).catch(() => undefined);
   }, 30000);
   document.addEventListener("visibilitychange", handleVisibilityChange);
+  // Warn user before closing/refreshing the page during an exam
+  window.addEventListener("beforeunload", handleBeforeUnload);
 });
 
 onBeforeUnmount(() => {
+  if (countdownTimer) window.clearInterval(countdownTimer);
   if (timer) window.clearInterval(timer);
   if (autoSaveTimer) window.clearInterval(autoSaveTimer);
   document.removeEventListener("visibilitychange", handleVisibilityChange);
+  window.removeEventListener("beforeunload", handleBeforeUnload);
 });
 </script>

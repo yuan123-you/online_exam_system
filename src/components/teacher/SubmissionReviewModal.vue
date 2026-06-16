@@ -63,7 +63,7 @@
       </div>
       <div class="action-row" style="justify-content:flex-end;margin-top:8px;">
         <button class="ghost-btn" type="button" @click="$emit('close')">关闭</button>
-        <button v-if="canGrade" class="primary-btn" type="submit">提交阅卷</button>
+        <button v-if="canGrade" class="primary-btn" type="submit" :disabled="submitting">{{ submitting ? '提交中...' : '提交阅卷' }}</button>
       </div>
     </form>
   </BaseModal>
@@ -104,6 +104,7 @@ const scores = reactive<Record<string, number>>(
   Object.fromEntries((props.submission.answerDetail || []).map((item) => [item.questionId, Number(item.score || 0)]))
 );
 
+const submitting = ref(false);
 const aiDetails = ref<DetailWithAi[]>([]);
 const aiGradeInfo = ref<{ aiScore: number; manualScore: number } | null>(null);
 
@@ -166,8 +167,14 @@ function getAiBadgeClass(detail: DetailWithAi) {
   return ratio >= 0.6 ? 'ai-badge-pass' : 'ai-badge-fail';
 }
 
-function submitGrade() {
-  emit("grade", { submissionId: props.submission.id, scores });
+async function submitGrade() {
+  if (submitting.value) return;
+  submitting.value = true;
+  try {
+    emit("grade", { submissionId: props.submission.id, scores });
+  } finally {
+    submitting.value = false;
+  }
 }
 </script>
 

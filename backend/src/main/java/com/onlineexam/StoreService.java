@@ -25,12 +25,35 @@ public class StoreService {
   private final ObjectMapper mapper;
   private final ZoneId zone = ZoneId.systemDefault();
 
+  /** 缓存全量 Store，避免每次请求都执行 10+ SQL 查询 */
+  private volatile Store cachedStore;
+  private volatile long cachedStoreTimestamp = 0;
+  /** 缓存有效期 3 秒，写操作后立即失效 */
+  private static final long CACHE_TTL_MS = 3000;
+
   public StoreService(JdbcTemplate jdbc, ObjectMapper mapper) {
     this.jdbc = jdbc;
     this.mapper = mapper;
   }
 
+  /** 使缓存失效（写操作后调用） */
+  public void invalidateCache() {
+    cachedStore = null;
+    cachedStoreTimestamp = 0;
+  }
+
   public Store readStore() {
+    long now = System.currentTimeMillis();
+    if (cachedStore != null && (now - cachedStoreTimestamp) < CACHE_TTL_MS) {
+      return cachedStore;
+    }
+    Store store = loadStoreFromDb();
+    cachedStore = store;
+    cachedStoreTimestamp = System.currentTimeMillis();
+    return store;
+  }
+
+  private Store loadStoreFromDb() {
     Store store = new Store();
     try {
       store.departments = jdbc.queryForList("select id,name from department order by id").stream().map(row -> mapOf(
@@ -73,7 +96,7 @@ public class StoreService {
         "id", row.get("id"), "teacherId", row.get("teacher_id"), "name", row.get("name"),
         "durationMinutes", asInt(row.get("duration_minutes")), "totalScore", asInt(row.get("total_score")),
         "passScore", asInt(row.get("pass_score")), "questionIds", readList(row.get("question_ids_json")),
-        "paperType", row.get("paper_type"), "sourceTag", row.get("source_tag"), "deleted", false
+        "paperType", row.get("paper_type"), "sourceTag", row.get("source_tag"), "deleted", asBool(row.get("deleted"))
       ))).toList();
     } catch (Exception e) {
       log.error("Failed to load papers from database", e);
@@ -118,7 +141,7 @@ public class StoreService {
         "lastWrongAt", asIso(row.get("last_wrong_at")), "lastRetryAt", asIso(row.get("last_retry_at")),
         "lastSourceSubmissionId", row.get("last_source_submission_id"), "lastSourceExamId", row.get("last_source_exam_id"),
         "lastRetryCorrect", asBool(row.get("last_retry_correct")), "removable", asBool(row.get("removable")),
-        "removedAt", asIso(row.get("removed_at")), "status", row.get("status")
+        "removedAt", asIso(row.get("removed_at")), "archivedAt", asIso(row.get("archived_at")), "status", row.get("status")
       ))).toList();
     } catch (Exception e) {
       log.error("Failed to load wrongBookEntries from database", e);
@@ -158,8 +181,7 @@ public class StoreService {
         "targetRole", row.get("target_role"), "targetClassId", row.get("target_class_id"),
         "targetUserId", row.get("target_user_id"),
         "title", row.get("title"), "content", row.get("content"),
-        "type", row.get("type"), "isRead", asBool(row.get("is_read")),
-        "readAt", asIso(row.get("read_at")), "createdAt", asIso(row.get("created_at"))
+        "type", row.get("type"), "createdAt", asIso(row.get("created_at"))
       ))).toList();
     } catch (Exception e) {
       log.error("Failed to load notifications from database", e);
@@ -170,6 +192,7 @@ public class StoreService {
 
   @Transactional
   public void saveRecord(String entity, Map<String, Object> record) {
+    invalidateCache();
     switch (entity) {
       case "departments" -> upsertDepartment(record);
       case "classes" -> upsertClass(record);
@@ -188,11 +211,11 @@ public class StoreService {
 
   @Transactional
   public void deleteRecord(String entity, String id) {
+    invalidateCache();
     switch (entity) {
-      case "questions" -> jdbc.update("delete from question where id=?", id);
-      case "papers" -> jdbc.update("delete from paper where id=?", id);
-      case "exams" -> jdbc.update("delete from exam where id=?", id);
-      case "backups" -> jdbc.update("delete from question_backup where id=?", id);
+      case "questions" -> jdbc.update("update question set deleted=1 where id=?", id);
+      case "papers" -> jdbc.update("update paper set deleted=1 where id=?", id);
+      case "exams" -> jdbc.update("update exam set deleted=1 where id=?", id);
       default -> {
         String table = switch (entity) {
           case "departments" -> "department";
@@ -201,6 +224,7 @@ public class StoreService {
           case "submissions" -> "submission";
           case "wrongBookEntries" -> "wrong_book_entry";
           case "logs" -> "system_log";
+          case "backups" -> "question_backup";
           case "notifications" -> "notification";
           default -> throw new IllegalArgumentException("Unknown entity: " + entity);
         };
@@ -211,7 +235,13 @@ public class StoreService {
 
   @Transactional
   public void restoreRecord(String entity, String id) {
-    // deleted column not present in current DB schema — no-op
+    invalidateCache();
+    switch (entity) {
+      case "questions" -> jdbc.update("update question set deleted=0 where id=?", id);
+      case "papers" -> jdbc.update("update paper set deleted=0 where id=?", id);
+      case "exams" -> jdbc.update("update exam set deleted=0 where id=?", id);
+      default -> { /* 其他实体无软删除，无需恢复 */ }
+    }
   }
 
   private void upsertDepartment(Map<String, Object> r) {
@@ -236,35 +266,38 @@ public class StoreService {
 
   private void upsertQuestion(Map<String, Object> r) {
     jdbc.update("""
-      insert into question(id,teacher_id,subject,knowledge_point,difficulty,type,title,options_json,answer_json,score,source_tag)
-      values(?,?,?,?,?,?,?,?,?,?,?)
+      insert into question(id,teacher_id,subject,knowledge_point,difficulty,type,title,options_json,answer_json,score,source_tag,deleted)
+      values(?,?,?,?,?,?,?,?,?,?,?,?)
       on duplicate key update teacher_id=values(teacher_id),subject=values(subject),knowledge_point=values(knowledge_point),
       difficulty=values(difficulty),type=values(type),title=values(title),options_json=values(options_json),
-      answer_json=values(answer_json),score=values(score),source_tag=values(source_tag)
+      answer_json=values(answer_json),score=values(score),source_tag=values(source_tag),deleted=values(deleted)
       """, str(r, "id"), str(r, "teacherId"), str(r, "subject"), str(r, "knowledgePoint"), str(r, "difficulty"),
-      str(r, "type"), str(r, "title"), json(r.get("options")), json(r.get("answer")), number(r, "score"), nullableStr(r, "sourceTag"));
+      str(r, "type"), str(r, "title"), json(r.get("options")), json(r.get("answer")), number(r, "score"), nullableStr(r, "sourceTag"),
+      bool(r, "deleted") ? 1 : 0);
   }
 
   private void upsertPaper(Map<String, Object> r) {
     jdbc.update("""
-      insert into paper(id,teacher_id,name,duration_minutes,total_score,pass_score,question_ids_json,paper_type,source_tag)
-      values(?,?,?,?,?,?,?,?,?)
+      insert into paper(id,teacher_id,name,duration_minutes,total_score,pass_score,question_ids_json,paper_type,source_tag,deleted)
+      values(?,?,?,?,?,?,?,?,?,?)
       on duplicate key update teacher_id=values(teacher_id),name=values(name),duration_minutes=values(duration_minutes),
       total_score=values(total_score),pass_score=values(pass_score),question_ids_json=values(question_ids_json),
-      paper_type=values(paper_type),source_tag=values(source_tag)
+      paper_type=values(paper_type),source_tag=values(source_tag),deleted=values(deleted)
       """, str(r, "id"), str(r, "teacherId"), str(r, "name"), number(r, "durationMinutes"), number(r, "totalScore"),
-      number(r, "passScore"), json(r.get("questionIds")), nullableStr(r, "paperType"), nullableStr(r, "sourceTag"));
+      number(r, "passScore"), json(r.get("questionIds")), nullableStr(r, "paperType"), nullableStr(r, "sourceTag"),
+      bool(r, "deleted") ? 1 : 0);
   }
 
   private void upsertExam(Map<String, Object> r) {
     jdbc.update("""
-      insert into exam(id,teacher_id,paper_id,name,target_class_ids_json,start_time,end_time,anti_cheat_limit,published)
-      values(?,?,?,?,?,?,?,?,?)
+      insert into exam(id,teacher_id,paper_id,name,target_class_ids_json,start_time,end_time,anti_cheat_limit,published,deleted)
+      values(?,?,?,?,?,?,?,?,?,?)
       on duplicate key update teacher_id=values(teacher_id),paper_id=values(paper_id),name=values(name),
       target_class_ids_json=values(target_class_ids_json),start_time=values(start_time),end_time=values(end_time),
-      anti_cheat_limit=values(anti_cheat_limit),published=values(published)
+      anti_cheat_limit=values(anti_cheat_limit),published=values(published),deleted=values(deleted)
       """, str(r, "id"), str(r, "teacherId"), str(r, "paperId"), str(r, "name"), json(r.get("targetClassIds")),
-      timestamp(r.get("startTime")), timestamp(r.get("endTime")), number(r, "antiCheatLimit"), bool(r, "published"));
+      timestamp(r.get("startTime")), timestamp(r.get("endTime")), number(r, "antiCheatLimit"), bool(r, "published"),
+      bool(r, "deleted") ? 1 : 0);
   }
 
   private void upsertSubmission(Map<String, Object> r) {
@@ -289,20 +322,22 @@ public class StoreService {
     jdbc.update("""
       insert into wrong_book_entry(id,student_id,student_name,question_id,subject,knowledge_point,type,title,latest_answer_json,
       expected_answer_json,last_retry_answer_json,retry_count,wrong_count,full_score,last_score,last_wrong_at,last_retry_at,
-      last_source_submission_id,last_source_exam_id,last_retry_correct,removable,removed_at,status)
-      values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+      last_source_submission_id,last_source_exam_id,last_retry_correct,removable,removed_at,archived_at,status)
+      values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
       on duplicate key update student_name=values(student_name),subject=values(subject),knowledge_point=values(knowledge_point),
       type=values(type),title=values(title),latest_answer_json=values(latest_answer_json),expected_answer_json=values(expected_answer_json),
       last_retry_answer_json=values(last_retry_answer_json),retry_count=values(retry_count),wrong_count=values(wrong_count),
       full_score=values(full_score),last_score=values(last_score),last_wrong_at=values(last_wrong_at),last_retry_at=values(last_retry_at),
       last_source_submission_id=values(last_source_submission_id),last_source_exam_id=values(last_source_exam_id),
-      last_retry_correct=values(last_retry_correct),removable=values(removable),removed_at=values(removed_at),status=values(status)
+      last_retry_correct=values(last_retry_correct),removable=values(removable),removed_at=values(removed_at),
+      archived_at=values(archived_at),status=values(status)
       """, str(r, "id"), str(r, "studentId"), nullableStr(r, "studentName"), str(r, "questionId"),
       nullableStr(r, "subject"), nullableStr(r, "knowledgePoint"), nullableStr(r, "type"), nullableStr(r, "title"),
       json(r.get("latestAnswer")), json(r.get("expectedAnswer")), json(r.get("lastRetryAnswer")), number(r, "retryCount"),
       number(r, "wrongCount"), number(r, "fullScore"), number(r, "lastScore"), timestamp(r.get("lastWrongAt")),
       timestamp(r.get("lastRetryAt")), nullableStr(r, "lastSourceSubmissionId"), nullableStr(r, "lastSourceExamId"),
-      bool(r, "lastRetryCorrect"), bool(r, "removable"), timestamp(r.get("removedAt")), nullableStr(r, "status"));
+      bool(r, "lastRetryCorrect"), bool(r, "removable"), timestamp(r.get("removedAt")), timestamp(r.get("archivedAt")),
+      nullableStr(r, "status"));
   }
 
   private void upsertLog(Map<String, Object> r) {
@@ -321,14 +356,14 @@ public class StoreService {
 
   private void upsertNotification(Map<String, Object> r) {
     jdbc.update("""
-      insert into notification(id,sender_id,target_role,target_class_id,target_user_id,title,content,type,is_read,read_at,created_at)
-      values(?,?,?,?,?,?,?,?,?,?,?)
+      insert into notification(id,sender_id,target_role,target_class_id,target_user_id,title,content,type,created_at)
+      values(?,?,?,?,?,?,?,?,?)
       on duplicate key update sender_id=values(sender_id),target_role=values(target_role),target_class_id=values(target_class_id),
       target_user_id=values(target_user_id),title=values(title),content=values(content),type=values(type),
-      is_read=values(is_read),read_at=values(read_at),created_at=values(created_at)
+      created_at=values(created_at)
       """, str(r, "id"), str(r, "senderId"), nullableStr(r, "targetRole"), nullableStr(r, "targetClassId"),
       nullableStr(r, "targetUserId"), str(r, "title"), str(r, "content"), str(r, "type"),
-      bool(r, "isRead"), timestamp(r.get("readAt")), timestamp(r.get("createdAt")));
+      timestamp(r.get("createdAt")));
   }
 
   private List<Object> readList(Object raw) {
@@ -552,15 +587,21 @@ public class StoreService {
     List<Object> fullParams = new ArrayList<>(params);
     fullParams.add(pageSize);
     fullParams.add(offset);
-    // 需要先获取用户列表来解析 actorName
-    Store store = readStore();
+    // 只加载用户列表来解析 actorName，避免 readStore() 的 10+ SQL 查询
+    Map<String, String> actorNameMap = jdbc.queryForList("select id,name from user_account").stream()
+      .collect(java.util.stream.Collectors.toMap(
+        row -> str(row.get("id")),
+        row -> str(row.get("name")),
+        (a, b) -> a
+      ));
     List<Map<String, Object>> rows = jdbc.queryForList(
       "SELECT id,actor_id,action,detail,time FROM system_log " + where + " ORDER BY time DESC LIMIT ? OFFSET ?", fullParams.toArray()).stream()
       .map(row -> {
         String actorId = str(row.get("actor_id"));
+        String actorName = actorNameMap.getOrDefault(actorId, "系统".equals(actorId) || actorId.isBlank() ? "系统" : actorId);
         return compact(mapOf(
           "id", row.get("id"), "actorId", actorId,
-          "actorName", resolveActorName(actorId, store),
+          "actorName", actorName,
           "action", row.get("action"), "detail", row.get("detail"),
           "time", asIso(row.get("time"))
         ));

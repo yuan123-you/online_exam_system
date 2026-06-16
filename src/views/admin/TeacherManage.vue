@@ -8,8 +8,8 @@
       <div class="section-actions">
         <div class="search-box">
           <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-          <input v-model="searchQuery" type="text" placeholder="搜索账号、姓名..." class="search-input" />
-          <button v-if="searchQuery" class="search-clear" type="button" @click="searchQuery = ''">&times;</button>
+          <input v-model="searchInput" type="text" placeholder="搜索账号、姓名..." class="search-input" />
+          <button v-if="searchInput" class="search-clear" type="button" @click="setSearch('')">&times;</button>
         </div>
         <select v-model="deptFilter" class="filter-select">
           <option value="">全部学院</option>
@@ -79,21 +79,18 @@
 <script setup lang="ts">
 import { ref, watch, onMounted } from 'vue'
 import { useAppStore } from '@/stores/app'
+import { useDebouncedRef } from '@/composables/useDebounce'
 import { resetPassword } from '@/api/client'
 import type { User } from '@/types'
 import PaginationBar from '@/components/common/PaginationBar.vue'
 
 const store = useAppStore()
 
-const searchQuery = ref('')
+const { debouncedValue: searchQuery, inputValue: searchInput, setValue: setSearch } = useDebouncedRef('')
 const deptFilter = ref('')
 
-let searchTimer: ReturnType<typeof setTimeout> | null = null
 watch([searchQuery, deptFilter], () => {
-  if (searchTimer) clearTimeout(searchTimer)
-  searchTimer = setTimeout(() => {
-    store.loadUsersPage(1, searchQuery.value || undefined, 'teacher', undefined, deptFilter.value || undefined)
-  }, 300)
+  store.loadUsersPage(1, searchQuery.value || undefined, 'teacher', undefined, deptFilter.value || undefined)
 })
 
 function handlePageChange(page: number) {

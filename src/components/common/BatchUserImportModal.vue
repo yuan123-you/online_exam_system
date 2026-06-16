@@ -415,6 +415,7 @@ function formatError(err: ImportError): string {
 }
 
 async function submitImport() {
+  if (submitting.value) return;
   const { records } = parseRows();
   const allErrors = [...fileErrors.value, ...parseRows().errors];
   if (!records.length) {

@@ -9,7 +9,7 @@
         @click="emit('update:expanded', false)"
         title="收起侧栏"
       >
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
           <polyline points="15 6 9 12 15 18"/>
         </svg>
       </button>
@@ -23,15 +23,14 @@
     <!-- Search bar -->
     <div class="search-bar">
       <input
-        v-model="searchKeyword"
+        v-model="searchInput"
         type="text"
         class="search-input"
         placeholder="搜索历史对话..."
-        @input="onSearchInput"
         @focus="searchFocused = true"
         @blur="searchFocused = false"
       />
-      <button v-if="searchKeyword" class="search-clear" @click="clearSearch">×</button>
+      <button v-if="searchInput" class="search-clear" @click="clearSearch">×</button>
       <span v-else class="search-icon">🔍</span>
     </div>
 
@@ -105,8 +104,9 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, watch, onMounted } from 'vue'
 import { useAppStore } from '@/stores/app'
+import { useDebouncedRef } from '@/composables/useDebounce'
 import type { SearchResultConversation } from '@/api/client'
 
 const props = defineProps<{ expanded: boolean }>()
@@ -115,33 +115,29 @@ const emit = defineEmits<{ 'update:expanded': [value: boolean] }>()
 const store = useAppStore()
 
 // Search state
-const searchKeyword = ref('')
+const { debouncedValue: searchKeyword, inputValue: searchInput, setValue: setSearch } = useDebouncedRef('')
 const searchFocused = ref(false)
 const searchResults = ref<SearchResultConversation[]>([])
 const searching = ref(false)
-let searchTimer: ReturnType<typeof setTimeout> | null = null
 
 onMounted(() => {
   store.handleLoadConversations()
 })
 
-// Debounced search
-function onSearchInput() {
-  if (searchTimer) clearTimeout(searchTimer)
-  if (!searchKeyword.value.trim()) {
+// Debounced search via useDebouncedRef
+watch(searchKeyword, async (val) => {
+  if (!val.trim()) {
     searchResults.value = []
     searching.value = false
     return
   }
   searching.value = true
-  searchTimer = setTimeout(async () => {
-    searchResults.value = await store.handleSearchConversations(searchKeyword.value)
-    searching.value = false
-  }, 300)
-}
+  searchResults.value = await store.handleSearchConversations(val)
+  searching.value = false
+})
 
 function clearSearch() {
-  searchKeyword.value = ''
+  setSearch('')
   searchResults.value = []
   searching.value = false
 }
@@ -149,7 +145,7 @@ function clearSearch() {
 // Time-based grouping
 interface ConversationGroup {
   label: string
-  items: Array<{ id: string; title: string; role: string; createdAt: string; updatedAt: string }>
+  items: Array<{ id: string; title: string; role: string; sessionType?: string; createdAt: string; updatedAt: string }>
 }
 
 const filteredGroups = computed<ConversationGroup[]>(() => {

@@ -2,36 +2,33 @@ import { createRouter, createWebHistory } from 'vue-router'
 import { useAppStore } from '@/stores/app'
 import AppShell from '@/components/layout/AppShell.vue'
 
-// Admin views
-import AdminOverview from '@/views/admin/AdminOverview.vue'
-import StudentManage from '@/views/admin/StudentManage.vue'
-import TeacherManage from '@/views/admin/TeacherManage.vue'
-import OrgManage from '@/views/admin/OrgManage.vue'
-import SystemLogs from '@/views/admin/SystemLogs.vue'
-import ExamManageAdmin from '@/views/admin/ExamManageAdmin.vue'
+// Lazy-loaded views — 按路由懒加载，减少首屏体积
+const AdminOverview = () => import('@/views/admin/AdminOverview.vue')
+const StudentManage = () => import('@/views/admin/StudentManage.vue')
+const TeacherManage = () => import('@/views/admin/TeacherManage.vue')
+const OrgManage = () => import('@/views/admin/OrgManage.vue')
+const SystemLogs = () => import('@/views/admin/SystemLogs.vue')
+const ExamManageAdmin = () => import('@/views/admin/ExamManageAdmin.vue')
 
-// Teacher views
-import TeacherOverview from '@/views/teacher/TeacherOverview.vue'
-import QuestionBank from '@/views/teacher/QuestionBank.vue'
-import PaperManage from '@/views/teacher/PaperManage.vue'
-import ExamManage from '@/views/teacher/ExamManage.vue'
-import ExamMonitor from '@/views/teacher/ExamMonitor.vue'
-import GradingCenter from '@/views/teacher/GradingCenter.vue'
-import ScoreAnalysis from '@/views/teacher/ScoreAnalysis.vue'
-import AiQuestionGen from '@/views/teacher/AiQuestionGen.vue'
-import ClassAnalysisView from '@/views/teacher/ClassAnalysisView.vue'
+const TeacherOverview = () => import('@/views/teacher/TeacherOverview.vue')
+const QuestionBank = () => import('@/views/teacher/QuestionBank.vue')
+const PaperManage = () => import('@/views/teacher/PaperManage.vue')
+const ExamManage = () => import('@/views/teacher/ExamManage.vue')
+const ExamMonitor = () => import('@/views/teacher/ExamMonitor.vue')
+const GradingCenter = () => import('@/views/teacher/GradingCenter.vue')
+const ScoreAnalysis = () => import('@/views/teacher/ScoreAnalysis.vue')
+const AiQuestionGen = () => import('@/views/teacher/AiQuestionGen.vue')
+const ClassAnalysisView = () => import('@/views/teacher/ClassAnalysisView.vue')
 
-// Student views
-import AvailableExams from '@/views/student/AvailableExams.vue'
-import MyExams from '@/views/student/MyExams.vue'
-import Grades from '@/views/student/Grades.vue'
-import WrongBook from '@/views/student/WrongBook.vue'
-import AiPractice from '@/views/student/AiPractice.vue'
-import PracticeRecords from '@/views/student/PracticeRecords.vue'
+const AvailableExams = () => import('@/views/student/AvailableExams.vue')
+const MyExams = () => import('@/views/student/MyExams.vue')
+const Grades = () => import('@/views/student/Grades.vue')
+const WrongBook = () => import('@/views/student/WrongBook.vue')
+const AiPractice = () => import('@/views/student/AiPractice.vue')
+const PracticeRecords = () => import('@/views/student/PracticeRecords.vue')
 
-// Common views
-import ProfileView from '@/views/ProfileView.vue'
-import LoginView from '@/views/LoginView.vue'
+const ProfileView = () => import('@/views/ProfileView.vue')
+const LoginView = () => import('@/views/LoginView.vue')
 
 const router = createRouter({
   history: createWebHistory(),
@@ -208,8 +205,11 @@ router.beforeEach((to, from, next) => {
   const store = useAppStore()
 
   // 页面切换时关闭所有弹窗，防止弹窗残留
+  // 但如果正在考试中，不关闭考试弹窗（刷新恢复场景）
   if (from.path !== to.path) {
-    store.closeAllModals()
+    if (!store.activeExam) {
+      store.closeAllModals()
+    }
   }
 
   // 等待认证初始化完成（main.ts 中 await initAuth() 后 authReady 为 true）

@@ -44,7 +44,7 @@
             <button class="ghost-btn" :disabled="restoreLoading === b.id" @click="handleRestore(b.id)">
               {{ restoreLoading === b.id ? '恢复中...' : '恢复' }}
             </button>
-            <button class="danger-btn" @click="handleDeleteBackup(b.id)">删除</button>
+            <button class="danger-btn" :disabled="deleteBackupLoading" @click="handleDeleteBackup(b.id)">{{ deleteBackupLoading ? '删除中...' : '删除' }}</button>
           </div>
         </div>
       </div>
@@ -280,6 +280,7 @@ const backupOpen = ref(false)
 const backupLoading = ref(false)
 const backupsLoading = ref(false)
 const restoreLoading = ref<string | null>(null)
+const deleteBackupLoading = ref(false)
 const backups = ref<QuestionBackup[]>([])
 
 async function loadBackups() {
@@ -295,6 +296,7 @@ async function loadBackups() {
 }
 
 async function handleBackup() {
+  if (backupLoading.value) return;
   backupLoading.value = true
   try {
     const result = await backupQuestionBank()
@@ -308,6 +310,7 @@ async function handleBackup() {
 }
 
 async function handleRestore(backupId: string) {
+  if (restoreLoading.value) return;
   const backup = backups.value.find(b => b.id === backupId)
   const count = backup?.questionCount ?? 0
   const ok = await store.confirmDialog(`确定要恢复此备份吗？当前题库数据将被替换为备份时的 ${count} 道题目，此操作不可撤销。`, { title: '恢复备份确认', confirmText: '恢复', danger: true })
@@ -325,14 +328,18 @@ async function handleRestore(backupId: string) {
 }
 
 async function handleDeleteBackup(backupId: string) {
+  if (deleteBackupLoading.value) return;
   const ok = await store.confirmDialog('确定要删除此备份吗？此操作不可撤销。', { title: '删除备份确认', confirmText: '删除', danger: true })
   if (!ok) return
+  deleteBackupLoading.value = true
   try {
     // Delete by filtering locally since there's no delete API
     backups.value = backups.value.filter(b => b.id !== backupId)
     toast.success('备份已删除')
   } catch (err: any) {
     toast.error(err?.message || '删除备份失败')
+  } finally {
+    deleteBackupLoading.value = false
   }
 }
 
