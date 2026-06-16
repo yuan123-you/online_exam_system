@@ -7,14 +7,14 @@
     <div v-if="!sidebarExpanded" class="sidebar-float-controls">
       <!-- History toggle button -->
       <button class="float-btn float-btn--history" @click="sidebarExpanded = true" title="展开历史记录">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <circle cx="12" cy="12" r="10"/>
           <polyline points="12 6 12 12 16 14"/>
         </svg>
       </button>
       <!-- Hamburger nav button (mobile only) -->
       <button class="float-btn float-btn--hamburger" @click="sidebarExpanded = true" title="打开侧边栏">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
           <line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/>
         </svg>
       </button>
@@ -85,6 +85,8 @@
           :messages="currentMessages"
           :streaming-active="currentStreamingActive"
           :streaming-reasoning="currentStreamingReasoning"
+          :streaming-content="currentStreamingContent"
+          :streaming-hint="currentStreamingHint"
           :loading="currentLoading"
           :tab="activeTab"
         />
@@ -188,6 +190,8 @@ const currentMessages = computed(() => activeTab.value === 'chat' ? store.chatMe
 const currentLoading = computed(() => activeTab.value === 'chat' ? store.chatLoading : store.practSessionLoading)
 const currentStreamingActive = computed(() => activeTab.value === 'chat' ? store.chatStreamingActive : store.practiceStreamingActive)
 const currentStreamingReasoning = computed(() => activeTab.value === 'chat' ? store.chatStreamingReasoning : store.practiceStreamingReasoning)
+const currentStreamingContent = computed(() => activeTab.value === 'chat' ? store.chatDisplayContent : store.practiceDisplayContent)
+const currentStreamingHint = computed(() => activeTab.value === 'chat' ? store.chatStreamingHint : store.practiceStreamingHint)
 
 // Personalized suggestions from user preferences (with defaults as fallback)
 const defaultPracticeQuickChips = [
@@ -333,7 +337,7 @@ function refreshRecommendations() {
 
 // Smart auto-scroll using composable
 function getScrollContainer(): HTMLElement | null {
-  return msgList.value?.closest('.chat-main') as HTMLElement | null
+  return msgList.value as HTMLElement | null
 }
 
 const {
@@ -393,19 +397,26 @@ onUnmounted(() => {
   gap: 0;
 }
 
-/* Hide custom scrollbar from inner elements — outer .content-panel handles scrolling */
+/* Hide custom scrollbar from inner elements — .msg-area handles scrolling */
 .chat-layout::-webkit-scrollbar { display: none; }
-.chat-main::-webkit-scrollbar { display: none; }
-.msg-area::-webkit-scrollbar { display: none; }
+.msg-area::-webkit-scrollbar { width: 6px; }
+.msg-area::-webkit-scrollbar-track { background: transparent; }
+.msg-area::-webkit-scrollbar-thumb { background: #d1d5db; border-radius: 3px; }
 
 /* ===== Messages ===== */
 .msg-area {
   flex: 1;
-  overflow: visible; /* no inner scrollbar — page scrolls naturally */
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
+  scrollbar-color: #d1d5db transparent;
   padding: 18px 12px;
   display: flex;
   flex-direction: column;
   gap: 10px;
+  position: relative;
 }
 
 /* ===== Main ===== */
@@ -415,26 +426,19 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   background: #fff;
-  overflow-y: auto;
-  overflow-x: hidden;
-  overscroll-behavior: contain;
-  -webkit-overflow-scrolling: touch;
-  scrollbar-width: thin;
-  scrollbar-color: #d1d5db transparent;
   position: relative;
 }
 
 /* ===== 返回底部按钮 ===== */
 .scroll-to-bottom-btn {
   position: absolute;
-  bottom: 24px;
-  left: 50%;
-  transform: translateX(-50%);
-  width: 48px;
-  height: 48px;
+  bottom: 80px;
+  right: 20px;
+  width: 44px;
+  height: 44px;
   padding: 0;
   border: none;
-  border-radius: 14px;
+  border-radius: 50%;
   background: rgba(99, 102, 241, 0.9);
   backdrop-filter: blur(8px);
   -webkit-backdrop-filter: blur(8px);
@@ -449,11 +453,11 @@ onUnmounted(() => {
 }
 .scroll-to-bottom-btn:hover {
   background: rgba(79, 70, 229, 0.95);
-  transform: translateX(-50%) scale(1.08);
+  transform: scale(1.08);
   box-shadow: 0 6px 24px rgba(99, 102, 241, 0.45), 0 2px 6px rgba(0, 0, 0, 0.12);
 }
 .scroll-to-bottom-btn:active {
-  transform: translateX(-50%) scale(0.96);
+  transform: scale(0.96);
   box-shadow: 0 2px 8px rgba(99, 102, 241, 0.3);
 }
 
@@ -466,11 +470,11 @@ onUnmounted(() => {
 }
 .scroll-btn-fade-enter-from {
   opacity: 0;
-  transform: translateX(-50%) translateY(12px) scale(0.85);
+  transform: translateY(12px) scale(0.85);
 }
 .scroll-btn-fade-leave-to {
   opacity: 0;
-  transform: translateX(-50%) translateY(12px) scale(0.85);
+  transform: translateY(12px) scale(0.85);
 }
 
 /* ===== Tab switcher (moved to bottom area) ===== */
@@ -793,7 +797,7 @@ onUnmounted(() => {
   position: absolute;
   left: 8px;
   top: 8px;
-  z-index: 20;
+  z-index: 30;
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -848,7 +852,7 @@ onUnmounted(() => {
     position: absolute;
     inset: 0;
     background: rgba(0,0,0,0.3);
-    z-index: 25;
+    z-index: 35;
   }
   .chat-layout {
     height: 100%;
@@ -912,10 +916,11 @@ onUnmounted(() => {
   }
 
   .scroll-to-bottom-btn {
-    bottom: 16px;
-    width: 44px;
-    height: 44px;
-    border-radius: 12px;
+    bottom: 70px;
+    right: 12px;
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
   }
 }
 

@@ -228,7 +228,8 @@ function toggleAll() {
 
 async function handleBatchDelete() {
   if (selectedIds.value.length === 0) return
-  if (!confirm(`确定要删除选中的 ${selectedIds.value.length} 道题目吗？`)) return
+  const ok = await store.confirmDialog(`确定要删除选中的 ${selectedIds.value.length} 道题目吗？`, { title: '批量删除确认', confirmText: '删除', danger: true })
+  if (!ok) return
   try {
     await store.handleBatchDeleteQuestions(selectedIds.value)
     selectedIds.value = []
@@ -309,7 +310,8 @@ async function handleBackup() {
 async function handleRestore(backupId: string) {
   const backup = backups.value.find(b => b.id === backupId)
   const count = backup?.questionCount ?? 0
-  if (!confirm(`确定要恢复此备份吗？当前题库数据将被替换为备份时的 ${count} 道题目，此操作不可撤销。`)) return
+  const ok = await store.confirmDialog(`确定要恢复此备份吗？当前题库数据将被替换为备份时的 ${count} 道题目，此操作不可撤销。`, { title: '恢复备份确认', confirmText: '恢复', danger: true })
+  if (!ok) return
   restoreLoading.value = backupId
   try {
     const result = await restoreQuestionBackup(backupId)
@@ -323,7 +325,8 @@ async function handleRestore(backupId: string) {
 }
 
 async function handleDeleteBackup(backupId: string) {
-  if (!confirm('确定要删除此备份吗？此操作不可撤销。')) return
+  const ok = await store.confirmDialog('确定要删除此备份吗？此操作不可撤销。', { title: '删除备份确认', confirmText: '删除', danger: true })
+  if (!ok) return
   try {
     // Delete by filtering locally since there's no delete API
     backups.value = backups.value.filter(b => b.id !== backupId)

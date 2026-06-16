@@ -77,8 +77,27 @@ public class AiService {
     + "5. 例如：用户要求\"科目一\"→subject=\"科目一\"，必须是驾照科目一考试内容。\n"
     + "6. 即使题目涉及数字计算，也不等于属于数学学科。物理题中的计算仍属于物理。\n"
     + "7. 你能识别任何学科领域，包括但不限于：数学、物理、化学、生物、地理、历史、哲学、体育学、美术学、音乐、科学、法学、经济学、医学、心理学、教育学、科目一、科目四等。\n\n"
+    + "【语言约束 - 最高优先级】\n"
+    + "1. 当科目为外语类（英语、大学英语、日语、法语等）时，题干（title）和选项（options）必须使用该目标语言撰写。\n"
+    + "2. 答案（answer）和解析（explanation）必须使用中文撰写，以便国内用户理解；但其中的英文单词、专业术语、技术名词应保留原始英文形式，不得翻译。\n"
+    + "3. 例如：大学英语题→题干和选项用英文，解析用中文（如\"虚拟语气要求所有主语都用were……\"），术语如subjunctive mood、counterfactual等保留英文。\n"
+    + "4. 例如：日语题→题干和选项用日语，解析用中文，术语保留日语原文。\n"
+    + "5. 非外语类科目（数学、物理等）全部使用中文撰写。\n\n"
+    + "【大学英语难度标准】\n"
+    + "当科目为\"大学英语\"或\"英语\"时，必须遵循以下标准：\n"
+    + "1. 难度对标CET-4/CET-6水平，禁止出初中级词汇辨析题（如\"thank\"vs\"appreciate\"这种基础题）。\n"
+    + "2. 题目类型应涵盖：学术词汇辨析（近义学术词汇的微妙差异）、长难句语法分析（复杂从句、倒装、虚拟语气等）、阅读理解（学术段落推理）、翻译技巧、修辞手法识别等。\n"
+    + "3. 选项设计必须有强干扰性，四个选项应在语义或语法上具有合理关联，避免明显错误选项。\n"
+    + "4. 解析需专业详尽，用中文引用语法规则或学术用法说明，英文术语保留原文。\n\n"
+    + "【题目质量自检 - 强制执行】\n"
+    + "1. 题干与选项必须逻辑一致：问主动语态则选项必须是主动语态句子，问被动语态则选项必须是被动语态句子。\n"
+    + "2. 四个选项必须互不相同，严禁出现重复选项。\n"
+    + "3. 只有一个正确答案（单选题），且正确答案必须有充分依据。\n"
+    + "4. 选项格式统一，避免格式不一致导致歧义。\n\n"
     + "示例（数学单选题）：\n"
-    + "[{\"subject\":\"数学\",\"title\":\"函数f(x)=x²-4x+3的零点为？\",\"type\":\"single\",\"options\":[\"A.x=1和x=3\",\"B.x=-1和x=-3\",\"C.x=1和x=-3\",\"D.x=-1和x=3\"],\"answer\":[\"A\"],\"score\":5,\"explanation\":\"【答案】A 【解析】令f(x)=0，即x²-4x+3=0，分解因式(x-1)(x-3)=0，解得x=1或x=3。\"}]";
+    + "[{\"subject\":\"数学\",\"title\":\"函数f(x)=x²-4x+3的零点为？\",\"type\":\"single\",\"options\":[\"A.x=1和x=3\",\"B.x=-1和x=-3\",\"C.x=1和x=-3\",\"D.x=-1和x=3\"],\"answer\":[\"A\"],\"score\":5,\"explanation\":\"【答案】A 【解析】令f(x)=0，即x²-4x+3=0，分解因式(x-1)(x-3)=0，解得x=1或x=3。\"}]\n\n"
+    + "示例（大学英语单选题 - 题干选项英文，解析中文）：\n"
+    + "[{\"subject\":\"大学英语\",\"title\":\"Which of the following sentences correctly employs the subjunctive mood to express a contrary-to-fact condition?\",\"type\":\"single\",\"options\":[\"A.If she were the CEO, she would restructure the entire department.\",\"B.If she was the CEO, she will restructure the entire department.\",\"C.If she is the CEO, she would restructure the entire department.\",\"D.If she had been the CEO, she would restructure the entire department.\"],\"answer\":[\"A\"],\"score\":5,\"explanation\":\"【答案】A 【解析】虚拟语气（subjunctive mood）在与事实相反的现在条件句中，要求所有主语均使用were而非was。选项A正确使用了were搭配条件句would restructure。选项B错误地使用了was，且will与条件句时态不一致。选项C将现在时is与条件句would混用。选项D使用了过去完成时had been，但主句应搭配would have restructured而非would restructure。\"}]";
 
   private final StoreService storeService;
   private final SystemLogService systemLogService;
@@ -345,12 +364,13 @@ public class AiService {
       systemPrompt = QUESTION_SYSTEM_PROMPT;
 
       userPrompt = String.format(
-        "严格生成恰好 %d 道关于「%s」的%s，知识点方向为「%s」，难度为「%s」。每题分值5分。请包含详细解析。不要多也不要少。\n【学科约束】你必须识别所属学科并在每题subject字段中填写，所有题目内容必须严格属于该学科范畴，严禁跨学科混淆！",
+        "严格生成恰好 %d 道关于「%s」的%s，知识点方向为「%s」，难度为「%s」。每题分值5分。请包含详细解析。不要多也不要少。\n【学科约束】你必须识别所属学科并在每题subject字段中填写，所有题目内容必须严格属于该学科范畴，严禁跨学科混淆！%s",
         count,
         subject.isBlank() ? "综合" : subject,
         typeChinese,
         knowledgePoint.isBlank() ? "综合" : knowledgePoint,
-        difficultyChinese
+        difficultyChinese,
+        buildLanguageConstraint(subject)
       );
     }
 
@@ -634,11 +654,12 @@ public class AiService {
       systemPrompt = QUESTION_SYSTEM_PROMPT;
 
       userPrompt = String.format(
-        "请生成 %d 道关于「%s」的%s练习题，难度为「%s」。每题都要包含详细解析。\n【学科约束】你必须识别所属学科并在每题subject字段中填写，所有题目内容必须严格属于该学科范畴，严禁跨学科混淆！",
+        "请生成 %d 道关于「%s」的%s练习题，难度为「%s」。每题都要包含详细解析。\n【学科约束】你必须识别所属学科并在每题subject字段中填写，所有题目内容必须严格属于该学科范畴，严禁跨学科混淆！%s",
         count,
         subject.isBlank() ? "综合" : subject,
         typeChinese,
-        difficultyChinese
+        difficultyChinese,
+        buildLanguageConstraint(subject)
       );
     }
 
@@ -687,14 +708,28 @@ public class AiService {
     List<String> studentAnswer = normalizeAnswer(body.get("studentAnswer"));
     List<String> correctAnswer = normalizeAnswer(body.get("correctAnswer"));
 
-    String systemPrompt = "教学辅导。分析学生作答，返回JSON:{isCorrect:bool,explanation,tips}。无markdown包裹。";
+    // 检测题目是否为外语类，外语题的解析也用中文（术语保留原文）
+    String questionSubject = str(body, "subject");
+    if (questionSubject.isBlank() && body.get("question") instanceof Map) {
+      questionSubject = str(asMap(body.get("question")), "subject");
+    }
+    boolean isForeignLang = isForeignLanguageSubject(questionSubject);
 
-    String userPrompt = String.format(
-      "题目：%s\n学生作答：%s\n正确答案：%s\n请分析并给出解析。",
-      questionTitle,
-      String.join(", ", studentAnswer),
-      String.join(", ", correctAnswer)
-    );
+    String systemPrompt = isForeignLang
+      ? "教学辅导。分析学生作答，返回JSON:{isCorrect:bool,explanation,tips}。无markdown包裹。解析和提示用中文撰写，英文术语保留原文不翻译。"
+      : "教学辅导。分析学生作答，返回JSON:{isCorrect:bool,explanation,tips}。无markdown包裹。";
+
+    String userPrompt = isForeignLang
+      ? String.format("Question: %s\nStudent's answer: %s\nCorrect answer: %s\n请用中文分析并给出解析，英文术语保留原文。",
+          questionTitle,
+          String.join(", ", studentAnswer),
+          String.join(", ", correctAnswer))
+      : String.format(
+        "题目：%s\n学生作答：%s\n正确答案：%s\n请分析并给出解析。",
+        questionTitle,
+        String.join(", ", studentAnswer),
+        String.join(", ", correctAnswer)
+      );
 
     try {
       String aiResponse = callAiApi(systemPrompt, userPrompt);
@@ -841,6 +876,16 @@ public class AiService {
   public void callAiApiStream(String systemPrompt, String userPrompt, boolean thinkingEnabled,
                                double temperature, boolean jsonMode, String circuitType,
                                SseEmitter emitter) {
+    callAiApiStream(systemPrompt, userPrompt, thinkingEnabled, temperature, jsonMode, circuitType, null, emitter);
+  }
+
+  /**
+   * 智能流式API调用 - 根据UserIntent自动选择最优模型、temperature和max_tokens。
+   * 当intent非null时，自动应用智能参数调节；否则使用传入的默认参数。
+   */
+  public void callAiApiStream(String systemPrompt, String userPrompt, boolean thinkingEnabled,
+                               double temperature, boolean jsonMode, String circuitType,
+                               UserIntent intent, SseEmitter emitter) {
     if (apiKey == null || apiKey.isBlank()) {
       log.error("[AiService SSE] API密钥未配置，无法发起流式请求");
       try { emitter.send(SseEmitter.event().name("error").data("{\"error\":\"AI 功能暂未启用，请联系管理员配置 AI API 密钥\"}")); emitter.complete(); }
@@ -911,15 +956,25 @@ public class AiService {
         conn.setConnectTimeout(30000);
         conn.setReadTimeout(120000);
 
-        // Build request body
+        // Build request body - 智能参数调节：根据intent自动选择最优模型和参数
+        String effectiveModel = model;
+        double effectiveTemperature = temperature;
+        int effectiveMaxTokens = 16384;
+        if (intent != null) {
+          effectiveModel = intent.recommendModel(model);
+          effectiveTemperature = intent.recommendTemperature();
+          effectiveMaxTokens = intent.recommendMaxTokens();
+          log.info("[AiService SSE] [{}] 智能参数: model={}, temp={}, maxTokens={}, complexity={}",
+            threadId, effectiveModel, effectiveTemperature, effectiveMaxTokens, intent.complexity);
+        }
         java.util.LinkedHashMap<String, Object> reqBody = new java.util.LinkedHashMap<>();
-        reqBody.put("model", model);
+        reqBody.put("model", effectiveModel);
         reqBody.put("messages", java.util.List.of(
           java.util.Map.of("role", "system", "content", systemPrompt),
           java.util.Map.of("role", "user", "content", userPrompt)
         ));
-        reqBody.put("temperature", temperature);
-        reqBody.put("max_tokens", 16384);
+        reqBody.put("temperature", effectiveTemperature);
+        reqBody.put("max_tokens", effectiveMaxTokens);
         reqBody.put("stream", true);
         if (jsonMode) {
           reqBody.put("response_format", java.util.Map.of("type", "json_object"));
@@ -1131,10 +1186,13 @@ public class AiService {
     String customPrompt = str(body, "customPrompt");
     String systemPrompt;
     String userPrompt;
+    UserIntent streamIntent = null; // 用于智能参数调节
 
     if (!customPrompt.isBlank()) {
       systemPrompt = QUESTION_SYSTEM_PROMPT;
-      userPrompt = buildSmartUserPrompt(customPrompt, body, 20);
+      UserIntent intent = analyzeUserIntent(customPrompt);
+      userPrompt = buildSmartUserPrompt(customPrompt, body, 20, intent);
+      streamIntent = intent;
     } else {
       String subject = str(body, "subject");
       String type = str(body, "type").isBlank() ? "single" : str(body, "type");
@@ -1155,13 +1213,17 @@ public class AiService {
       systemPrompt = QUESTION_SYSTEM_PROMPT;
 
       userPrompt = String.format(
-        "严格生成恰好 %d 道「%s」%s题，不要多也不要少。难度%s。输出JSON。\n【学科约束】你必须识别所属学科并在每题subject字段中填写，所有题目内容必须严格属于该学科范畴，严禁跨学科混淆！",
-        count, subject.isBlank() ? "综合" : subject, typeChinese, difficultyChinese
+        "严格生成恰好 %d 道「%s」%s题，不要多也不要少。难度%s。输出JSON。\n【学科约束】你必须识别所属学科并在每题subject字段中填写，所有题目内容必须严格属于该学科范畴，严禁跨学科混淆！%s",
+        count, subject.isBlank() ? "综合" : subject, typeChinese, difficultyChinese,
+        buildLanguageConstraint(subject)
       );
+
+      // 构建intent用于智能参数调节
+      streamIntent = new UserIntent(subject, difficulty, "", "strong", type, count);
     }
 
     boolean deepThinking = Boolean.TRUE.equals(body.get("deepThinking"));
-    callAiApiStream(systemPrompt, userPrompt, deepThinking, 0.5, false, "practice", emitter);
+    callAiApiStream(systemPrompt, userPrompt, deepThinking, 0.5, false, "practice", streamIntent, emitter);
   }
 
   /**
@@ -1200,10 +1262,13 @@ public class AiService {
     String customPrompt = str(body, "customPrompt");
     String systemPrompt;
     String userPrompt;
+    UserIntent streamIntent = null; // 用于智能参数调节
 
     if (!customPrompt.isBlank()) {
       systemPrompt = QUESTION_SYSTEM_PROMPT;
-      userPrompt = buildSmartUserPrompt(customPrompt, body, 10);
+      UserIntent intent = analyzeUserIntent(customPrompt);
+      userPrompt = buildSmartUserPrompt(customPrompt, body, 10, intent);
+      streamIntent = intent;
     } else {
       String subject = str(body, "subject");
       String knowledgePoint = str(body, "knowledgePoint");
@@ -1225,14 +1290,18 @@ public class AiService {
       systemPrompt = QUESTION_SYSTEM_PROMPT;
 
       userPrompt = String.format(
-        "严格生成恰好 %d 道关于「%s」的%s，知识点方向为「%s」，难度为「%s」。每题分值5分。请包含详细解析。不要多也不要少。\n【学科约束】你必须识别所属学科并在每题subject字段中填写，所有题目内容必须严格属于该学科范畴，严禁跨学科混淆！",
+        "严格生成恰好 %d 道关于「%s」的%s，知识点方向为「%s」，难度为「%s」。每题分值5分。请包含详细解析。不要多也不要少。\n【学科约束】你必须识别所属学科并在每题subject字段中填写，所有题目内容必须严格属于该学科范畴，严禁跨学科混淆！%s",
         count, subject.isBlank() ? "综合" : subject, typeChinese,
-        knowledgePoint.isBlank() ? "综合" : knowledgePoint, difficultyChinese
+        knowledgePoint.isBlank() ? "综合" : knowledgePoint, difficultyChinese,
+        buildLanguageConstraint(subject)
       );
+
+      // 构建intent用于智能参数调节
+      streamIntent = new UserIntent(subject, difficulty, knowledgePoint, "strong", type, count);
     }
 
     boolean deepThinking = Boolean.TRUE.equals(body.get("deepThinking"));
-    callAiApiStream(systemPrompt, userPrompt, deepThinking, 0.7, false, "generate", emitter);
+    callAiApiStream(systemPrompt, userPrompt, deepThinking, 0.7, false, "generate", streamIntent, emitter);
   }
 
   // ========== General AI Chat ==========
@@ -1269,6 +1338,8 @@ public class AiService {
     ConversationSession session = conversationSessions.computeIfAbsent(userId, k -> new ConversationSession());
     session.addMessage("user", userMessage);
 
+    // Chat mode: always use conversational prompt — question generation is handled
+    // exclusively by practice-questions and generate-questions endpoints.
     String systemPrompt = buildChatSystemPrompt();
     String userPrompt = buildChatUserPrompt(userMessage, body, session);
 
@@ -1334,24 +1405,14 @@ public class AiService {
     ConversationSession session = conversationSessions.computeIfAbsent(userId, k -> new ConversationSession());
     session.addMessage("user", userMessage);
 
-    // 通过AI语义理解检测出题意图（三级：strong/weak/none），替代正则匹配
-    UserIntent intent = analyzeUserIntent(userMessage);
-    String intentLevel = intent.intent;
-    String systemPrompt;
-    String userPrompt;
-
-    if ("strong".equals(intentLevel) || "weak".equals(intentLevel)) {
-      // Strong or weak intent: generate questions with structured JSON format
-      systemPrompt = QUESTION_SYSTEM_PROMPT;
-      userPrompt = buildSmartUserPrompt(userMessage, body, 10, intent);
-    } else {
-      // No question intent: normal conversational chat
-      systemPrompt = buildChatSystemPrompt();
-      userPrompt = buildChatUserPrompt(userMessage, body, session);
-    }
+    // Chat mode: always use conversational prompt — question generation is handled
+    // exclusively by practice-questions/stream and generate-questions/stream endpoints.
+    // This ensures chat and question generation are completely independent modules.
+    String systemPrompt = buildChatSystemPrompt();
+    String userPrompt = buildChatUserPrompt(userMessage, body, session);
 
     boolean deepThinking = Boolean.TRUE.equals(body.get("deepThinking"));
-    systemLogService.log(user, "AI对话流", "深度思考=" + deepThinking + ", 意图=" + intentLevel);
+    systemLogService.log(user, "AI对话流", "深度思考=" + deepThinking);
 
     // 流式对话完成后，将 AI 响应存入会话上下文
     // 通过 SSE 生命周期回调在 complete 事件时记录
@@ -1360,7 +1421,8 @@ public class AiService {
       // 或通过流式累积的方式记录（已在 callAiApiStream 内部完成）
     });
 
-    callAiApiStream(systemPrompt, userPrompt, deepThinking, 0.7, false, "chat", emitter);
+    // Chat always uses null intent — no smart parameter routing for question generation
+    callAiApiStream(systemPrompt, userPrompt, deepThinking, 0.7, false, "chat", null, emitter);
   }
 
   /** Build system prompt for general chat */
@@ -1568,12 +1630,21 @@ public class AiService {
       return result;
     }
 
-    String systemPrompt = "阅卷评分。返回JSON:{score:int(0到满分),comment}。无markdown包裹。";
+    // 检测是否为外语类题目，评分评语用中文（术语保留原文）
+    boolean isForeignLang = isForeignLanguageSubject(questionTitle)
+      || questionTitle.matches(".*[a-zA-Z]{10,}.*"); // 题干含大量英文则判定为英语题
 
-    String userPrompt = String.format(
-      "题目：%s\n满分：%d分\n学生作答：%s\n参考答案：%s\n请评分。",
-      questionTitle, fullScore, studentAnswer, expectedAnswer
-    );
+    String systemPrompt = isForeignLang
+      ? "阅卷评分。返回JSON:{score:int(0到满分),comment}。无markdown包裹。评语用中文撰写，英文术语保留原文。"
+      : "阅卷评分。返回JSON:{score:int(0到满分),comment}。无markdown包裹。";
+
+    String userPrompt = isForeignLang
+      ? String.format("Question: %s\n满分：%d分\n学生作答：%s\n参考答案：%s\n请用中文评分，英文术语保留原文。",
+          questionTitle, fullScore, studentAnswer, expectedAnswer)
+      : String.format(
+        "题目：%s\n满分：%d分\n学生作答：%s\n参考答案：%s\n请评分。",
+        questionTitle, fullScore, studentAnswer, expectedAnswer
+      );
 
     try {
       String response = callAiApi(systemPrompt, userPrompt);
@@ -1756,7 +1827,7 @@ public class AiService {
 
     // 各功能类型的熔断器状态
     Map<String, Object> circuitStatus = new LinkedHashMap<>();
-    for (String type : List.of("chat", "practice", "generate", "grade", "explain")) {
+    for (String type : List.of("chat", "practice", "generate", "grade", "explain", "intent")) {
       circuitStatus.put(type, circuitBreaker.getCircuitStatus(type));
     }
     status.put("circuitBreakers", circuitStatus);
@@ -2001,6 +2072,7 @@ public class AiService {
     }
 
     sb.append("用户需求：").append(userText);
+    sb.append(buildLanguageConstraint(effectiveSubject));
     return sb.toString();
   }
 
@@ -2051,10 +2123,42 @@ public class AiService {
     return prefix + "-" + System.currentTimeMillis() + "-" + Integer.toHexString((int) (Math.random() * 0xffffff));
   }
 
+  /** 检测科目是否为外语类科目 */
+  private static boolean isForeignLanguageSubject(String subject) {
+    if (subject == null || subject.isBlank()) return false;
+    String s = subject.trim();
+    return s.contains("英语") || s.contains("英文") || s.equalsIgnoreCase("English")
+      || s.contains("日语") || s.contains("法语") || s.contains("德语")
+      || s.contains("西班牙语") || s.contains("韩语") || s.contains("俄语")
+      || s.contains("葡萄牙语") || s.contains("阿拉伯语");
+  }
+
+  /** 根据科目生成语言约束指令，外语类科目：题干选项用目标语言，答案解析用中文 */
+  private static String buildLanguageConstraint(String subject) {
+    if (!isForeignLanguageSubject(subject)) return "";
+    String s = subject.trim();
+    if (s.contains("英语") || s.contains("英文") || s.equalsIgnoreCase("English")) {
+      return "\n【语言约束 - 最高优先级】本科目为大学英语/英语，题干（title）和选项（options）必须使用英文撰写，"
+        + "答案（answer）和解析（explanation）必须使用中文撰写，英文术语保留原文不翻译。"
+        + "难度对标CET-4/CET-6水平，禁止出基础词汇辨析题，应涵盖学术词汇辨析、长难句语法分析、阅读理解、翻译技巧、修辞手法等。"
+        + "选项必须有强干扰性，解析需专业详尽。";
+    }
+    if (s.contains("日语")) {
+      return "\n【语言约束 - 最高优先级】本科目为日语，题干和选项用日语撰写，答案和解析用中文撰写，日语术语保留原文。";
+    }
+    if (s.contains("法语")) {
+      return "\n【语言约束 - 最高优先级】本科目为法语，题干和选项用法语撰写，答案和解析用中文撰写，法语术语保留原文。";
+    }
+    // 通用外语约束
+    String langName = s.replaceAll("(大学|专业|基础|高级|入门)", "");
+    return "\n【语言约束 - 最高优先级】本科目为" + langName + "，题干和选项用" + langName + "撰写，答案和解析用中文撰写，术语保留原文。";
+  }
+
   // ========== AI语义理解：用户意图分析 ==========
 
   /**
    * 用户意图分析结果 - 由AI大模型实时语义理解生成，而非正则匹配
+   * 增强版：新增language和complexity字段，支持智能路由和参数自适应
    */
   static class UserIntent {
     final String subject;        // 识别的学科/科目
@@ -2063,41 +2167,97 @@ public class AiService {
     final String intent;         // 出题意图: strong/weak/none
     final String type;           // 题型: single/multiple/judge/fill/short/coding
     final int count;             // 题目数量
+    final String language;       // 目标语言: zh/en/ja/fr 等（外语类科目自动识别）
+    final String complexity;     // 任务复杂度: low/medium/high（影响模型选择和参数）
 
     UserIntent(String subject, String difficulty, String knowledgePoint,
                String intent, String type, int count) {
+      this(subject, difficulty, knowledgePoint, intent, type, count, "", "");
+    }
+
+    UserIntent(String subject, String difficulty, String knowledgePoint,
+               String intent, String type, int count, String language, String complexity) {
       this.subject = subject == null ? "" : subject;
       this.difficulty = difficulty == null ? "" : difficulty;
       this.knowledgePoint = knowledgePoint == null ? "" : knowledgePoint;
       this.intent = intent == null ? "none" : intent;
       this.type = type == null ? "" : type;
       this.count = count;
+      this.language = language == null ? "" : language;
+      this.complexity = complexity == null ? "" : complexity;
     }
 
     static UserIntent empty() {
-      return new UserIntent("", "", "", "none", "", 0);
+      return new UserIntent("", "", "", "none", "", 0, "", "");
+    }
+
+    /** 判断是否为外语类科目 */
+    boolean isForeignLanguage() {
+      return isForeignLanguageSubject(subject);
+    }
+
+    /** 推断最优模型名称 */
+    String recommendModel(String defaultModel) {
+      // 高复杂度任务（大学英语、编程、多学科综合）使用更强模型
+      if ("high".equals(complexity) || isForeignLanguageSubject(subject)) {
+        return "glm-4-air";  // 更强推理能力
+      }
+      return defaultModel;
+    }
+
+    /** 推断最优temperature */
+    double recommendTemperature() {
+      if ("high".equals(complexity)) return 0.3;     // 高复杂度：更精确
+      if ("low".equals(complexity)) return 0.7;       // 低复杂度：更多样
+      if (isForeignLanguageSubject(subject)) return 0.3; // 外语题：更精确
+      return 0.5; // 默认
+    }
+
+    /** 推断最优max_tokens */
+    int recommendMaxTokens() {
+      if ("short".equals(type) || "coding".equals(type)) return 16384;
+      if (count > 5 || "high".equals(complexity)) return 16384;
+      return 8192;
     }
   }
 
-  /** AI意图分析的系统提示词 - 轻量级，专注语义理解 */
+  /** AI意图分析的系统提示词 - 增强版，支持语言识别和复杂度评估 */
   private static final String INTENT_ANALYSIS_SYSTEM_PROMPT =
     "你是语义分析专家。分析用户输入，识别其学习/出题意图。输出纯JSON，不要markdown包裹，不要多余文字：\n"
-    + "{\"subject\":\"学科名\",\"difficulty\":\"easy|medium|hard\",\"knowledgePoint\":\"知识点\",\"intent\":\"strong|weak|none\",\"type\":\"single|multiple|judge|fill|short|coding\",\"count\":5}\n\n"
+    + "{\"subject\":\"学科名\",\"difficulty\":\"easy|medium|hard\",\"knowledgePoint\":\"知识点\",\"intent\":\"strong|weak|none\",\"type\":\"single|multiple|judge|fill|short|coding\",\"count\":5,\"language\":\"zh|en|ja|fr\",\"complexity\":\"low|medium|high\"}\n\n"
     + "规则：\n"
-    + "- subject: 从用户需求中识别学科/科目（如数学、物理、哲学、体育学、美术学、科目一、科目四、科学等）。无法判断时留空。\n"
+    + "- subject: 从用户需求中识别学科/科目（如数学、物理、大学英语、日语、哲学、体育学、美术学、科目一、科目四、科学等）。无法判断时留空。\n"
     + "- difficulty: 根据用户表述判断（简单/基础/入门→easy, 困难/挑战/高难→hard, 其余→medium）。\n"
-    + "- knowledgePoint: 用户提到的具体知识点方向（如\"闭包\"、\"微积分\"、\"交通标志\"）。无法判断时留空。\n"
+    + "- knowledgePoint: 用户提到的具体知识点方向（如\"闭包\"、\"微积分\"、\"虚拟语气\"、\"交通标志\"）。无法判断时留空。\n"
     + "- intent: strong=明确要求出题（含\"出题/来X道/给我X道\"等）, weak=隐含出题意图（含\"考考我/练一练/复习\"等）, none=普通对话/提问。\n"
     + "- type: 用户指定的题型。无法判断时留空。\n"
-    + "- count: 用户要求的题目数量，未指定则为0。";
+    + "- count: 用户要求的题目数量，未指定则为0。\n"
+    + "- language: 题目内容应使用的语言。中文科目→zh，英语/大学英语→en，日语→ja，法语→fr。无法判断时留空。\n"
+    + "- complexity: 任务复杂度。涉及外语出题、编程、多学科综合、学术级难度→high；普通单科出题→medium；简单判断/基础题→low。";
 
   /**
-   * 通过正则匹配快速分析用户输入的语义和意图。
-   * 不再调用 AI API 做意图分析，避免额外 API 消耗和 429 限流风险。
-   * 正则匹配已覆盖常见场景，足以满足出题意图识别需求。
+   * 智能意图分析 - 优先使用AI大模型进行语义理解，正则匹配作为降级方案。
+   * AI分析能更准确地识别学科、语言、复杂度等维度，实现自主决策。
    */
   UserIntent analyzeUserIntent(String userText) {
     if (userText == null || userText.isBlank()) return UserIntent.empty();
+
+    // 优先尝试AI语义分析（更准确，能识别语言和复杂度）
+    if (apiKey != null && !apiKey.isBlank() && circuitBreaker.allowRequest("intent")) {
+      try {
+        String aiResponse = callAiApiForIntentAnalysis(userText);
+        UserIntent intent = parseIntentResponse(aiResponse);
+        circuitBreaker.recordSuccess("intent");
+        log.info("[AiService] AI意图分析成功: subject={}, language={}, complexity={}, intent={}",
+          intent.subject, intent.language, intent.complexity, intent.intent);
+        return intent;
+      } catch (Exception e) {
+        circuitBreaker.recordFailure("intent");
+        log.warn("[AiService] AI意图分析失败，降级到正则匹配: {}", e.getMessage());
+      }
+    }
+
+    // 降级方案：正则匹配
     return fallbackRegexIntent(userText);
   }
 
@@ -2151,7 +2311,7 @@ public class AiService {
     throw new RuntimeException("AI意图分析重试耗尽");
   }
 
-  /** 解析AI意图分析返回的JSON */
+  /** 解析AI意图分析返回的JSON（增强版：支持language和complexity字段） */
   private UserIntent parseIntentResponse(String aiResponse) {
     try {
       String json = aiResponse.trim();
@@ -2166,6 +2326,8 @@ public class AiService {
       String knowledgePoint = str(map.get("knowledgePoint"));
       String intent = str(map.get("intent"));
       String type = str(map.get("type"));
+      String language = str(map.get("language"));
+      String complexity = str(map.get("complexity"));
       int count = 0;
       Object countObj = map.get("count");
       if (countObj instanceof Number) {
@@ -2186,23 +2348,70 @@ public class AiService {
       if (!List.of("single", "multiple", "judge", "fill", "short", "coding").contains(type)) {
         type = "";
       }
+      // 验证language值
+      if (!List.of("zh", "en", "ja", "fr", "de", "ko", "ru", "es", "pt", "ar").contains(language)) {
+        language = "";
+      }
+      // 验证complexity值
+      if (!List.of("low", "medium", "high").contains(complexity)) {
+        complexity = "";
+      }
 
-      return new UserIntent(subject, difficulty, knowledgePoint, intent, type, count);
+      // 智能推断：如果AI未识别language但科目为外语类，自动补全
+      if (language.isBlank() && isForeignLanguageSubject(subject)) {
+        if (subject.contains("英语") || subject.contains("英文")) language = "en";
+        else if (subject.contains("日语")) language = "ja";
+        else if (subject.contains("法语")) language = "fr";
+        else if (subject.contains("德语")) language = "de";
+        else if (subject.contains("韩语")) language = "ko";
+      }
+      // 智能推断：如果AI未识别complexity，根据科目和难度推断
+      if (complexity.isBlank()) {
+        if (isForeignLanguageSubject(subject) || "hard".equals(difficulty)
+          || "coding".equals(type) || "short".equals(type)) {
+          complexity = "high";
+        } else if ("easy".equals(difficulty) && ("judge".equals(type) || "single".equals(type))) {
+          complexity = "low";
+        } else {
+          complexity = "medium";
+        }
+      }
+
+      return new UserIntent(subject, difficulty, knowledgePoint, intent, type, count, language, complexity);
     } catch (Exception e) {
       log.warn("[AiService] 解析AI意图分析结果失败: {}", e.getMessage());
       throw new RuntimeException("解析意图分析结果失败", e);
     }
   }
 
-  /** 正则匹配降级方案 - 仅在AI分析失败时使用 */
+  /** 正则匹配降级方案 - 仅在AI分析失败时使用，自动推断language和complexity */
   private UserIntent fallbackRegexIntent(String userText) {
-    return new UserIntent(
-      extractSubjectFromText(userText),
-      extractDifficultyFromText(userText),
-      extractKnowledgePointFromText(userText),
-      detectQuestionIntent(userText),
-      extractTypeFromText(userText),
-      extractCountFromText(userText)
-    );
+    String subject = extractSubjectFromText(userText);
+    String difficulty = extractDifficultyFromText(userText);
+    String knowledgePoint = extractKnowledgePointFromText(userText);
+    String intent = detectQuestionIntent(userText);
+    String type = extractTypeFromText(userText);
+    int count = extractCountFromText(userText);
+
+    // 智能推断language
+    String language = "";
+    if (isForeignLanguageSubject(subject)) {
+      if (subject.contains("英语") || subject.contains("英文")) language = "en";
+      else if (subject.contains("日语")) language = "ja";
+      else if (subject.contains("法语")) language = "fr";
+      else if (subject.contains("德语")) language = "de";
+      else if (subject.contains("韩语")) language = "ko";
+    }
+
+    // 智能推断complexity
+    String complexity = "medium";
+    if (isForeignLanguageSubject(subject) || "hard".equals(difficulty)
+      || "coding".equals(type) || "short".equals(type)) {
+      complexity = "high";
+    } else if ("easy".equals(difficulty) && ("judge".equals(type) || "single".equals(type))) {
+      complexity = "low";
+    }
+
+    return new UserIntent(subject, difficulty, knowledgePoint, intent, type, count, language, complexity);
   }
 }

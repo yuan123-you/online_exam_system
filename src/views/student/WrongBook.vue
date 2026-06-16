@@ -250,6 +250,7 @@ async function handleBatchRemove() {
   font-size: 0.875rem;
   color: var(--primary, #3d9980);
   font-weight: 500;
+  overflow-wrap: break-word;
 }
 
 .status-ok {
@@ -265,8 +266,35 @@ async function handleBatchRemove() {
 }
 
 .cell-title {
-  overflow-wrap: anywhere;
+  max-width: 260px;
+  overflow-wrap: break-word;
   word-break: break-word;
+  overflow: hidden;
+}
+
+.tag {
+  white-space: nowrap;
+}
+
+/* Ensure table cells don't overflow their containers */
+.table-wrap {
+  overflow: auto;
+}
+
+.table-wrap table {
+  table-layout: auto;
+  width: 100%;
+}
+
+.table-wrap td,
+.table-wrap th {
+  overflow-wrap: break-word;
+  word-break: break-word;
+  max-width: 200px;
+}
+
+.table-wrap td.cell-title {
+  max-width: 260px;
 }
 
 /* Desktop: hide mobile-only class */
@@ -291,7 +319,13 @@ async function handleBatchRemove() {
   }
 
   .cell-title {
+    max-width: none;
     font-size: 13px;
+  }
+
+  .table-wrap td,
+  .table-wrap th {
+    max-width: none;
   }
 }
 </style>

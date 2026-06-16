@@ -841,9 +841,15 @@ public class UserPreferenceService {
   /**
    * 获取个性化推荐 — 基于用户画像实时生成
    */
-  public ResponseEntity<?> getRecommendations(String userId) {
+  public ResponseEntity<?> getRecommendations(String userId, boolean refresh) {
     if (userId == null || userId.isBlank()) {
       return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(Map.of("message", "Not authenticated."));
+    }
+
+    // 刷新时清除缓存，强制重新生成
+    if (refresh) {
+      recommendationCache.remove(userId);
+      profileCache.remove(userId);
     }
 
     // 检查缓存

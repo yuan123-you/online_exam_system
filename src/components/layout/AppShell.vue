@@ -8,7 +8,7 @@
     <!-- Sidebar backdrop overlay (mobile / tablet) -->
     <div class="sidebar-overlay" @click="sidebarOpen = false"></div>
 
-    <aside class="sidebar">
+    <aside ref="sidebarRef" class="sidebar">
       <div class="sidebar-top">
         <div class="sidebar-brand">
           <div class="sidebar-brand-icon">
@@ -20,7 +20,9 @@
           </div>
         </div>
         <button class="sidebar-collapse-btn" type="button" @click="toggleSidebar" :title="sidebarCollapsed ? '展开' : '收起'">
-          {{ sidebarCollapsed ? '»' : '«' }}
+          <svg :class="['collapse-icon', { rotated: sidebarCollapsed }]" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="15 18 9 12 15 6"/>
+          </svg>
         </button>
       </div>
 
@@ -75,7 +77,7 @@
 
     </aside>
 
-    <main :class="['main-panel', { 'main-panel--full': isAiPractice }]">
+    <main :class="['main-panel', { 'main-panel--full': isAiPractice }]" @click="handleClickOutside">
       <!-- Desktop topbar (hidden on AI assistant page for full-screen layout) -->
       <header v-if="!isAiPractice" class="topbar">
         <div style="display:flex;align-items:center;gap:12px;">
@@ -101,7 +103,7 @@
 
       <!-- AI assistant page: floating hamburger button (mobile only) -->
       <button v-if="isAiPractice" class="ai-hamburger-btn" type="button" @click="sidebarOpen = !sidebarOpen" title="菜单">
-        <svg viewBox="0 0 24 24" width="20" height="20"><line x1="3" y1="6" x2="21" y2="6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><line x1="3" y1="12" x2="21" y2="12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><line x1="3" y1="18" x2="21" y2="18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+        <svg viewBox="0 0 24 24" width="16" height="16"><line x1="3" y1="6" x2="21" y2="6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><line x1="3" y1="12" x2="21" y2="12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><line x1="3" y1="18" x2="21" y2="18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
       </button>
 
       <section :class="['content-panel', { 'content-panel--full': isAiPractice }]">
@@ -112,16 +114,30 @@
     <!-- iOS Bottom Tab Bar — always visible on mobile/tablet, including AI assistant page -->
     <nav class="ios-tab-bar">
       <div class="ios-tab-bar-inner">
-        <button
-          v-for="item in tabItems"
-          :key="item.key"
-          :class="['ios-tab-btn', { active: activeMenuKey === item.key }]"
-          type="button"
-          @click="navigateTo(item.key)"
-        >
-          <span class="tab-icon" v-html="getMenuIcon(item.key)"></span>
-          <span>{{ item.label }}</span>
-        </button>
+        <template v-for="(item, index) in tabItems" :key="item.key">
+          <!-- Center AI button with prominent design -->
+          <button
+            v-if="isCenterAiBtn(index)"
+            :class="['ios-tab-btn', 'ios-tab-btn--ai', { active: activeMenuKey === item.key }]"
+            type="button"
+            @click="navigateTo(item.key)"
+          >
+            <span class="ai-btn-ring">
+              <span class="tab-icon" v-html="getMenuIcon(item.key)"></span>
+            </span>
+            <span class="ai-btn-label">{{ item.label }}</span>
+          </button>
+          <!-- Regular tab button -->
+          <button
+            v-else
+            :class="['ios-tab-btn', { active: activeMenuKey === item.key }]"
+            type="button"
+            @click="navigateTo(item.key)"
+          >
+            <span class="tab-icon" v-html="getMenuIcon(item.key)"></span>
+            <span>{{ item.label }}</span>
+          </button>
+        </template>
       </div>
     </nav>
   </div>
@@ -147,6 +163,17 @@ useSmoothScroll()
 const sidebarOpen = ref(false)
 const sidebarCollapsed = ref(false)
 const showNotifications = ref(false)
+const sidebarRef = ref<HTMLElement | null>(null)
+
+// ---- Click outside to collapse sidebar (desktop) ----
+function handleClickOutside(e: MouseEvent) {
+  // Only on desktop (>= 1024px) where sidebar is inline, not overlay
+  if (window.innerWidth < 1024) return
+  if (sidebarCollapsed.value) return
+  const target = e.target as HTMLElement
+  if (sidebarRef.value?.contains(target)) return
+  sidebarCollapsed.value = true
+}
 
 // ---- Touch gesture support for sidebar drawer ----
 const EDGE_SWIPE_ZONE = 40 // px from left edge to trigger open
@@ -220,6 +247,13 @@ const isAiPractice = computed(() => activeMenuKey.value === 'ai-practice')
 // Show up to 5 items in bottom tab bar (iOS convention)
 const tabItems = computed(() => store.menuItems.slice(0, 5))
 
+// Determine if the tab at given index is the center AI button
+const isCenterAiBtn = (index: number) => {
+  const items = tabItems.value
+  const centerIndex = Math.floor(items.length / 2)
+  return index === centerIndex && items[centerIndex]?.key === 'ai-practice'
+}
+
 const avatarLetter = computed(() => {
   const name = store.currentUser?.name
   return name ? name.charAt(0) : '?'
@@ -248,24 +282,27 @@ async function handleReload() {
   store.showToast('正在刷新数据...', 'info')
   try {
     await store.loadData()
-    // Refresh independent data sources based on current route
+    // Collect additional data loading tasks based on current route
+    const extraTasks: Promise<void>[] = []
     const key = activeMenuKey.value
     if (key === 'grades') {
-      store.loadStudentGrades()
+      extraTasks.push(store.loadStudentGrades())
     }
     if (key === 'monitor') {
-      store.loadMonitorData(store.monitorExamId)
+      extraTasks.push(store.loadMonitorData(store.monitorExamId))
     }
     if (key === 'analysis') {
-      store.loadQuestionAnalysisData(store.questionAnalysisExamId)
+      extraTasks.push(store.loadQuestionAnalysisData(store.questionAnalysisExamId))
     }
     if (key === 'questions' || key === 'ai-questions') {
-      store.loadQuestionsPage(store.currentPage)
+      extraTasks.push(store.loadQuestionsPage(store.currentPage))
     }
     if (key === 'wrong-book' || key === 'practice-records') {
-      store.loadQuotaData()
+      extraTasks.push(store.loadQuotaData())
     }
-    store.loadNotificationData()
+    extraTasks.push(store.loadNotificationData())
+    // Wait for ALL data loading to complete before showing success
+    await Promise.all(extraTasks)
     store.showToast('数据已刷新', 'success')
   } catch {
     store.showToast('刷新失败，请重试', 'error')
@@ -284,31 +321,33 @@ function toggleSidebar() {
   sidebarCollapsed.value = !sidebarCollapsed.value
 }
 
+const _s = 'fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"'
+
 const iconMap: Record<string, string> = {
-  overview: '<svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/></svg>',
-  students: '<svg viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>',
-  teachers: '<svg viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>',
-  org: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>',
-  logs: '<svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>',
-  'admin-exams': '<svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>',
-  profile: '<svg viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>',
-  questions: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>',
-  'ai-questions': '<svg viewBox="0 0 24 24"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>',
-  papers: '<svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>',
-  exams: '<svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>',
-  grading: '<svg viewBox="0 0 24 24"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>',
-  analysis: '<svg viewBox="0 0 24 24"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>',
-  'available-exams': '<svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>',
-  'my-exams': '<svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>',
-  'wrong-book': '<svg viewBox="0 0 24 24"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>',
-  'ai-practice': '<svg viewBox="0 0 24 24"><path d="M12 2a2 2 0 0 1 2 2c0 .74-.4 1.39-1 1.73V7h1a7 7 0 0 1 7 7h1a1 1 0 0 1 1 1v3a1 1 0 0 1-1 1h-1.17A7 7 0 0 1 14 23h-4a7 7 0 0 1-6.83-4H2a1 1 0 0 1-1-1v-3a1 1 0 0 1 1-1h1a7 7 0 0 1 7-7h1V5.73A2 2 0 0 1 12 2z"/><circle cx="9" cy="14" r="1.5"/><circle cx="15" cy="14" r="1.5"/><path d="M9 18h6"/></svg>',
-  grades: '<svg viewBox="0 0 24 24"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>',
-  monitor: '<svg viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>',
-  'practice-records': '<svg viewBox="0 0 24 24"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>',
+  overview: `<svg viewBox="0 0 24 24" ${_s}><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/></svg>`,
+  students: `<svg viewBox="0 0 24 24" ${_s}><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>`,
+  teachers: `<svg viewBox="0 0 24 24" ${_s}><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>`,
+  org: `<svg viewBox="0 0 24 24" ${_s}><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>`,
+  logs: `<svg viewBox="0 0 24 24" ${_s}><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>`,
+  'admin-exams': `<svg viewBox="0 0 24 24" ${_s}><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>`,
+  profile: `<svg viewBox="0 0 24 24" ${_s}><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>`,
+  questions: `<svg viewBox="0 0 24 24" ${_s}><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>`,
+  'ai-questions': `<svg viewBox="0 0 24 24" ${_s}><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>`,
+  papers: `<svg viewBox="0 0 24 24" ${_s}><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>`,
+  exams: `<svg viewBox="0 0 24 24" ${_s}><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>`,
+  grading: `<svg viewBox="0 0 24 24" ${_s}><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>`,
+  analysis: `<svg viewBox="0 0 24 24" ${_s}><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>`,
+  'available-exams': `<svg viewBox="0 0 24 24" ${_s}><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>`,
+  'my-exams': `<svg viewBox="0 0 24 24" ${_s}><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>`,
+  'wrong-book': `<svg viewBox="0 0 24 24" ${_s}><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>`,
+  'ai-practice': `<svg viewBox="0 0 24 24" ${_s}><path d="M12 2a2 2 0 0 1 2 2c0 .74-.4 1.39-1 1.73V7h1a7 7 0 0 1 7 7h1a1 1 0 0 1 1 1v3a1 1 0 0 1-1 1h-1.17A7 7 0 0 1 14 23h-4a7 7 0 0 1-6.83-4H2a1 1 0 0 1-1-1v-3a1 1 0 0 1 1-1h1a7 7 0 0 1 7-7h1V5.73A2 2 0 0 1 12 2z"/><circle cx="9" cy="14" r="1.5"/><circle cx="15" cy="14" r="1.5"/><path d="M9 18h6"/></svg>`,
+  grades: `<svg viewBox="0 0 24 24" ${_s}><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>`,
+  monitor: `<svg viewBox="0 0 24 24" ${_s}><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>`,
+  'practice-records': `<svg viewBox="0 0 24 24" ${_s}><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>`,
 }
 
 function getMenuIcon(key: string): string {
-  return iconMap[key] || '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/></svg>'
+  return iconMap[key] || `<svg viewBox="0 0 24 24" ${_s}><circle cx="12" cy="12" r="3"/></svg>`
 }
 </script>
 
@@ -317,27 +356,38 @@ function getMenuIcon(key: string): string {
 .ai-hamburger-btn {
   display: none;
   position: fixed;
-  top: 12px;
-  left: 12px;
-  z-index: 950;
-  width: 40px;
-  height: 40px;
-  border-radius: 12px;
-  border: 1px solid rgba(0,0,0,0.08);
-  background: rgba(255,255,255,0.92);
-  -webkit-backdrop-filter: blur(8px);
-  backdrop-filter: blur(8px);
-  color: #374151;
+  top: 14px;
+  left: 14px;
+  z-index: 15;
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  border: 1px solid rgba(0,0,0,0.06);
+  background: rgba(255,255,255,0.72);
+  -webkit-backdrop-filter: blur(6px);
+  backdrop-filter: blur(6px);
+  color: #9ca3af;
   cursor: pointer;
   align-items: center;
   justify-content: center;
-  box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+  box-shadow: 0 1px 4px rgba(0,0,0,0.06);
   transition: all 0.15s ease;
   -webkit-tap-highlight-color: transparent;
+  opacity: 0.85;
 }
 .ai-hamburger-btn:active {
   transform: scale(0.92);
-  background: rgba(255,255,255,1);
+  background: rgba(255,255,255,0.9);
+  opacity: 1;
+}
+
+/* Collapse icon rotation animation */
+.collapse-icon {
+  transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  display: block;
+}
+.collapse-icon.rotated {
+  transform: rotate(180deg);
 }
 
 /* Refresh button spin animation */

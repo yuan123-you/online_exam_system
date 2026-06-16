@@ -8,6 +8,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
@@ -27,8 +28,9 @@ public class RecommendationController {
    * 获取个性化推荐列表
    */
   @GetMapping
-  public ResponseEntity<?> getRecommendations(@RequestHeader(value = "X-User-Id", required = false) String userId) {
-    return userPreferenceService.getRecommendations(userId);
+  public ResponseEntity<?> getRecommendations(@RequestHeader(value = "X-User-Id", required = false) String userId,
+                                              @RequestParam(value = "refresh", required = false, defaultValue = "false") boolean refresh) {
+    return userPreferenceService.getRecommendations(userId, refresh);
   }
 
   /**

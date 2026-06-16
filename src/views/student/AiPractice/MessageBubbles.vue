@@ -3,6 +3,16 @@
   <div
     v-for="(msg, idx) in messages"
     :key="idx"
+    v-memo="[
+      msg.content,
+      msg.reasoning,
+      msg.duration,
+      msg.role,
+      idx === messages.length - 1 && streamingActive,
+      idx === messages.length - 1 && !!streamingReasoning,
+      submitted[idx],
+      copiedIdx === idx,
+    ]"
     :class="['chat-bubble', msg.role === 'user' ? 'bubble-user' : 'bubble-ai']"
   >
     <div v-if="msg.role === 'assistant'" class="bubble-avatar">🤖</div>
@@ -10,7 +20,7 @@
       <div class="bubble-body">
         <!-- Loading dots before first token -->
         <div
-          v-if="msg.role === 'assistant' && isLast(idx) && streamingActive && !msg.content && !streamingReasoning"
+          v-if="msg.role === 'assistant' && isLast(idx) && streamingActive && !streamingContent && !streamingReasoning && !streamingHint"
           class="typing-dots"
         ><span></span><span></span><span></span></div>
 
@@ -20,7 +30,7 @@
           class="reasoning-block"
         >
           <details open>
-            <summary>💭 深度思考中... <span class="live-timer">{{ liveTimerText }}</span></summary>
+            <summary>💭 深度思考中... <span class="live-timer-wrapper"><LiveTimer :start-time="currentStreamStartTime" :active="true" /></span></summary>
             <div class="reasoning-text" v-html="formatReasoning(streamingReasoning)"></div>
           </details>
         </div>
@@ -36,14 +46,18 @@
           </details>
         </div>
 
-        <!-- Rendered Markdown content with typewriter effect -->
+        <!-- Streaming content: RAF-batched, flicker-free rendering -->
         <div
-          v-if="msg.content"
+          v-if="msg.role === 'assistant' && isLast(idx) && streamingActive && (streamingContent || streamingHint)"
+          ref="streamingContentEl"
+          class="message-content streaming"
+        ></div>
+        <!-- Stable content: rendered once after streaming completes -->
+        <div
+          v-else-if="msg.content"
           class="message-content"
           :class="{
-            streaming: msg.role === 'assistant' && isLast(idx) && streamingActive,
-            'typewriter-active': msg.role === 'assistant' && isLast(idx) && streamingActive,
-            'fade-in': msg.role === 'assistant' && !streamingActive && isNewlyCompleted(idx)
+            'fade-in': msg.role === 'assistant' && isNewlyCompleted(idx)
           }"
           v-html="renderContent(msg.content, msg.role, idx)"
         ></div>
@@ -53,7 +67,7 @@
       <div v-if="msg.role === 'assistant' && msg.content" class="msg-meta">
         <!-- Live timer during streaming -->
         <span v-if="isLast(idx) && streamingActive" class="msg-duration live-duration">
-          ⏱ {{ liveTimerText }}
+          ⏱ <LiveTimer :start-time="currentStreamStartTime" :active="true" />
         </span>
         <!-- Final duration after streaming -->
         <span v-else-if="msg.duration != null" class="msg-duration">⏱ {{ formatDuration(msg.duration) }}</span>
@@ -172,7 +186,7 @@
 </template>
 
 <script setup lang="ts">
-import { reactive, ref, onMounted, onUnmounted, watch, nextTick } from 'vue'
+import { reactive, ref, watch, nextTick, computed, onBeforeUnmount } from 'vue'
 import { useAppStore } from '@/stores/app'
 import { typeLabel } from '@/utils/format'
 import type { AiQuestion } from '@/api/client'
@@ -180,11 +194,14 @@ import type { PracticeSession } from '@/api/client'
 import katex from 'katex'
 import 'katex/dist/katex.min.css'
 import { savePracticeRecords } from '@/api/client'
+import LiveTimer from './LiveTimer.vue'
 
 const props = defineProps<{
   messages: Array<{ role: string; content: string; reasoning?: string; duration?: number; _retryMessage?: string }>
   streamingActive: boolean
   streamingReasoning: string
+  streamingContent?: string
+  streamingHint?: string
   loading: boolean
   tab?: 'chat' | 'practice'
 }>()
@@ -193,42 +210,77 @@ const store = useAppStore()
 
 const copiedIdx = ref<number | null>(null)
 
-// ===== Live timer during streaming =====
-const liveTimerText = ref('0s')
-let liveTimerInterval: ReturnType<typeof setInterval> | null = null
-let streamStartTime = 0
+// ===== Streaming content renderer — RAF-batched, flicker-free =====
+const streamingContentEl = ref<HTMLElement | null>(null)
+let streamingRafId = 0
+let lastStreamingHtml = ''
 
-function startLiveTimer() {
-  streamStartTime = Date.now()
-  liveTimerText.value = '0s'
-  if (liveTimerInterval) clearInterval(liveTimerInterval)
-  liveTimerInterval = setInterval(() => {
-    const elapsed = Math.floor((Date.now() - streamStartTime) / 1000)
-    if (elapsed < 60) {
-      liveTimerText.value = elapsed + 's'
-    } else {
-      const m = Math.floor(elapsed / 60)
-      const s = elapsed % 60
-      liveTimerText.value = m + 'm ' + s + 's'
-    }
-  }, 1000)
+/** Render content specifically for streaming display */
+function renderStreamingContent(text: string): string {
+  if (!text) return ''
+  const isPractice = props.tab === 'practice'
+  if (isPractice) {
+    return '<div class="generating-hint">📝 正在生成题目<span class="gen-dots">...</span></div>'
+  }
+  return renderMarkdown(text)
 }
 
-function stopLiveTimer() {
-  if (liveTimerInterval) {
-    clearInterval(liveTimerInterval)
-    liveTimerInterval = null
+/** Update the streaming container DOM — called via RAF batching */
+function updateStreamingDOM() {
+  const el = streamingContentEl.value
+  if (!el) return
+  const content = props.streamingContent || props.streamingHint || ''
+  if (!content) {
+    if (el.innerHTML) el.innerHTML = ''
+    lastStreamingHtml = ''
+    return
+  }
+  const html = renderStreamingContent(content)
+  if (html !== lastStreamingHtml) {
+    el.innerHTML = html
+    lastStreamingHtml = html
   }
 }
 
-// Start/stop live timer based on streaming state
-watch(() => props.streamingActive, (active) => {
-  if (active) {
-    startLiveTimer()
-  } else {
-    stopLiveTimer()
+/** Schedule a streaming DOM update on the next animation frame */
+function scheduleStreamingUpdate() {
+  if (streamingRafId) return
+  streamingRafId = requestAnimationFrame(() => {
+    streamingRafId = 0
+    updateStreamingDOM()
+  })
+}
+
+// Watch streaming content changes — batch via RAF
+watch(() => props.streamingContent, () => {
+  if (props.streamingActive) scheduleStreamingUpdate()
+})
+watch(() => props.streamingHint, () => {
+  if (props.streamingActive) scheduleStreamingUpdate()
+})
+
+// Handle streaming state transitions
+watch(() => props.streamingActive, (active, wasActive) => {
+  if (active && !wasActive) {
+    // New stream started — reset and schedule first update
+    lastStreamingHtml = ''
+    nextTick(() => updateStreamingDOM())
   }
-}, { immediate: true })
+  if (!active && wasActive) {
+    // Streaming completed — cancel pending RAF, clear streaming state
+    if (streamingRafId) { cancelAnimationFrame(streamingRafId); streamingRafId = 0 }
+    lastStreamingHtml = ''
+  }
+})
+
+onBeforeUnmount(() => {
+  if (streamingRafId) { cancelAnimationFrame(streamingRafId); streamingRafId = 0 }
+})
+
+// ===== Stream start time from store (persists across component re-creations) =====
+const currentStreamStartTime = computed(() =>
+  props.tab === 'practice' ? store.practiceStreamStartTime : store.chatStreamStartTime
+)
 
 // 监听练习会话恢复，自动加载已保存的答案
 watch(() => store.activePracticeSession, (session) => {
@@ -236,10 +288,6 @@ watch(() => store.activePracticeSession, (session) => {
     nextTick(() => loadAnswersFromSession(session))
   }
 }, { immediate: true })
-
-onUnmounted(() => {
-  stopLiveTimer()
-})
 
 // ===== Newly completed message tracking (for fade-in effect) =====
 const newlyCompletedSet = ref(new Set<number>())
@@ -1209,35 +1257,17 @@ function escapeHtml(s: string) {
 
 /* Message content */
 .message-content { word-break: break-word; }
+/* Streaming content — GPU-accelerated, contained layout */
+.message-content.streaming {
+  contain: content;
+  will-change: contents;
+}
 .message-content.streaming::after {
   content: '▋';
   animation: cursor-pulse 1.4s ease-in-out infinite;
   color: var(--primary);
   margin-left: 1px;
   font-weight: 300;
-}
-
-/* Typewriter effect — smooth character reveal during streaming */
-.message-content.typewriter-active {
-  overflow: hidden;
-}
-.message-content.typewriter-active :deep(.md-p) {
-  animation: typewriter-para 0.3s ease-out both;
-}
-.message-content.typewriter-active :deep(.md-code) {
-  animation: typewriter-para 0.4s ease-out both;
-}
-.message-content.typewriter-active :deep(.md-h3),
-.message-content.typewriter-active :deep(.md-h4),
-.message-content.typewriter-active :deep(.md-h5) {
-  animation: typewriter-para 0.3s ease-out both;
-}
-.message-content.typewriter-active :deep(.md-li) {
-  animation: typewriter-para 0.2s ease-out both;
-}
-@keyframes typewriter-para {
-  from { opacity: 0; transform: translateY(4px); }
-  to { opacity: 1; transform: translateY(0); }
 }
 
 /* Fade-in effect when streaming completes */
@@ -1549,24 +1579,19 @@ function escapeHtml(s: string) {
   color: #9ca3af;
 }
 
-/* Live timer during streaming */
+/* Live timer during streaming — styling delegated to LiveTimer component */
 .live-duration {
-  color: #6366f1;
-  font-weight: 500;
-  animation: timer-pulse 2s ease-in-out infinite;
-}
-@keyframes timer-pulse {
-  0%, 100% { opacity: 0.7; }
-  50% { opacity: 1; }
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
 }
 
 /* Live timer inside reasoning summary */
-.live-timer {
-  font-size: 11px;
-  color: #6366f1;
-  font-weight: 500;
+.live-timer-wrapper {
   margin-left: 8px;
-  animation: timer-pulse 2s ease-in-out infinite;
+}
+.live-timer-wrapper :deep(.live-timer-display) {
+  font-size: 11px;
 }
 
 /* Simple copy button */

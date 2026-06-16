@@ -66,6 +66,7 @@
 import { computed, ref } from "vue";
 import BaseModal from "../common/BaseModal.vue";
 import type { BootstrapData } from "../../types";
+import { useToast } from "@/composables/useToast";
 
 const props = defineProps<{
   bootstrap: BootstrapData;
@@ -73,13 +74,10 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   close: [];
-  submit: [payload: {
-    name: string;
-    durationMinutes: number;
-    passScore: number;
-    rules: Array<{ type: string; count: number; subject?: string; knowledgePoint?: string; difficulty?: string }>;
-  }];
+  submit: [payload: any];
 }>();
+
+const toast = useToast();
 
 const name = ref("");
 const durationMinutes = ref(60);
@@ -111,8 +109,8 @@ function removeRule(index: number) {
 }
 
 function submitForm() {
-  if (!name.value.trim()) return alert("请输入试卷名称");
-  if (rules.value.length === 0) return alert("请至少添加一条规则");
+  if (!name.value.trim()) { toast.warning("请输入试卷名称"); return; }
+  if (rules.value.length === 0) { toast.warning("请至少添加一条规则"); return; }
   emit("submit", {
     name: name.value.trim(),
     durationMinutes: Number(durationMinutes.value),

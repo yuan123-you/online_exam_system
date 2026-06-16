@@ -1,90 +1,54 @@
 <template>
-  <aside class="chat-sidebar" :class="{ collapsed: !props.expanded }">
-    <!-- Collapse/Expand toggle button — always visible -->
+  <aside v-if="props.expanded" class="chat-sidebar">
+    <!-- Brand header with close button -->
     <div class="sidebar-brand">
-      <template v-if="props.expanded">
-        <span class="brand-icon">🧠</span>
-        <span class="brand-text">AI 助手</span>
-      </template>
+      <span class="brand-icon">🧠</span>
+      <span class="brand-text">AI 助手</span>
       <button
         class="brand-collapse-btn"
-        @click="emit('update:expanded', !props.expanded)"
-        :title="props.expanded ? '收起侧栏' : '展开侧栏'"
+        @click="emit('update:expanded', false)"
+        title="收起侧栏"
       >
-        <svg class="collapse-icon collapse-icon--chevron" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
           <polyline points="15 6 9 12 15 18"/>
-        </svg>
-        <svg class="collapse-icon collapse-icon--menu" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
-          <line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/>
         </svg>
       </button>
     </div>
 
-    <template v-if="props.expanded">
+    <!-- New chat -->
+    <button class="new-chat-btn" @click="store.handleNewConversation(store.activeTab); emit('update:expanded', false)">
+      <span class="nc-icon">➕</span> 新{{ store.activeTab === 'practice' ? '练题' : '对话' }}
+    </button>
 
-      <!-- New chat -->
-      <button class="new-chat-btn" @click="store.handleNewConversation(store.activeTab); emit('update:expanded', false)">
-        <span class="nc-icon">➕</span> 新{{ store.activeTab === 'practice' ? '练题' : '对话' }}
-      </button>
+    <!-- Search bar -->
+    <div class="search-bar">
+      <input
+        v-model="searchKeyword"
+        type="text"
+        class="search-input"
+        placeholder="搜索历史对话..."
+        @input="onSearchInput"
+        @focus="searchFocused = true"
+        @blur="searchFocused = false"
+      />
+      <button v-if="searchKeyword" class="search-clear" @click="clearSearch">×</button>
+      <span v-else class="search-icon">🔍</span>
+    </div>
 
-      <!-- Search bar -->
-      <div class="search-bar">
-        <input
-          v-model="searchKeyword"
-          type="text"
-          class="search-input"
-          placeholder="搜索历史对话..."
-          @input="onSearchInput"
-          @focus="searchFocused = true"
-          @blur="searchFocused = false"
-        />
-        <button v-if="searchKeyword" class="search-clear" @click="clearSearch">×</button>
-        <span v-else class="search-icon">🔍</span>
-      </div>
+    <!-- History list with time grouping -->
+    <div class="history-section">
+      <div v-if="store.conversationsLoading" class="conv-loading">加载中...</div>
 
-      <!-- History list with time grouping -->
-      <div class="history-section">
-        <div v-if="store.conversationsLoading" class="conv-loading">加载中...</div>
-
-        <template v-if="!searchKeyword">
-          <!-- Grouped display -->
-          <div v-if="filteredGroups.length === 0 && !store.conversationsLoading" class="conv-empty">
-            暂无对话记录
-          </div>
-          <template v-for="group in filteredGroups" :key="group.label">
-            <div class="history-group-label">{{ group.label }}</div>
-            <div class="conv-list">
-              <button
-                v-for="conv in group.items"
-                :key="conv.id"
-                :class="['conv-item', { active: conv.id === store.activeConversationId }]"
-                @click="store.handleSwitchConversation(conv.id); emit('update:expanded', false)"
-              >
-                <span class="ci-icon">{{ conv.sessionType === 'practice' ? '📝' : '💬' }}</span>
-                <span class="ci-text">
-                  <span class="ci-title" :title="conv.title">{{ conv.title }}</span>
-                  <span class="ci-meta-row">
-                    <span class="ci-badge" :class="conv.sessionType === 'practice' ? 'badge-practice' : 'badge-chat'">
-                      {{ conv.sessionType === 'practice' ? '练题' : '对话' }}
-                    </span>
-                    <span class="ci-time">{{ formatTime(conv.updatedAt) }}</span>
-                  </span>
-                </span>
-                <button class="ci-delete" title="删除" @click.stop="onDelete(conv.id)">×</button>
-              </button>
-            </div>
-          </template>
-        </template>
-
-        <!-- Search results -->
-        <template v-else>
-          <div v-if="searchResults.length === 0 && !searching" class="conv-empty">
-            未找到相关对话
-          </div>
-          <div v-if="searching" class="conv-loading">搜索中...</div>
+      <template v-if="!searchKeyword">
+        <!-- Grouped display -->
+        <div v-if="filteredGroups.length === 0 && !store.conversationsLoading" class="conv-empty">
+          暂无对话记录
+        </div>
+        <template v-for="group in filteredGroups" :key="group.label">
+          <div class="history-group-label">{{ group.label }}</div>
           <div class="conv-list">
             <button
-              v-for="conv in searchResults"
+              v-for="conv in group.items"
               :key="conv.id"
               :class="['conv-item', { active: conv.id === store.activeConversationId }]"
               @click="store.handleSwitchConversation(conv.id); emit('update:expanded', false)"
@@ -92,9 +56,6 @@
               <span class="ci-icon">{{ conv.sessionType === 'practice' ? '📝' : '💬' }}</span>
               <span class="ci-text">
                 <span class="ci-title" :title="conv.title">{{ conv.title }}</span>
-                <span v-if="conv.snippets && conv.snippets.length > 0" class="ci-snippet">
-                  {{ conv.snippets[0] }}
-                </span>
                 <span class="ci-meta-row">
                   <span class="ci-badge" :class="conv.sessionType === 'practice' ? 'badge-practice' : 'badge-chat'">
                     {{ conv.sessionType === 'practice' ? '练题' : '对话' }}
@@ -106,9 +67,39 @@
             </button>
           </div>
         </template>
-      </div>
-    </template>
+      </template>
 
+      <!-- Search results -->
+      <template v-else>
+        <div v-if="searchResults.length === 0 && !searching" class="conv-empty">
+          未找到相关对话
+        </div>
+        <div v-if="searching" class="conv-loading">搜索中...</div>
+        <div class="conv-list">
+          <button
+            v-for="conv in searchResults"
+            :key="conv.id"
+            :class="['conv-item', { active: conv.id === store.activeConversationId }]"
+            @click="store.handleSwitchConversation(conv.id); emit('update:expanded', false)"
+          >
+            <span class="ci-icon">{{ conv.sessionType === 'practice' ? '📝' : '💬' }}</span>
+            <span class="ci-text">
+              <span class="ci-title" :title="conv.title">{{ conv.title }}</span>
+              <span v-if="conv.snippets && conv.snippets.length > 0" class="ci-snippet">
+                {{ conv.snippets[0] }}
+              </span>
+              <span class="ci-meta-row">
+                <span class="ci-badge" :class="conv.sessionType === 'practice' ? 'badge-practice' : 'badge-chat'">
+                  {{ conv.sessionType === 'practice' ? '练题' : '对话' }}
+                </span>
+                <span class="ci-time">{{ formatTime(conv.updatedAt) }}</span>
+              </span>
+            </span>
+            <button class="ci-delete" title="删除" @click.stop="onDelete(conv.id)">×</button>
+          </button>
+        </div>
+      </template>
+    </div>
 
   </aside>
 </template>
@@ -212,8 +203,9 @@ function formatTime(iso: string): string {
   return d.toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' })
 }
 
-function onDelete(id: string) {
-  if (confirm('确定删除此对话？')) {
+async function onDelete(id: string) {
+  const ok = await store.confirmDialog('确定删除此对话？', { title: '删除对话确认', confirmText: '删除', danger: true })
+  if (ok) {
     store.handleDeleteConversation(id)
   }
 }
@@ -228,33 +220,15 @@ function onDelete(id: string) {
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  height: 100%; /* fill parent height */
-  transition: width 0.2s;
+  height: 100%;
   position: relative;
 }
-
-.chat-sidebar.collapsed {
-  width: 48px;
-  min-width: 48px;
-  border-right: 1px solid #e5e7eb;
-  overflow: visible;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  padding-top: 0;
-}
-
 
 .sidebar-brand {
   display: flex;
   align-items: center;
   gap: 8px;
   padding: 16px 16px 12px;
-}
-
-.chat-sidebar.collapsed .sidebar-brand {
-  padding: 8px;
-  justify-content: center;
 }
 
 .brand-icon { font-size: 22px; }
@@ -274,7 +248,6 @@ function onDelete(id: string) {
   flex-shrink: 0;
   box-shadow: 0 1px 3px rgba(0,0,0,0.06);
   transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
-  position: relative;
 }
 .brand-collapse-btn:hover {
   background: #f3f4f6;
@@ -285,40 +258,6 @@ function onDelete(id: string) {
 }
 .brand-collapse-btn:active {
   transform: scale(0.97);
-}
-
-/* Collapse icon — two icons stacked, cross-fade via opacity + rotation */
-.collapse-icon {
-  position: absolute;
-  width: 16px;
-  height: 16px;
-  transition: opacity 300ms cubic-bezier(0.4, 0, 0.2, 1),
-              transform 300ms cubic-bezier(0.4, 0, 0.2, 1),
-              color 300ms cubic-bezier(0.4, 0, 0.2, 1);
-  color: #6b7280;
-}
-.brand-collapse-btn:hover .collapse-icon {
-  color: #111827;
-}
-
-/* Expanded state: show chevron (collapse), hide menu */
-.collapse-icon--chevron {
-  opacity: 1;
-  transform: rotate(0deg);
-}
-.collapse-icon--menu {
-  opacity: 0;
-  transform: rotate(-90deg);
-}
-
-/* Collapsed state: show menu (expand), hide chevron */
-.chat-sidebar.collapsed .collapse-icon--chevron {
-  opacity: 0;
-  transform: rotate(-90deg);
-}
-.chat-sidebar.collapsed .collapse-icon--menu {
-  opacity: 1;
-  transform: rotate(0deg);
 }
 
 .new-chat-btn {
@@ -540,20 +479,8 @@ function onDelete(id: string) {
     position: absolute;
     left: 0; top: 0; bottom: 0;
     width: 240px;
-    z-index: 30;
+    z-index: 40;
     box-shadow: 4px 0 16px rgba(0,0,0,0.12);
-    transform: translateX(-100%);
-    transition: transform 0.25s ease;
-    overflow: visible;
-  }
-  .chat-sidebar:not(.collapsed) {
-    transform: translateX(0);
-  }
-  .chat-sidebar.collapsed {
-    width: 48px;
-    min-width: 48px;
-    overflow: visible;
-    transform: translateX(0);
   }
 
   .brand-collapse-btn {

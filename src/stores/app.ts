@@ -290,6 +290,9 @@ export const useAppStore = defineStore('app', () => {
   const chatStreamingReasoning = ref('')
   const chatStreamingActive = ref(false)
   const chatStreamStartTime = ref(0)
+  const chatStreamingHint = ref('')
+  const chatDisplayContent = ref('')
+  let chatDisplayRafId = 0
   let chatAbortController: AbortController | null = null
   let chatTimeoutId: ReturnType<typeof setTimeout> | null = null
 
@@ -300,6 +303,9 @@ export const useAppStore = defineStore('app', () => {
   const practiceStreamingReasoning = ref('')
   const practiceStreamingActive = ref(false)
   const practiceStreamStartTime = ref(0)
+  const practiceStreamingHint = ref('')
+  const practiceDisplayContent = ref('')
+  let practiceDisplayRafId = 0
   let practiceAbortController: AbortController | null = null
   let practiceTimeoutId: ReturnType<typeof setTimeout> | null = null
 
@@ -590,9 +596,9 @@ export const useAppStore = defineStore('app', () => {
     return [
       { key: 'available-exams', label: '待考考试', description: '查看可参加的考试' },
       { key: 'my-exams', label: '考试记录', description: '历史成绩' },
-      { key: 'grades', label: '成绩单', description: '成绩趋势与知识掌握' },
-      { key: 'wrong-book', label: '错题本', description: '错题回顾与重做' },
       { key: 'ai-practice', label: 'AI 助手', description: 'AI 智能服务' },
+      { key: 'wrong-book', label: '错题本', description: '错题回顾与重做' },
+      { key: 'grades', label: '成绩单', description: '成绩趋势与知识掌握' },
       { key: 'practice-records', label: '练习记录', description: '历史练习与正确率' },
       { key: 'profile', label: '个人信息', description: '修改密码' },
     ]
@@ -777,10 +783,14 @@ export const useAppStore = defineStore('app', () => {
     chatStreamingActive.value = false
     chatStreamingReasoning.value = ''
     chatStreamStartTime.value = 0
+    chatStreamingHint.value = ''
+    chatDisplayContent.value = ''
     practiceStreamingContent.value = ''
     practiceStreamingActive.value = false
     practiceStreamingReasoning.value = ''
     practiceStreamStartTime.value = 0
+    practiceStreamingHint.value = ''
+    practiceDisplayContent.value = ''
     conversations.value = []
     activeConversationId.value = null
     conversationsLoading.value = false
@@ -1449,28 +1459,20 @@ export const useAppStore = defineStore('app', () => {
     chatStreamStartTime.value = startTime
     chatLoading.value = true
 
-    // Build context: include recent practice messages as cross-tab context
+    // Build context: only use chat messages (no cross-tab contamination from practice)
     let contextMessages = chatMessages.value.slice(0, -1)
-    const recentPractice = practiceMessages.value.filter(m => m.content).slice(-2)
-    if (recentPractice.length > 0) {
-      const practiceContext: ChatMessage[] = [
-        { role: 'assistant', content: '[以下是该学生最近的练题记录，供参考了解其学习方向]' },
-        ...recentPractice.map(m => ({ ...m, content: m.content.substring(0, 200) })),
-      ]
-      contextMessages = [...practiceContext, ...contextMessages]
-    }
 
     // Timeout warning: if no output after 5s, show slow hint
     if (chatTimeoutId) clearTimeout(chatTimeoutId)
     chatTimeoutId = setTimeout(() => {
       if (chatStreamingActive.value && !chatStreamingContent.value && !chatStreamingReasoning.value) {
-        chatMessages.value[aiMsgIndex].content = '⏳ 正在思考中，请稍候...'
+        chatStreamingHint.value = '⏳ 正在思考中，请稍候...'
       }
     }, 5000)
     // Second timeout: more encouraging message
     const chatTimeout2 = setTimeout(() => {
       if (chatStreamingActive.value && !chatStreamingContent.value) {
-        chatMessages.value[aiMsgIndex].content = '⏳ 好答案值得等待，AI正在认真构思...'
+        chatStreamingHint.value = '⏳ 好答案值得等待，AI正在认真构思...'
       }
     }, 15000)
 
@@ -1481,11 +1483,20 @@ export const useAppStore = defineStore('app', () => {
           chatStreamingReasoning.value += chunk.text
         } else {
           chatStreamingContent.value += chunk.text
-          // Update the AI message in real-time
-          chatMessages.value[aiMsgIndex].content = chatStreamingContent.value
+          // RAF-batched display update — coalesce multiple chunks per frame
+          if (!chatDisplayRafId) {
+            chatDisplayRafId = requestAnimationFrame(() => {
+              chatDisplayContent.value = chatStreamingContent.value
+              chatDisplayRafId = 0
+            })
+          }
         }
       },
       (data) => {
+        chatStreamingHint.value = ''
+        // Flush any pending RAF display update
+        if (chatDisplayRafId) { cancelAnimationFrame(chatDisplayRafId); chatDisplayRafId = 0 }
+        chatDisplayContent.value = ''
         if (chatTimeoutId) { clearTimeout(chatTimeoutId); chatTimeoutId = null }
         clearTimeout(chatTimeout2)
         chatStreamingActive.value = false
@@ -1517,6 +1528,9 @@ export const useAppStore = defineStore('app', () => {
         handleSaveMessages()
       },
       (error) => {
+        chatStreamingHint.value = ''
+        if (chatDisplayRafId) { cancelAnimationFrame(chatDisplayRafId); chatDisplayRafId = 0 }
+        chatDisplayContent.value = ''
         if (chatTimeoutId) { clearTimeout(chatTimeoutId); chatTimeoutId = null }
         clearTimeout(chatTimeout2)
         chatStreamingActive.value = false
@@ -1527,6 +1541,9 @@ export const useAppStore = defineStore('app', () => {
         showToast(cleanError, 'error')
       },
       () => {
+        chatStreamingHint.value = ''
+        if (chatDisplayRafId) { cancelAnimationFrame(chatDisplayRafId); chatDisplayRafId = 0 }
+        chatDisplayContent.value = ''
         if (chatTimeoutId) { clearTimeout(chatTimeoutId); chatTimeoutId = null }
         clearTimeout(chatTimeout2)
         chatStreamingActive.value = false
@@ -1552,6 +1569,8 @@ export const useAppStore = defineStore('app', () => {
     chatStreamingContent.value = ''
     chatStreamingReasoning.value = ''
     chatStreamingActive.value = false
+    chatStreamingHint.value = ''
+    chatDisplayContent.value = ''
   }
 
   /** Retry a failed AI message — removes the error message and re-sends */
@@ -1601,24 +1620,19 @@ export const useAppStore = defineStore('app', () => {
     practiceStreamStartTime.value = startTime
     practSessionLoading.value = true
 
-    // Build enriched prompt: include recent chat context for smarter question generation
-    const recentChat = chatMessages.value.filter(m => m.content && m.role === 'user').slice(-2)
+    // Practice mode: use the user's message directly (no cross-tab contamination from chat)
     let enrichedPrompt = message
-    if (recentChat.length > 0) {
-      const chatTopics = recentChat.map(m => m.content.substring(0, 100)).join('; ')
-      enrichedPrompt = `${message}\n\n[学生最近学习方向参考: ${chatTopics}]`
-    }
 
     if (practiceTimeoutId) clearTimeout(practiceTimeoutId)
     practiceTimeoutId = setTimeout(() => {
       if (practiceStreamingActive.value && !practiceStreamingContent.value && !practiceStreamingReasoning.value) {
-        practiceMessages.value[aiMsgIndex].content = '⏳ 正在为你精心出题，请稍候...'
+        practiceStreamingHint.value = '⏳ 正在为你精心出题，请稍候...'
       }
     }, 5000)
     // Second timeout: show more encouraging message
     const practiceTimeout2 = setTimeout(() => {
       if (practiceStreamingActive.value && !practiceStreamingContent.value) {
-        practiceMessages.value[aiMsgIndex].content = '⏳ 题目生成中，好题值得等待...'
+        practiceStreamingHint.value = '⏳ 题目生成中，好题值得等待...'
       }
     }, 15000)
 
@@ -1672,10 +1686,19 @@ export const useAppStore = defineStore('app', () => {
           practiceStreamingReasoning.value += chunk.text
         } else {
           practiceStreamingContent.value += chunk.text
-          practiceMessages.value[aiMsgIndex].content = practiceStreamingContent.value
+          // RAF-batched display update
+          if (!practiceDisplayRafId) {
+            practiceDisplayRafId = requestAnimationFrame(() => {
+              practiceDisplayContent.value = practiceStreamingContent.value
+              practiceDisplayRafId = 0
+            })
+          }
         }
       },
       (data) => {
+        practiceStreamingHint.value = ''
+        if (practiceDisplayRafId) { cancelAnimationFrame(practiceDisplayRafId); practiceDisplayRafId = 0 }
+        practiceDisplayContent.value = ''
         if (practiceTimeoutId) { clearTimeout(practiceTimeoutId); practiceTimeoutId = null }
         clearTimeout(practiceTimeout2)
         practiceStreamingActive.value = false
@@ -1730,6 +1753,9 @@ export const useAppStore = defineStore('app', () => {
         }
       },
       (error) => {
+        practiceStreamingHint.value = ''
+        if (practiceDisplayRafId) { cancelAnimationFrame(practiceDisplayRafId); practiceDisplayRafId = 0 }
+        practiceDisplayContent.value = ''
         if (practiceTimeoutId) { clearTimeout(practiceTimeoutId); practiceTimeoutId = null }
         clearTimeout(practiceTimeout2)
         practiceStreamingActive.value = false
@@ -1740,6 +1766,9 @@ export const useAppStore = defineStore('app', () => {
         showToast(cleanError, 'error')
       },
       () => {
+        practiceStreamingHint.value = ''
+        if (practiceDisplayRafId) { cancelAnimationFrame(practiceDisplayRafId); practiceDisplayRafId = 0 }
+        practiceDisplayContent.value = ''
         if (practiceTimeoutId) { clearTimeout(practiceTimeoutId); practiceTimeoutId = null }
         clearTimeout(practiceTimeout2)
         practiceStreamingActive.value = false
@@ -1765,6 +1794,8 @@ export const useAppStore = defineStore('app', () => {
     practiceStreamingContent.value = ''
     practiceStreamingReasoning.value = ''
     practiceStreamingActive.value = false
+    practiceStreamingHint.value = ''
+    practiceDisplayContent.value = ''
   }
 
   // ========== Practice Session Persistence Actions ==========
@@ -2146,6 +2177,8 @@ export const useAppStore = defineStore('app', () => {
     chatStreamingReasoning,
     chatStreamingActive,
     chatStreamStartTime,
+    chatStreamingHint,
+    chatDisplayContent,
     handleChatSend,
     handleChatStop,
     clearChatMessages,
@@ -2188,6 +2221,8 @@ export const useAppStore = defineStore('app', () => {
     practiceStreamingReasoning,
     practiceStreamingActive,
     practiceStreamStartTime,
+    practiceStreamingHint,
+    practiceDisplayContent,
     handlePracticeSend,
     handlePracticeStop,
     clearPracticeMessages,

@@ -982,8 +982,9 @@ export interface RecommendationItem {
 }
 
 /** 获取个性化推荐列表 */
-export function getRecommendations() {
-  return request<{ recommendations: RecommendationItem[]; cached: boolean }>('/api/recommendations');
+export function getRecommendations(forceRefresh = false) {
+  const url = forceRefresh ? '/api/recommendations?refresh=true' : '/api/recommendations'
+  return request<{ recommendations: RecommendationItem[]; cached: boolean }>(url);
 }
 
 /** 用户画像 */

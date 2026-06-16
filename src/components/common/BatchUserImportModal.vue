@@ -62,6 +62,7 @@ import { computed, ref, watch } from "vue";
 import BaseModal from "./BaseModal.vue";
 import { batchImportUsers, type BatchImportResult } from "../../api/client";
 import type { BootstrapData } from "../../types";
+import { useToast } from "@/composables/useToast";
 
 type ImportError = { lineNumber?: number; message: string };
 
@@ -74,6 +75,8 @@ const emit = defineEmits<{
   close: [];
   success: [result: BatchImportResult];
 }>();
+
+const toast = useToast();
 
 const isStudent = computed(() => props.role === "student");
 
@@ -415,7 +418,7 @@ async function submitImport() {
   const { records } = parseRows();
   const allErrors = [...fileErrors.value, ...parseRows().errors];
   if (!records.length) {
-    alert(allErrors.length ? allErrors.map(formatError).join("\n") : `没有可导入的${isStudent.value ? "学生" : "教师"}`);
+    toast.warning(allErrors.length ? allErrors.map(formatError).join("\n") : `没有可导入的${isStudent.value ? "学生" : "教师"}`);
     return;
   }
   submitting.value = true;
@@ -429,11 +432,11 @@ async function submitImport() {
     if (errorLines.length) {
       messages.push(`未导入 ${errorLines.length} 条：\n${errorLines.slice(0, 8).join("\n")}${errorLines.length > 8 ? "\n..." : ""}`);
     }
-    alert(messages.join("\n\n"));
+    toast.success(messages.join("\n\n"));
     emit("success", result);
     emit("close");
   } catch (error: any) {
-    alert(error?.message || "批量导入失败");
+    toast.error(error?.message || "批量导入失败");
   } finally {
     submitting.value = false;
   }

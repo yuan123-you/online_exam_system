@@ -64,6 +64,17 @@
     @submit="store.handleAutoGenerate"
   />
 
+  <!-- Confirm Dialog -->
+  <ConfirmDialog
+    v-if="store.confirmState.visible"
+    :title="store.confirmState.title"
+    :message="store.confirmState.message"
+    :confirm-text="store.confirmState.confirmText"
+    :danger="store.confirmState.danger"
+    @confirm="store.handleConfirmOk"
+    @cancel="store.handleConfirmCancel"
+  />
+
   <!-- Toast Notifications -->
   <div class="toast-container">
     <transition-group name="toast">
@@ -86,6 +97,7 @@ import PaperFormModal from '@/components/teacher/PaperFormModal.vue'
 import PaperPreviewModal from '@/components/teacher/PaperPreviewModal.vue'
 import SubmissionReviewModal from '@/components/teacher/SubmissionReviewModal.vue'
 import AutoGenPaperModal from '@/components/teacher/AutoGenPaperModal.vue'
+import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 
 const store = useAppStore()
 const { toasts } = useToast()

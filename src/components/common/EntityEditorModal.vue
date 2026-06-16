@@ -104,11 +104,13 @@ import BaseModal from "./BaseModal.vue";
 import type { BootstrapData, Exam, Question, User, Department, ClassRoom } from "../../types";
 import { difficultyOptions, splitByBar, toDateTimeLocalValue } from "../../utils/format";
 import { validateUsername, validatePassword } from "../../utils/validation";
+import { useToast } from "@/composables/useToast";
 
 type EditorKind = "student" | "teacher" | "department" | "class" | "question" | "exam";
 
-const props = defineProps<{
-  kind: EditorKind;
+const toast = useToast();
+
+const props = defineProps<{  kind: EditorKind;
   bootstrap: BootstrapData;
   model?: User | Department | ClassRoom | Question | Exam | null;
 }>();
@@ -169,12 +171,12 @@ function submitForm() {
     // 校验账号密码格式
     const usernameResult = validateUsername(form.username)
     if (!usernameResult.valid) {
-      alert(usernameResult.message)
+      toast.warning(usernameResult.message)
       return
     }
     const passwordResult = validatePassword(form.password)
     if (!passwordResult.valid) {
-      alert(passwordResult.message)
+      toast.warning(passwordResult.message)
       return
     }
     emit("submit", {
