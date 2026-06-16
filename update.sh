@@ -19,18 +19,24 @@ JAR_NAME="online-exam-backend-1.0.0.jar"
 HEALTH_URL="http://localhost:8080/api/health"
 HEALTH_RETRIES=12
 HEALTH_INTERVAL=5
-LOCK_FILE="/tmp/online-exam-update.lock"
+LOCK_FILE="${APP_DIR}/.update.lock"
+DEPLOY_LOG="${APP_DIR}/update.log"
+MIN_DISK_MB=1024
 
 # Colors
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
 BLUE='\033[0;34m'; CYAN='\033[0;36m'; BOLD='\033[1m'; NC='\033[0m'
 
-info()    { echo -e "${BLUE}[INFO]${NC}  $*"; }
-success() { echo -e "${GREEN}[ OK ]${NC} $*"; }
-warn()    { echo -e "${YELLOW}[WARN]${NC}  $*"; }
-error()   { echo -e "${RED}[FAIL]${NC} $*"; }
+info()    { echo -e "${BLUE}[INFO]${NC}  $*"; log "INFO  $*"; }
+success() { echo -e "${GREEN}[ OK ]${NC} $*"; log "OK    $*"; }
+warn()    { echo -e "${YELLOW}[WARN]${NC}  $*"; log "WARN  $*"; }
+error()   { echo -e "${RED}[FAIL]${NC} $*"; log "FAIL  $*"; }
 
 timestamp() { date '+%Y-%m-%d %H:%M:%S'; }
+log() {
+    local msg="[$(timestamp)] $*"
+    echo "$msg" >> "$DEPLOY_LOG" 2>/dev/null || true
+}
 
 #--------------------------------------------------------------
 # Parse arguments
@@ -54,6 +60,34 @@ for arg in "$@"; do
 done
 
 #--------------------------------------------------------------
+# Pre-flight: disk space check
+#--------------------------------------------------------------
+avail_mb=$(df -BM / | awk 'NR==2 {gsub("M",""); print $4}')
+if [ "${avail_mb:-0}" -lt "$MIN_DISK_MB" ]; then
+    echo -e "${RED}[FAIL] Insufficient disk space: ${avail_mb}MB available, need at least ${MIN_DISK_MB}MB${NC}"
+    exit 1
+fi
+
+#--------------------------------------------------------------
+# Pre-flight: environment check
+#--------------------------------------------------------------
+check_cmd() {
+    if ! command -v "$1" &> /dev/null; then
+        echo -e "${RED}[FAIL] Required command '$1' not found. Please install it first.${NC}"
+        exit 1
+    fi
+}
+
+if [ "$UPDATE_FRONTEND" = true ]; then
+    check_cmd node
+    check_cmd npm
+fi
+if [ "$UPDATE_BACKEND" = true ]; then
+    check_cmd java
+    check_cmd mvn
+fi
+
+#--------------------------------------------------------------
 # Deployment lock (prevent concurrent updates)
 #--------------------------------------------------------------
 if [ -f "$LOCK_FILE" ]; then
@@ -67,9 +101,11 @@ if [ -f "$LOCK_FILE" ]; then
     fi
 fi
 echo $$ > "$LOCK_FILE"
+chmod 600 "$LOCK_FILE"
 
 # Initialize variables used in trap before registering it
 ROLLBACK_TAG=""
+PREV_COMMIT=""
 DEPLOY_FAILED=false
 
 cleanup() {
@@ -94,10 +130,11 @@ echo "  Time: $(timestamp)"
 echo -e "==========================================${NC}"
 echo ""
 echo -e "  Scope: ${CYAN}$([ "$UPDATE_FRONTEND" = true ] && echo -n "Frontend " )$([ "$UPDATE_BACKEND" = true ] && echo -n "Backend")${NC}"
+echo -e "  Disk:  ${CYAN}${avail_mb}MB available${NC}"
 echo ""
 
-# Step counting: backup(1) + pull(1) + frontend steps + backend steps + restart(1)
-TOTAL_STEPS=2  # backup + pull always run
+# Step counting: preflight(1) + backup(1) + pull(1) + frontend steps + backend steps + restart(1)
+TOTAL_STEPS=3  # preflight + backup + pull always run
 [ "$UPDATE_FRONTEND" = true ] && TOTAL_STEPS=$((TOTAL_STEPS + 3))  # npm + build + sync
 [ "$UPDATE_BACKEND"  = true ] && TOTAL_STEPS=$((TOTAL_STEPS + 2))  # build jar + health check
 TOTAL_STEPS=$((TOTAL_STEPS + 1))  # restart services
@@ -109,6 +146,19 @@ next_step() {
 }
 
 #--------------------------------------------------------------
+# Pre-flight: environment info
+#--------------------------------------------------------------
+next_step "Checking environment..."
+if [ "$UPDATE_FRONTEND" = true ]; then
+    info "Node: $(node -v) | npm: $(npm -v)"
+fi
+if [ "$UPDATE_BACKEND" = true ]; then
+    info "Java: $(java -version 2>&1 | head -1)"
+    info "Maven: $(mvn -version 2>&1 | head -1)"
+fi
+success "Environment OK (disk: ${avail_mb}MB)"
+
+#--------------------------------------------------------------
 # Backup
 #--------------------------------------------------------------
 ROLLBACK_TAG="update-$(date +%Y%m%d-%H%M%S)"
@@ -116,6 +166,7 @@ next_step "Creating backup..."
 
 sudo mkdir -p "$BACKUP_DIR/${ROLLBACK_TAG}"
 sudo chown "$(whoami):$(whoami)" "$BACKUP_DIR/${ROLLBACK_TAG}"
+chmod 700 "$BACKUP_DIR/${ROLLBACK_TAG}"
 
 if [ "$UPDATE_FRONTEND" = true ] && [ -d "$APP_DIR/dist" ]; then
     cp -r "$APP_DIR/dist" "$BACKUP_DIR/${ROLLBACK_TAG}/dist"
@@ -136,6 +187,14 @@ next_step "Pulling latest code from GitHub..."
 cd "$APP_DIR"
 
 PREV_COMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+
+# Check for local changes before force-pulling
+LOCAL_CHANGES=$(git status --porcelain 2>/dev/null || true)
+if [ -n "$LOCAL_CHANGES" ]; then
+    warn "Local changes detected, stashing before pull..."
+    git stash
+fi
+
 git fetch origin master
 git reset --hard origin/master
 NEW_COMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
@@ -151,6 +210,12 @@ fi
 #--------------------------------------------------------------
 do_rollback() {
     warn "Attempting rollback to $ROLLBACK_TAG..."
+    # Restore code to previous commit
+    if [ -n "$PREV_COMMIT" ] && [ "$PREV_COMMIT" != "unknown" ]; then
+        cd "$APP_DIR"
+        git reset --hard "$PREV_COMMIT" 2>/dev/null || true
+        info "Restored code to commit ${PREV_COMMIT}"
+    fi
     if [ -d "$BACKUP_DIR/${ROLLBACK_TAG}/dist" ]; then
         rm -rf "$APP_DIR/dist"
         sudo cp -r "$BACKUP_DIR/${ROLLBACK_TAG}/dist" "$APP_DIR/dist"
@@ -174,15 +239,21 @@ if [ "$UPDATE_FRONTEND" = true ]; then
     next_step "Installing npm dependencies..."
     cd "$APP_DIR"
     npm config set registry https://registry.npmmirror.com
-    npm install --prefer-offline 2>&1 | tail -3
-    success "Dependencies installed"
+    if npm install --prefer-offline >> "$DEPLOY_LOG" 2>&1; then
+        success "Dependencies installed"
+    else
+        error "npm install failed! Check $DEPLOY_LOG for details."
+        DEPLOY_FAILED=true
+        do_rollback
+        exit 1
+    fi
 
     next_step "Building frontend..."
     rm -rf dist
-    if npx vite build; then
+    if npx vite build >> "$DEPLOY_LOG" 2>&1; then
         success "Frontend built -> dist/"
     else
-        error "Frontend build failed!"
+        error "Frontend build failed! Check $DEPLOY_LOG for details."
         DEPLOY_FAILED=true
         do_rollback
         exit 1
@@ -191,6 +262,7 @@ if [ "$UPDATE_FRONTEND" = true ]; then
     next_step "Syncing dist to backend static resources..."
     rm -rf backend/src/main/resources/static
     cp -r dist backend/src/main/resources/static
+    # Also update the standalone dist directory for Nginx to serve
     success "Synced dist/ -> backend/src/main/resources/static/"
 fi
 
@@ -202,18 +274,18 @@ if [ "$UPDATE_BACKEND" = true ]; then
     cd "$APP_DIR/backend"
     export MAVEN_OPTS="-Xmx512m -Xms256m"
 
-    if mvn -f pom.xml -DskipTests package -q 2>&1; then
+    if mvn -f pom.xml -DskipTests package >> "$DEPLOY_LOG" 2>&1; then
         if [ -f "target/${JAR_NAME}" ]; then
             JAR_SIZE=$(du -h "target/${JAR_NAME}" | cut -f1)
             success "Backend JAR built (${JAR_SIZE})"
         else
-            error "JAR not found after build!"
+            error "JAR not found after build! Check $DEPLOY_LOG for details."
             DEPLOY_FAILED=true
             do_rollback
             exit 1
         fi
     else
-        error "Backend build failed!"
+        error "Backend build failed! Check $DEPLOY_LOG for details."
         DEPLOY_FAILED=true
         do_rollback
         exit 1
@@ -267,8 +339,9 @@ echo -e "${GREEN}${BOLD}=========================================="
 echo "  Update Complete! (${UPDATE_DURATION}s)"
 echo -e "==========================================${NC}"
 echo ""
-echo -e "  Commit:  ${BOLD}${NEW_COMMIT}${NC}"
+echo -e "  Commit:  ${BOLD}${PREV_COMMIT} -> ${NEW_COMMIT}${NC}"
 echo -e "  Status:  ${GREEN}running${NC}"
+echo -e "  Log:     ${CYAN}${DEPLOY_LOG}${NC}"
 echo ""
 echo -e "  ${CYAN}Quick checks:${NC}"
 echo "    curl https://web.novo.ccwu.cc/api/health"
