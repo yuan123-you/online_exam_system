@@ -89,9 +89,13 @@ const store = useAppStore()
 const searchQuery = ref('')
 const classFilter = ref('')
 
-// 搜索或筛选变化时重新查询
+// 搜索或筛选变化时重新查询（带防抖）
+let searchTimer: ReturnType<typeof setTimeout> | null = null
 watch([searchQuery, classFilter], () => {
-  store.loadUsersPage(1, searchQuery.value || undefined, 'student', classFilter.value || undefined)
+  if (searchTimer) clearTimeout(searchTimer)
+  searchTimer = setTimeout(() => {
+    store.loadUsersPage(1, searchQuery.value || undefined, 'student', classFilter.value || undefined)
+  }, 300)
 })
 
 function handlePageChange(page: number) {
@@ -104,7 +108,8 @@ function handlePageSizeChange(size: number) {
 }
 
 async function handleResetPassword(user: User) {
-  if (!confirm(`确定要重置 ${user.name} 的密码为 123456 吗？`)) return
+  const ok = await store.confirmDialog(`确定要重置 ${user.name} 的密码为 123456 吗？`, { title: '重置密码确认', confirmText: '重置', danger: true })
+  if (!ok) return
   try {
     await resetPassword(user.id, '123456')
     store.showToast(`已重置 ${user.name} 的密码`, 'success')

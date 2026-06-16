@@ -232,6 +232,7 @@ public class ExamController {
     if (minutes <= 0) return error(HttpStatus.BAD_REQUEST, "Extra minutes must be greater than zero.");
     Instant base = Instant.parse(str(submission, "deadlineAt"));
     submission.put("deadlineAt", base.plusSeconds(minutes * 60L).toString());
+    submission.put("manualExtended", true);
     submission.put("manualExtendedMinutes", asInt(submission.get("manualExtendedMinutes")) + minutes);
     submission.put("updatedAt", Instant.now().toString());
     storeService.saveRecord("submissions", submission);

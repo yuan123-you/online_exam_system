@@ -14,7 +14,7 @@
           <tr v-for="s in pagination.paginatedData.value" :key="s.id">
             <td data-label="考试"><strong>{{ s.examName || '-' }}</strong></td>
             <td data-label="状态"><span class="tag">{{ s.status }}</span></td>
-            <td data-label="成绩"><strong style="color:var(--primary)">{{ s.finalScore ?? s.autoScore ?? 0 }}</strong> / {{ s.totalScore ?? '-' }}</td>
+            <td data-label="成绩"><strong style="color:var(--primary)">{{ s.finalScore != null ? s.finalScore : (s.autoScore != null ? s.autoScore : '待出分') }}</strong> / {{ s.totalScore ?? '-' }}</td>
             <td data-label="排名">{{ s.rank ? `${s.rank} / ${s.finishedCount}` : '-' }}</td>
             <td data-label="耗时">{{ s.usedTimeText || '-' }}</td>
           </tr>

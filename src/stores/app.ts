@@ -164,6 +164,50 @@ export const useAppStore = defineStore('app', () => {
     showToastRaw(message, type)
   }
 
+  // Confirm dialog system (replaces native confirm())
+  const confirmState = ref<{
+    visible: boolean
+    title: string
+    message: string
+    confirmText: string
+    danger: boolean
+    resolve: ((value: boolean) => void) | null
+  }>({
+    visible: false,
+    title: '确认操作',
+    message: '',
+    confirmText: '确定',
+    danger: false,
+    resolve: null,
+  })
+
+  function confirmDialog(message: string, options?: { title?: string; confirmText?: string; danger?: boolean }): Promise<boolean> {
+    return new Promise((resolve) => {
+      confirmState.value = {
+        visible: true,
+        title: options?.title || '确认操作',
+        message,
+        confirmText: options?.confirmText || '确定',
+        danger: options?.danger ?? true,
+        resolve,
+      }
+    })
+  }
+
+  function handleConfirmOk() {
+    const resolve = confirmState.value.resolve
+    confirmState.value.visible = false
+    confirmState.value.resolve = null
+    resolve?.(true)
+  }
+
+  function handleConfirmCancel() {
+    const resolve = confirmState.value.resolve
+    confirmState.value.visible = false
+    confirmState.value.resolve = null
+    resolve?.(false)
+  }
+
   // Core state
   const bootstrap = ref<BootstrapData | null>(null)
   const loginLoading = ref(false)
@@ -245,6 +289,7 @@ export const useAppStore = defineStore('app', () => {
   const chatStreamingContent = ref('')
   const chatStreamingReasoning = ref('')
   const chatStreamingActive = ref(false)
+  const chatStreamStartTime = ref(0)
   let chatAbortController: AbortController | null = null
   let chatTimeoutId: ReturnType<typeof setTimeout> | null = null
 
@@ -254,6 +299,7 @@ export const useAppStore = defineStore('app', () => {
   const practiceStreamingContent = ref('')
   const practiceStreamingReasoning = ref('')
   const practiceStreamingActive = ref(false)
+  const practiceStreamStartTime = ref(0)
   let practiceAbortController: AbortController | null = null
   let practiceTimeoutId: ReturnType<typeof setTimeout> | null = null
 
@@ -333,8 +379,10 @@ export const useAppStore = defineStore('app', () => {
 
   const availableExams = computed(() =>
     bootstrap.value?.exams.filter((e) => {
-      const user = bootstrap.value!.currentUser
-      return e.targetClassIds.includes(user.classId || '') && e.published
+      const user = bootstrap.value?.currentUser
+      if (!user) return false
+      const classId = user.classId || ''
+      return (classId ? e.targetClassIds.includes(classId) : false) && e.published
     }) || []
   )
 
@@ -728,9 +776,11 @@ export const useAppStore = defineStore('app', () => {
     chatStreamingContent.value = ''
     chatStreamingActive.value = false
     chatStreamingReasoning.value = ''
+    chatStreamStartTime.value = 0
     practiceStreamingContent.value = ''
     practiceStreamingActive.value = false
     practiceStreamingReasoning.value = ''
+    practiceStreamStartTime.value = 0
     conversations.value = []
     activeConversationId.value = null
     conversationsLoading.value = false
@@ -786,7 +836,8 @@ export const useAppStore = defineStore('app', () => {
     let msg = '确定要删除该记录吗？'
     if (entity === 'departments') msg = '确定要删除该学院吗？学院下有班级或师生时将无法删除。'
     else if (entity === 'classes') msg = '确定要删除该班级吗？班级下有学生时将无法删除，关联考试的目标班级将被自动清理。'
-    if (!confirm(msg)) return
+    const ok = await confirmDialog(msg, { title: '删除确认', confirmText: '删除', danger: true })
+    if (!ok) return
     try {
       await deleteEntity(entity, id)
       showToast('删除成功', 'success')
@@ -867,7 +918,8 @@ export const useAppStore = defineStore('app', () => {
   }
 
   async function removeWrongEntry(entryId: string) {
-    if (!confirm('确定从错题本中移除吗？')) return
+    const ok = await confirmDialog('确定从错题本中移除吗？', { title: '移除确认', confirmText: '移除', danger: true })
+    if (!ok) return
     try {
       await removeWrongBook(entryId)
       showToast('已从错题本移除', 'success')
@@ -1187,21 +1239,21 @@ export const useAppStore = defineStore('app', () => {
   }
 
   /** Load personalized recommendations and user profile */
-  async function loadRecommendations() {
+  async function loadRecommendations(forceRefresh = false) {
     if (!currentUser.value || recommendationsLoading.value) return
     recommendationsLoading.value = true
     try {
-      const [recResult, profile] = await Promise.all([
-        getRecommendations(),
-        getUserProfile(),
-      ])
+      const recResult = await getRecommendations(forceRefresh)
       recommendations.value = recResult.recommendations
-      userProfile.value = profile
     } catch (err) {
       console.warn('[Recommendations] Failed to load recommendations:', err)
-    } finally {
-      recommendationsLoading.value = false
     }
+    try {
+      userProfile.value = await getUserProfile()
+    } catch (err) {
+      console.warn('[Recommendations] Failed to load user profile:', err)
+    }
+    recommendationsLoading.value = false
   }
 
   /** Submit feedback on a recommendation */
@@ -1216,8 +1268,13 @@ export const useAppStore = defineStore('app', () => {
         feedbackType,
         feedbackDetail: detail,
       })
+      const label = feedbackType === 'helpful' ? '感谢反馈，我们会继续推荐类似内容' : '感谢反馈，我们会优化推荐内容'
+      showToast(label, 'success')
+      // Reload recommendations so feedback takes effect immediately
+      loadRecommendations(true)
     } catch (err) {
       console.warn('[Recommendations] Failed to submit feedback:', err)
+      showToast('反馈提交失败，请稍后重试', 'error')
     }
   }
 
@@ -1389,6 +1446,7 @@ export const useAppStore = defineStore('app', () => {
     chatStreamingContent.value = ''
     chatStreamingReasoning.value = ''
     chatStreamingActive.value = true
+    chatStreamStartTime.value = startTime
     chatLoading.value = true
 
     // Build context: include recent practice messages as cross-tab context
@@ -1540,6 +1598,7 @@ export const useAppStore = defineStore('app', () => {
     practiceStreamingContent.value = ''
     practiceStreamingReasoning.value = ''
     practiceStreamingActive.value = true
+    practiceStreamStartTime.value = startTime
     practSessionLoading.value = true
 
     // Build enriched prompt: include recent chat context for smarter question generation
@@ -1968,6 +2027,7 @@ export const useAppStore = defineStore('app', () => {
     kpMasteryData,
     wrongBookSubjectFilter,
     autoGenVisible,
+    confirmState,
     aiQuestions,
     aiLoading,
     aiQuotaRemaining,
@@ -2013,6 +2073,9 @@ export const useAppStore = defineStore('app', () => {
     className,
     departmentName,
     showToast,
+    confirmDialog,
+    handleConfirmOk,
+    handleConfirmCancel,
 
     // Paginated question bank
     paginatedQuestions,
@@ -2082,6 +2145,7 @@ export const useAppStore = defineStore('app', () => {
     chatStreamingContent,
     chatStreamingReasoning,
     chatStreamingActive,
+    chatStreamStartTime,
     handleChatSend,
     handleChatStop,
     clearChatMessages,
@@ -2123,6 +2187,7 @@ export const useAppStore = defineStore('app', () => {
     practiceStreamingContent,
     practiceStreamingReasoning,
     practiceStreamingActive,
+    practiceStreamStartTime,
     handlePracticeSend,
     handlePracticeStop,
     clearPracticeMessages,

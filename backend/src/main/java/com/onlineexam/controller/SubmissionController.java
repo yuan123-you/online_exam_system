@@ -79,7 +79,7 @@ public class SubmissionController {
       return ResponseEntity.ok(mapOf("submission", submissionService.buildSubmissionReview(store, existing)));
     }
     Map<String, Object> submission = examService.ensureStudentSession(store, exam, user);
-    if (submission.containsKey("error") && !ENDED.equals(examService.examStatus(exam))) return error(HttpStatus.BAD_REQUEST, str(submission, "error"));
+    if (submission.containsKey("error")) return error(HttpStatus.BAD_REQUEST, str(submission, "error"));
     submission.put("answers", asList(body.get("answers")));
     submission.put("switchCount", asInt(body.get("switchCount")));
     List<String> reasons = new ArrayList<>();

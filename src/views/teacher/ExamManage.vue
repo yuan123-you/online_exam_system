@@ -153,9 +153,11 @@ function relativeTimeClass(e: { startTime?: string; endTime?: string; statusText
   return ''
 }
 
-function handleMonitor(examId: string) {
-  store.loadMonitorData(examId)
-  router.push('/monitor')
+async function handleMonitor(examId: string) {
+  await store.loadMonitorData(examId)
+  if (store.monitorResult) {
+    router.push('/monitor')
+  }
 }
 </script>
 

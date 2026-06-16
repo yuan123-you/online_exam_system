@@ -108,7 +108,10 @@ public class ExamService {
     }
     session.put("status", RUNNING);
     session.putIfAbsent("startedAt", now());
-    session.put("deadlineAt", computeDeadline(exam, paper, str(session, "startedAt")));
+    // Only set deadline if not already manually extended by teacher
+    if (!session.containsKey("deadlineAt") || !Boolean.TRUE.equals(session.get("manualExtended"))) {
+      session.put("deadlineAt", computeDeadline(exam, paper, str(session, "startedAt")));
+    }
     session.put("updatedAt", now());
     return session;
   }

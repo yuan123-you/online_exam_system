@@ -95,7 +95,7 @@ public class TeacherController {
   public ResponseEntity<?> questionSubjects(@RequestHeader(value = "X-User-Id", required = false) String userId) {
     Map<String, Object> user = find(storeService.readStore().users, userId);
     if (!isRole(user, "teacher") && !isRole(user, "admin")) return error(HttpStatus.FORBIDDEN, "Forbidden.");
-    return ResponseEntity.ok(mapOf("subjects", questionRepository.querySubjects(userId)));
+    return ResponseEntity.ok(mapOf("subjects", questionRepository.querySubjects(isRole(user, "admin") ? null : userId)));
   }
 
   @PostMapping("/papers/auto-generate")

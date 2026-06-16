@@ -147,6 +147,15 @@ public class AuthService {
   private Map<String, Object> sanitizeUser(Map<String, Object> user) {
     Map<String, Object> safe = new LinkedHashMap<>(user);
     safe.remove("password");
+    // Normalize snake_case keys from JDBC to camelCase for frontend compatibility
+    if (safe.containsKey("department_id")) {
+      safe.putIfAbsent("departmentId", safe.get("department_id"));
+      safe.remove("department_id");
+    }
+    if (safe.containsKey("class_id")) {
+      safe.putIfAbsent("classId", safe.get("class_id"));
+      safe.remove("class_id");
+    }
     return safe;
   }
 

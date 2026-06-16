@@ -106,13 +106,13 @@ const aiLoadingId = ref<string | null>(null)
 const statusOptions = computed(() => [
   { label: '全部', value: 'all' as const, count: store.mySubmissions.length },
   { label: '待阅卷', value: 'pending' as const, count: store.pendingGradeCount },
-  { label: '已阅卷', value: 'graded' as const, count: store.mySubmissions.filter(s => s.status === '已阅卷').length },
+  { label: '已阅卷', value: 'graded' as const, count: store.mySubmissions.filter(s => s.status === '已完成' || s.status === '已阅卷').length },
 ])
 
 const filteredSubmissions = computed(() => {
   let list = store.mySubmissions
   if (statusFilter.value === 'pending') list = list.filter(s => s.status === '待阅卷')
-  if (statusFilter.value === 'graded') list = list.filter(s => s.status === '已阅卷')
+  if (statusFilter.value === 'graded') list = list.filter(s => s.status === '已完成' || s.status === '已阅卷')
   const q = searchQuery.value.trim().toLowerCase()
   if (q) list = list.filter(s => s.studentName.toLowerCase().includes(q))
   return list
@@ -123,7 +123,7 @@ const pagination = useClientPagination(filteredSubmissions, { defaultPageSize: 1
 const hasActiveFilter = computed(() => statusFilter.value !== 'all' || searchQuery.value.trim() !== '')
 
 function scoreClass(s: { finalScore?: number | null; autoScore?: number | null; totalScore?: number | null; status?: string }) {
-  if (s.status !== '已阅卷') return ''
+  if (s.status !== '已阅卷' && s.status !== '已完成') return ''
   const score = s.finalScore ?? s.autoScore ?? 0
   const total = s.totalScore ?? 100
   return score >= total * 0.6 ? 'score--pass' : 'score--fail'

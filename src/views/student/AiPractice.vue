@@ -3,6 +3,23 @@
     <!-- Sidebar overlay backdrop (mobile only) -->
     <div v-if="sidebarExpanded" class="sidebar-overlay" @click="sidebarExpanded = false"></div>
 
+    <!-- Floating sidebar control buttons (visible when sidebar is collapsed) -->
+    <div v-if="!sidebarExpanded" class="sidebar-float-controls">
+      <!-- History toggle button -->
+      <button class="float-btn float-btn--history" @click="sidebarExpanded = true" title="展开历史记录">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="10"/>
+          <polyline points="12 6 12 12 16 14"/>
+        </svg>
+      </button>
+      <!-- Hamburger nav button (mobile only) -->
+      <button class="float-btn float-btn--hamburger" @click="sidebarExpanded = true" title="打开侧边栏">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
+          <line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/>
+        </svg>
+      </button>
+    </div>
+
     <!-- Sidebar -->
     <ChatSidebar v-model:expanded="sidebarExpanded" />
 
@@ -76,7 +93,7 @@
       <!-- 返回底部按钮 -->
       <transition name="scroll-btn-fade">
         <button v-if="showScrollToBottom" class="scroll-to-bottom-btn" @click="handleScrollToBottom" title="返回底部">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
             <polyline points="6 9 12 15 18 9"/>
           </svg>
         </button>
@@ -147,6 +164,7 @@
 
 <script setup lang="ts">
 import { ref, computed, watch, nextTick, onMounted, onUnmounted } from 'vue'
+import { useRouter } from 'vue-router'
 import { useAppStore } from '@/stores/app'
 import type { RecommendationItem } from '@/api/client'
 import { useAutoScroll } from '@/composables/useAutoScroll'
@@ -154,10 +172,12 @@ import MessageBubbles from './AiPractice/MessageBubbles.vue'
 import ChatSidebar from './AiPractice/ChatSidebar.vue'
 
 const store = useAppStore()
+const router = useRouter()
 
 const activeTab = ref<'chat' | 'practice'>(store.activeTab || 'chat')
-// Keep store in sync with local tab
+// Keep store in sync with local tab (bidirectional)
 watch(activeTab, (val) => { store.activeTab = val })
+watch(() => store.activeTab, (val) => { if (val && val !== activeTab.value) activeTab.value = val })
 const sidebarExpanded = ref(window.innerWidth > 768)
 const inputText = ref('')
 const msgList = ref<HTMLElement | null>(null)
@@ -287,7 +307,7 @@ function handleRecommendationClick(rec: RecommendationItem) {
 
   if (rec.action === 'wrongbook') {
     // 跳转到错题本页面
-    window.location.hash = '#/wrong-book'
+    router.push('/wrong-book')
     return
   }
 
@@ -308,7 +328,7 @@ function giveFeedback(rec: RecommendationItem, feedbackType: string) {
 }
 
 function refreshRecommendations() {
-  store.loadRecommendations()
+  store.loadRecommendations(true)
 }
 
 // Smart auto-scroll using composable
@@ -407,45 +427,50 @@ onUnmounted(() => {
 /* ===== 返回底部按钮 ===== */
 .scroll-to-bottom-btn {
   position: absolute;
-  bottom: 80px;
-  right: 20px;
-  width: 40px;
-  height: 40px;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 48px;
+  height: 48px;
+  padding: 0;
   border: none;
-  border-radius: 50%;
-  background: #6366f1;
+  border-radius: 14px;
+  background: rgba(99, 102, 241, 0.9);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
   color: #fff;
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
-  box-shadow: 0 2px 12px rgba(99, 102, 241, 0.4);
-  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  box-shadow: 0 4px 16px rgba(99, 102, 241, 0.35), 0 1px 3px rgba(0, 0, 0, 0.1);
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
   z-index: 10;
 }
 .scroll-to-bottom-btn:hover {
-  background: #4f46e5;
-  transform: scale(1.1);
-  box-shadow: 0 4px 16px rgba(99, 102, 241, 0.5);
+  background: rgba(79, 70, 229, 0.95);
+  transform: translateX(-50%) scale(1.08);
+  box-shadow: 0 6px 24px rgba(99, 102, 241, 0.45), 0 2px 6px rgba(0, 0, 0, 0.12);
 }
 .scroll-to-bottom-btn:active {
-  transform: scale(0.95);
+  transform: translateX(-50%) scale(0.96);
+  box-shadow: 0 2px 8px rgba(99, 102, 241, 0.3);
 }
 
 /* 返回底部按钮过渡动画 */
 .scroll-btn-fade-enter-active {
-  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }
 .scroll-btn-fade-leave-active {
   transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
 }
 .scroll-btn-fade-enter-from {
   opacity: 0;
-  transform: translateY(10px) scale(0.8);
+  transform: translateX(-50%) translateY(12px) scale(0.85);
 }
 .scroll-btn-fade-leave-to {
   opacity: 0;
-  transform: translateY(10px) scale(0.8);
+  transform: translateX(-50%) translateY(12px) scale(0.85);
 }
 
 /* ===== Tab switcher (moved to bottom area) ===== */
@@ -763,6 +788,59 @@ onUnmounted(() => {
   display: none;
 }
 
+/* ===== Floating sidebar control buttons ===== */
+.sidebar-float-controls {
+  position: absolute;
+  left: 8px;
+  top: 8px;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.float-btn {
+  width: 36px;
+  height: 36px;
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  background: #fff;
+  color: #6b7280;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.float-btn:hover {
+  background: #f3f4f6;
+  color: #111827;
+  border-color: #9ca3af;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.12);
+  transform: scale(1.05);
+}
+.float-btn:active {
+  transform: scale(0.95);
+}
+
+/* History toggle button — always visible */
+.float-btn--history {
+  color: #6366f1;
+  border-color: #e0e7ff;
+  background: #f5f3ff;
+}
+.float-btn--history:hover {
+  background: #ede9fe;
+  color: #4f46e5;
+  border-color: #c7d2fe;
+}
+
+/* Hamburger nav button — hidden on desktop, shown on mobile */
+.float-btn--hamburger {
+  display: none;
+}
+
 /* ===== Responsive — Tablet & Mobile ===== */
 @media (max-width: 768px) {
   .sidebar-overlay {
@@ -776,7 +854,29 @@ onUnmounted(() => {
     height: 100%;
   }
 
-  /* Space for floating hamburger button */
+  /* Floating controls on mobile */
+  .sidebar-float-controls {
+    left: 10px;
+    top: 10px;
+  }
+  .float-btn {
+    width: 40px;
+    height: 40px;
+    border-radius: 12px;
+  }
+  .float-btn--hamburger {
+    display: flex;
+    background: #1e1b4b;
+    color: #fff;
+    border-color: #1e1b4b;
+  }
+  .float-btn--hamburger:hover {
+    background: #312e81;
+    color: #fff;
+    border-color: #312e81;
+  }
+
+  /* Space for floating buttons */
   .msg-area {
     padding: 12px 8px;
     padding-top: 56px;
@@ -812,10 +912,10 @@ onUnmounted(() => {
   }
 
   .scroll-to-bottom-btn {
-    bottom: 70px;
-    right: 12px;
-    width: 36px;
-    height: 36px;
+    bottom: 16px;
+    width: 44px;
+    height: 44px;
+    border-radius: 12px;
   }
 }
 
@@ -823,6 +923,14 @@ onUnmounted(() => {
 @media (min-width: 769px) and (max-width: 1023px) {
   .msg-area {
     padding-top: 56px;
+  }
+  .sidebar-float-controls {
+    left: 10px;
+    top: 10px;
+  }
+  .float-btn {
+    width: 38px;
+    height: 38px;
   }
 }
 

@@ -152,13 +152,6 @@ const averageScore = computed(() => {
 </script>
 
 <style scoped>
-/* ---- CSS Custom Properties ---- */
-:root {
-  --pm-radius: 8px;
-  --pm-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
-  --pm-transition: 0.2s ease;
-}
-
 /* ---- Stats Bar ---- */
 .stats-bar {
   display: flex;
@@ -174,9 +167,9 @@ const averageScore = computed(() => {
   padding: 14px 12px;
   background: var(--bg, #fff);
   border: 1px solid var(--border, #e5e7eb);
-  border-radius: var(--pm-radius);
-  box-shadow: var(--pm-shadow);
-  transition: transform var(--pm-transition);
+  border-radius: 8px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+  transition: transform 0.2s ease;
 }
 
 .stat-item:hover {
@@ -217,12 +210,12 @@ const averageScore = computed(() => {
   width: 100%;
   padding: 10px 40px 10px 38px;
   border: 1px solid var(--border, #e5e7eb);
-  border-radius: var(--pm-radius);
+  border-radius: 8px;
   background: var(--bg, #fff);
   color: var(--fg, #111827);
   font-size: 0.9rem;
   outline: none;
-  transition: border-color var(--pm-transition), box-shadow var(--pm-transition);
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
   box-sizing: border-box;
 }
 
@@ -249,7 +242,7 @@ const averageScore = computed(() => {
   cursor: pointer;
   padding: 4px;
   border-radius: 50%;
-  transition: color var(--pm-transition), background var(--pm-transition);
+  transition: color 0.2s ease, background 0.2s ease;
 }
 
 .clear-btn:hover {
@@ -261,7 +254,7 @@ const averageScore = computed(() => {
 .table-wrap {
   overflow-x: auto;
   -webkit-overflow-scrolling: touch;
-  border-radius: var(--pm-radius);
+  border-radius: 8px;
   border: 1px solid var(--border, #e5e7eb);
 }
 
@@ -419,10 +412,10 @@ tbody tr:hover {
     position: relative;
     background: var(--bg, #fff);
     border: 1px solid var(--border, #e5e7eb);
-    border-radius: var(--pm-radius);
+    border-radius: 8px;
     margin-bottom: 12px;
     padding: 14px 16px;
-    box-shadow: var(--pm-shadow);
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
   }
 
   tbody tr:hover {

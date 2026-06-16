@@ -53,7 +53,7 @@
             </div>
             <div class="org-item-info">
               <strong>{{ cls.name }}</strong>
-              <span class="org-item-meta">{{ cls.major }} · {{ store.departmentName(cls.departmentId) }} · {{ getClassStudentCount(cls.id) }} 名学生</span>
+              <span class="org-item-meta">{{ cls.major || '-' }} · {{ store.departmentName(cls.departmentId) }} · {{ getClassStudentCount(cls.id) }} 名学生</span>
             </div>
           </div>
           <div class="org-item-actions">

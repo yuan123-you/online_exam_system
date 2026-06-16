@@ -67,7 +67,7 @@
             <td data-label="科目">{{ entry.subject }}</td>
             <td data-label="知识点">{{ entry.knowledgePoint }}</td>
             <td data-label="题型"><span class="tag">{{ typeLabel(entry.type) }}</span></td>
-            <td data-label="题目" class="cell-title">{{ entry.title.slice(0, 40) }}{{ entry.title.length > 40 ? '...' : '' }}</td>
+            <td data-label="题目" class="cell-title">{{ (entry.title || '').slice(0, 40) }}{{ (entry.title || '').length > 40 ? '...' : '' }}</td>
             <td data-label="错误次数" class="hide-mobile"><strong style="color:var(--danger)">{{ entry.wrongCount }}</strong></td>
             <td data-label="重做次数" class="hide-mobile">{{ entry.retryCount }}</td>
             <td data-label="状态">
@@ -156,10 +156,12 @@ const wrongBookQuotaUsed = computed(() => {
   return store.filteredWrongBookEntries.length
 })
 
-// Selection logic
+// Selection logic — operate on current page data only
+const currentPageEntries = computed(() => store.paginatedWrongBook as any[])
+
 const allSelected = computed(() =>
-  store.filteredWrongBookEntries.length > 0 &&
-  selectedIds.value.size === store.filteredWrongBookEntries.length
+  currentPageEntries.value.length > 0 &&
+  currentPageEntries.value.every((e: any) => selectedIds.value.has(e.id))
 )
 
 const someSelected = computed(() => selectedIds.value.size > 0)
@@ -175,10 +177,18 @@ function toggleSelect(id: string) {
 }
 
 function toggleSelectAll() {
-  if (allSelected.value) {
-    selectedIds.value = new Set()
+  const pageIds = currentPageEntries.value.map((e: any) => e.id)
+  const allPageSelected = pageIds.length > 0 && pageIds.every((id: string) => selectedIds.value.has(id))
+  if (allPageSelected) {
+    // Deselect only current page items
+    const next = new Set(selectedIds.value)
+    pageIds.forEach((id: string) => next.delete(id))
+    selectedIds.value = next
   } else {
-    selectedIds.value = new Set(store.filteredWrongBookEntries.map((e) => e.id))
+    // Select all current page items
+    const next = new Set(selectedIds.value)
+    pageIds.forEach((id: string) => next.add(id))
+    selectedIds.value = next
   }
 }
 
@@ -187,9 +197,9 @@ function clearSelection() {
 }
 
 function selectMastered() {
-  const masteredIds = store.filteredWrongBookEntries
-    .filter((e) => e.lastRetryCorrect)
-    .map((e) => e.id)
+  const masteredIds = currentPageEntries.value
+    .filter((e: any) => e.lastRetryCorrect)
+    .map((e: any) => e.id)
   if (masteredIds.length === 0) {
     store.showToast('没有已掌握的错题可选择', 'info')
     return
@@ -201,7 +211,8 @@ function selectMastered() {
 async function handleBatchRemove() {
   const count = selectedIds.value.size
   if (count === 0) return
-  if (!confirm(`确定要移除选中的 ${count} 条错题记录吗？`)) return
+  const ok = await store.confirmDialog(`确定要移除选中的 ${count} 条错题记录吗？`, { title: '批量移除确认', confirmText: '移除', danger: true })
+  if (!ok) return
   try {
     await store.handleBatchRemoveWrongBook(Array.from(selectedIds.value))
     selectedIds.value = new Set()
