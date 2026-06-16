@@ -52,7 +52,7 @@
   <ExamSessionModal
     v-if="store.activeExam"
     :exam="store.activeExam"
-    @close="store.activeExam = null"
+    @close="handleExamClose"
     @submitted="store.handleExamSubmitted"
     @refreshed="store.loadData"
   />
@@ -101,4 +101,9 @@ import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 
 const store = useAppStore()
 const { toasts } = useToast()
+
+function handleExamClose() {
+  store.activeExam = null
+  sessionStorage.removeItem('active_exam_id')
+}
 </script>

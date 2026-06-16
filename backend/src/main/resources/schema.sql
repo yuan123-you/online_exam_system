@@ -1,7 +1,14 @@
+-- ============================================================
+-- 在线考试系统 - 数据库 Schema
+-- 包含：外键约束、CHECK约束、审计字段、索引优化
+-- ============================================================
+
 CREATE TABLE IF NOT EXISTS department (
   id VARCHAR(64) PRIMARY KEY,
   name VARCHAR(100) NOT NULL,
-  created_by VARCHAR(64)
+  created_by VARCHAR(64),
+  created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS class_info (
@@ -10,7 +17,10 @@ CREATE TABLE IF NOT EXISTS class_info (
   major VARCHAR(100) NOT NULL,
   department_id VARCHAR(64) NOT NULL,
   created_by VARCHAR(64),
-  INDEX idx_class_department (department_id)
+  created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+  INDEX idx_class_department (department_id),
+  CONSTRAINT fk_class_department FOREIGN KEY (department_id) REFERENCES department(id) ON DELETE RESTRICT
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS user_account (
@@ -22,8 +32,14 @@ CREATE TABLE IF NOT EXISTS user_account (
   department_id VARCHAR(64),
   class_id VARCHAR(64),
   major VARCHAR(100),
+  created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
   INDEX idx_user_role (role),
-  INDEX idx_user_class (class_id)
+  INDEX idx_user_class (class_id),
+  INDEX idx_user_department (department_id),
+  CONSTRAINT fk_user_department FOREIGN KEY (department_id) REFERENCES department(id) ON DELETE SET NULL,
+  CONSTRAINT fk_user_class FOREIGN KEY (class_id) REFERENCES class_info(id) ON DELETE SET NULL,
+  CONSTRAINT chk_user_role CHECK (role IN ('admin', 'teacher', 'student'))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS question (
@@ -39,9 +55,15 @@ CREATE TABLE IF NOT EXISTS question (
   score INT NOT NULL,
   source_tag VARCHAR(100),
   deleted TINYINT(1) NOT NULL DEFAULT 0,
+  created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
   INDEX idx_question_teacher (teacher_id),
   INDEX idx_question_subject (subject),
-  INDEX idx_question_deleted (deleted)
+  INDEX idx_question_deleted (deleted),
+  CONSTRAINT fk_question_teacher FOREIGN KEY (teacher_id) REFERENCES user_account(id) ON DELETE RESTRICT,
+  CONSTRAINT chk_question_score CHECK (score > 0),
+  CONSTRAINT chk_question_type CHECK (type IN ('single', 'multiple', 'judge', 'fill', 'short', 'coding')),
+  CONSTRAINT chk_question_difficulty CHECK (difficulty IN ('easy', 'medium', 'hard'))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS paper (
@@ -55,8 +77,14 @@ CREATE TABLE IF NOT EXISTS paper (
   paper_type VARCHAR(50),
   source_tag VARCHAR(100),
   deleted TINYINT(1) NOT NULL DEFAULT 0,
+  created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
   INDEX idx_paper_teacher (teacher_id),
-  INDEX idx_paper_deleted (deleted)
+  INDEX idx_paper_deleted (deleted),
+  CONSTRAINT fk_paper_teacher FOREIGN KEY (teacher_id) REFERENCES user_account(id) ON DELETE RESTRICT,
+  CONSTRAINT chk_paper_duration CHECK (duration_minutes > 0),
+  CONSTRAINT chk_paper_total_score CHECK (total_score > 0),
+  CONSTRAINT chk_paper_pass_score CHECK (pass_score >= 0)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS exam (
@@ -70,9 +98,16 @@ CREATE TABLE IF NOT EXISTS exam (
   anti_cheat_limit INT NOT NULL,
   published TINYINT(1) NOT NULL DEFAULT 1,
   deleted TINYINT(1) NOT NULL DEFAULT 0,
+  created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
   INDEX idx_exam_teacher (teacher_id),
   INDEX idx_exam_paper (paper_id),
-  INDEX idx_exam_deleted (deleted)
+  INDEX idx_exam_deleted (deleted),
+  INDEX idx_exam_time (start_time, end_time),
+  CONSTRAINT fk_exam_teacher FOREIGN KEY (teacher_id) REFERENCES user_account(id) ON DELETE RESTRICT,
+  CONSTRAINT fk_exam_paper FOREIGN KEY (paper_id) REFERENCES paper(id) ON DELETE RESTRICT,
+  CONSTRAINT chk_exam_time CHECK (end_time > start_time),
+  CONSTRAINT chk_exam_anti_cheat CHECK (anti_cheat_limit >= 0)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS submission (
@@ -96,10 +131,16 @@ CREATE TABLE IF NOT EXISTS submission (
   graded_by VARCHAR(50),
   question_order_json JSON,
   option_order_json JSON,
+  created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
   UNIQUE KEY uk_submission_exam_student (exam_id, student_id),
   INDEX idx_submission_exam (exam_id),
   INDEX idx_submission_student (student_id),
-  INDEX idx_submission_status (status)
+  INDEX idx_submission_status (status),
+  CONSTRAINT fk_submission_exam FOREIGN KEY (exam_id) REFERENCES exam(id) ON DELETE RESTRICT,
+  CONSTRAINT fk_submission_student FOREIGN KEY (student_id) REFERENCES user_account(id) ON DELETE RESTRICT,
+  CONSTRAINT chk_submission_score CHECK (auto_score >= 0 AND final_score >= 0),
+  CONSTRAINT chk_submission_switch_count CHECK (switch_count >= 0),
+  CONSTRAINT chk_submission_status CHECK (status IN ('进行中', '已结束', '待阅卷', '已完成'))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS wrong_book_entry (
@@ -125,9 +166,17 @@ CREATE TABLE IF NOT EXISTS wrong_book_entry (
   last_retry_correct TINYINT(1) NOT NULL DEFAULT 0,
   removable TINYINT(1) NOT NULL DEFAULT 0,
   removed_at DATETIME(3),
+  archived_at DATETIME(3),
   status VARCHAR(20) DEFAULT 'active',
+  created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
   UNIQUE KEY uk_wrong_student_question (student_id, question_id),
-  INDEX idx_wrong_student (student_id)
+  INDEX idx_wrong_student (student_id),
+  CONSTRAINT fk_wrong_student FOREIGN KEY (student_id) REFERENCES user_account(id) ON DELETE CASCADE,
+  CONSTRAINT fk_wrong_question FOREIGN KEY (question_id) REFERENCES question(id) ON DELETE RESTRICT,
+  CONSTRAINT chk_wrong_status CHECK (status IN ('active', 'archived', 'practice', 'removed')),
+  CONSTRAINT chk_wrong_retry_count CHECK (retry_count >= 0),
+  CONSTRAINT chk_wrong_wrong_count CHECK (wrong_count >= 0)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS system_log (
@@ -136,7 +185,10 @@ CREATE TABLE IF NOT EXISTS system_log (
   action VARCHAR(100) NOT NULL,
   detail TEXT,
   time DATETIME(3) NOT NULL,
-  INDEX idx_log_time (time)
+  created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  INDEX idx_log_time (time),
+  INDEX idx_log_actor (actor_id),
+  INDEX idx_log_action (action)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS chat_conversation (
@@ -144,10 +196,12 @@ CREATE TABLE IF NOT EXISTS chat_conversation (
   user_id VARCHAR(64) NOT NULL,
   title VARCHAR(200) NOT NULL,
   role VARCHAR(20) NOT NULL DEFAULT 'student',
+  session_type VARCHAR(20) NOT NULL DEFAULT 'chat',
   created_at DATETIME(3) NOT NULL,
   updated_at DATETIME(3) NOT NULL,
   INDEX idx_chat_conv_user (user_id),
-  INDEX idx_chat_conv_updated (updated_at)
+  INDEX idx_chat_conv_updated (updated_at),
+  CONSTRAINT fk_chat_conv_user FOREIGN KEY (user_id) REFERENCES user_account(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS chat_message (
@@ -157,7 +211,8 @@ CREATE TABLE IF NOT EXISTS chat_message (
   content TEXT NOT NULL,
   reasoning TEXT,
   created_at DATETIME(3) NOT NULL,
-  INDEX idx_chat_msg_conv (conversation_id)
+  INDEX idx_chat_msg_conv (conversation_id),
+  CONSTRAINT fk_chat_msg_conv FOREIGN KEY (conversation_id) REFERENCES chat_conversation(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- Migration: add question_order_json to submission table
@@ -177,7 +232,9 @@ CREATE TABLE IF NOT EXISTS user_behavior_log (
   created_at DATETIME(3) NOT NULL,
   INDEX idx_behavior_user (user_id),
   INDEX idx_behavior_action (action),
-  INDEX idx_behavior_time (created_at)
+  INDEX idx_behavior_time (created_at),
+  CONSTRAINT fk_behavior_user FOREIGN KEY (user_id) REFERENCES user_account(id) ON DELETE CASCADE,
+  CONSTRAINT chk_behavior_duration CHECK (duration_ms >= 0)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- 用户画像：存储AI分析后的用户学习画像数据
@@ -198,7 +255,11 @@ CREATE TABLE IF NOT EXISTS user_profile (
   created_at DATETIME(3) NOT NULL,
   updated_at DATETIME(3) NOT NULL,
   INDEX idx_profile_user (user_id),
-  INDEX idx_profile_updated (updated_at)
+  INDEX idx_profile_updated (updated_at),
+  CONSTRAINT fk_profile_user FOREIGN KEY (user_id) REFERENCES user_account(id) ON DELETE CASCADE,
+  CONSTRAINT chk_profile_learning_style CHECK (learning_style IN ('visual', 'auditory', 'reading', 'kinesthetic', 'balanced')),
+  CONSTRAINT chk_profile_difficulty_pref CHECK (difficulty_preference IN ('easy', 'medium', 'hard', 'adaptive')),
+  CONSTRAINT chk_profile_activity CHECK (activity_level IN ('low', 'moderate', 'high'))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- 推荐反馈：用户对推荐内容的反馈
@@ -212,7 +273,9 @@ CREATE TABLE IF NOT EXISTS recommendation_feedback (
   created_at DATETIME(3) NOT NULL,
   INDEX idx_feedback_user (user_id),
   INDEX idx_feedback_type (recommendation_type),
-  INDEX idx_feedback_time (created_at)
+  INDEX idx_feedback_time (created_at),
+  CONSTRAINT fk_feedback_user FOREIGN KEY (user_id) REFERENCES user_account(id) ON DELETE CASCADE,
+  CONSTRAINT chk_feedback_type CHECK (feedback_type IN ('helpful', 'not_helpful', 'irrelevant', 'too_easy', 'too_hard', 'bookmark'))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- ========== 练习会话持久化相关表 ==========
@@ -233,7 +296,10 @@ CREATE TABLE IF NOT EXISTS practice_session (
   submitted_at DATETIME(3) COMMENT '提交时间',
   INDEX idx_ps_user (user_id),
   INDEX idx_ps_status (status),
-  INDEX idx_ps_updated (updated_at)
+  INDEX idx_ps_updated (updated_at),
+  CONSTRAINT fk_ps_user FOREIGN KEY (user_id) REFERENCES user_account(id) ON DELETE CASCADE,
+  CONSTRAINT chk_ps_status CHECK (status IN ('active', 'submitted', 'abandoned')),
+  CONSTRAINT chk_ps_counts CHECK (question_count >= 0 AND correct_count >= 0 AND total_score >= 0 AND earned_score >= 0)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- 练习题目：记录每道练习题的详细内容和用户答题状态
@@ -250,7 +316,10 @@ CREATE TABLE IF NOT EXISTS practice_question (
   updated_at DATETIME(3) NOT NULL,
   submitted_at DATETIME(3) COMMENT '提交时间',
   INDEX idx_pq_session (session_id),
-  INDEX idx_pq_user (user_id)
+  INDEX idx_pq_user (user_id),
+  CONSTRAINT fk_pq_session FOREIGN KEY (session_id) REFERENCES practice_session(id) ON DELETE CASCADE,
+  CONSTRAINT fk_pq_user FOREIGN KEY (user_id) REFERENCES user_account(id) ON DELETE CASCADE,
+  CONSTRAINT chk_pq_index CHECK (question_index >= 0)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- 题库备份：教师题库快照
@@ -261,7 +330,9 @@ CREATE TABLE IF NOT EXISTS question_backup (
   question_count INT NOT NULL DEFAULT 0 COMMENT '备份题目数量',
   created_at DATETIME(3) NOT NULL,
   INDEX idx_backup_teacher (teacher_id),
-  INDEX idx_backup_time (created_at)
+  INDEX idx_backup_time (created_at),
+  CONSTRAINT fk_backup_teacher FOREIGN KEY (teacher_id) REFERENCES user_account(id) ON DELETE CASCADE,
+  CONSTRAINT chk_backup_count CHECK (question_count >= 0)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- ========== 站内通知系统 ==========
@@ -275,12 +346,25 @@ CREATE TABLE IF NOT EXISTS notification (
   title VARCHAR(200) NOT NULL,
   content TEXT NOT NULL,
   type VARCHAR(30) NOT NULL DEFAULT 'general' COMMENT '类型: general/exam/grade/system',
-  is_read TINYINT(1) NOT NULL DEFAULT 0,
-  read_at DATETIME(3),
   created_at DATETIME(3) NOT NULL,
   INDEX idx_notif_target_user (target_user_id),
   INDEX idx_notif_target_role (target_role),
   INDEX idx_notif_target_class (target_class_id),
   INDEX idx_notif_created (created_at),
-  INDEX idx_notif_read (is_read)
+  CONSTRAINT fk_notif_sender FOREIGN KEY (sender_id) REFERENCES user_account(id) ON DELETE SET NULL,
+  CONSTRAINT fk_notif_target_user FOREIGN KEY (target_user_id) REFERENCES user_account(id) ON DELETE CASCADE,
+  CONSTRAINT fk_notif_target_class FOREIGN KEY (target_class_id) REFERENCES class_info(id) ON DELETE CASCADE,
+  CONSTRAINT chk_notif_type CHECK (type IN ('general', 'exam', 'grade', 'system'))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- 通知已读记录：解决一条通知面向多人时读取状态冲突的问题
+CREATE TABLE IF NOT EXISTS notification_read (
+  id VARCHAR(64) PRIMARY KEY,
+  notification_id VARCHAR(64) NOT NULL,
+  user_id VARCHAR(64) NOT NULL,
+  read_at DATETIME(3) NOT NULL,
+  UNIQUE KEY uk_notif_read (notification_id, user_id),
+  INDEX idx_notif_read_user (user_id),
+  CONSTRAINT fk_notif_read_notification FOREIGN KEY (notification_id) REFERENCES notification(id) ON DELETE CASCADE,
+  CONSTRAINT fk_notif_read_user FOREIGN KEY (user_id) REFERENCES user_account(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

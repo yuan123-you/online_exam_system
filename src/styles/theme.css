@@ -210,7 +210,10 @@ body {
 .content-panel,
 .table-wrap,
 .modal-card,
-.chat-main {
+.chat-main,
+.exam-question-body,
+.grading-question-body,
+.class-multi-select {
   scroll-behavior: smooth;
   overscroll-behavior: contain;
   -webkit-overflow-scrolling: touch;
@@ -222,15 +225,23 @@ body {
 .content-grid,
 .content-panel,
 .table-wrap,
-.modal-card {
+.modal-card,
+.chat-main,
+.exam-question-body,
+.grading-question-body {
   will-change: scroll-position;
+  contain: layout style;
 }
 
 /* Firefox scrollbar styling (cross-browser) */
 .sidebar-body,
 .content-grid,
 .table-wrap,
-.modal-card {
+.modal-card,
+.chat-main,
+.exam-question-body,
+.grading-question-body,
+.class-multi-select {
   scrollbar-width: thin;
 }
 
@@ -239,9 +250,49 @@ body {
 }
 
 .content-grid,
+.content-panel,
 .table-wrap,
-.modal-card {
+.modal-card,
+.chat-main,
+.exam-question-body,
+.grading-question-body,
+.class-multi-select {
   scrollbar-color: var(--line) transparent;
+}
+
+/* Webkit scrollbar - unified thin style with hover effect */
+.content-panel::-webkit-scrollbar,
+.chat-main::-webkit-scrollbar,
+.exam-question-body::-webkit-scrollbar,
+.grading-question-body::-webkit-scrollbar,
+.class-multi-select::-webkit-scrollbar {
+  width: 6px;
+}
+
+.content-panel::-webkit-scrollbar-track,
+.chat-main::-webkit-scrollbar-track,
+.exam-question-body::-webkit-scrollbar-track,
+.grading-question-body::-webkit-scrollbar-track,
+.class-multi-select::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.content-panel::-webkit-scrollbar-thumb,
+.chat-main::-webkit-scrollbar-thumb,
+.exam-question-body::-webkit-scrollbar-thumb,
+.grading-question-body::-webkit-scrollbar-thumb,
+.class-multi-select::-webkit-scrollbar-thumb {
+  background: var(--line);
+  border-radius: 3px;
+  transition: background 0.2s ease;
+}
+
+.content-panel::-webkit-scrollbar-thumb:hover,
+.chat-main::-webkit-scrollbar-thumb:hover,
+.exam-question-body::-webkit-scrollbar-thumb:hover,
+.grading-question-body::-webkit-scrollbar-thumb:hover,
+.class-multi-select::-webkit-scrollbar-thumb:hover {
+  background: var(--muted-light);
 }
 
 button,
@@ -1490,6 +1541,9 @@ th {
 .modal:has(.exam-shell),
 .modal-backdrop:has(.exam-shell) {
   padding: 0;
+  background: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
 }
 
 .modal:has(.exam-shell) .modal-card,
@@ -1509,6 +1563,18 @@ th {
 
 .modal:has(.exam-shell) .close-btn {
   display: none;
+}
+
+.modal:has(.exam-shell) .modal-header {
+  display: none;
+}
+
+.modal:has(.exam-shell) .modal-body {
+  padding: 0;
+  gap: 0;
+  overflow: hidden;
+  flex: 1;
+  min-height: 0;
 }
 
 .exam-shell {

@@ -14,6 +14,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.jdbc.core.JdbcTemplate;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
@@ -25,6 +26,9 @@ class NotificationServiceTest {
 
     @Mock
     private StoreService storeService;
+
+    @Mock
+    private JdbcTemplate jdbc;
 
     @InjectMocks
     private NotificationService notificationService;
@@ -51,8 +55,7 @@ class NotificationServiceTest {
 
     private Map<String, Object> makeNotification(String id, String senderId, String title,
                                                   String targetRole, String targetClassId,
-                                                  String targetUserId, boolean isRead,
-                                                  String createdAt) {
+                                                  String targetUserId, String createdAt) {
         Map<String, Object> notif = new LinkedHashMap<>();
         notif.put("id", id);
         notif.put("senderId", senderId);
@@ -62,7 +65,6 @@ class NotificationServiceTest {
         notif.put("targetRole", targetRole);
         notif.put("targetClassId", targetClassId);
         notif.put("targetUserId", targetUserId);
-        notif.put("isRead", isRead);
         notif.put("createdAt", createdAt);
         return notif;
     }
@@ -78,9 +80,10 @@ class NotificationServiceTest {
         void returnsNotificationsTargetingUserDirectly() {
             Store store = createEmptyStore();
             store.users.add(makeUser("u1", "student", "c1"));
-            store.notifications.add(makeNotification("n1", "t1", "Direct", "", "", "u1", false, "2025-01-01T00:00:00Z"));
-            store.notifications.add(makeNotification("n2", "t1", "Other", "", "", "u2", false, "2025-01-01T00:00:00Z"));
+            store.notifications.add(makeNotification("n1", "t1", "Direct", "", "", "u1", "2025-01-01T00:00:00Z"));
+            store.notifications.add(makeNotification("n2", "t1", "Other", "", "", "u2", "2025-01-01T00:00:00Z"));
             when(storeService.readStore()).thenReturn(store);
+            when(jdbc.queryForList(any(String.class), eq(String.class), eq("u1"))).thenReturn(List.of());
 
             List<Map<String, Object>> result = notificationService.getUserNotifications("u1");
 
@@ -92,9 +95,10 @@ class NotificationServiceTest {
         void returnsNotificationsForUserRole() {
             Store store = createEmptyStore();
             store.users.add(makeUser("u1", "teacher", ""));
-            store.notifications.add(makeNotification("n1", "t1", "Teacher Notif", "teacher", "", "", false, "2025-01-01T00:00:00Z"));
-            store.notifications.add(makeNotification("n2", "t1", "Student Notif", "student", "", "", false, "2025-01-01T00:00:00Z"));
+            store.notifications.add(makeNotification("n1", "t1", "Teacher Notif", "teacher", "", "", "2025-01-01T00:00:00Z"));
+            store.notifications.add(makeNotification("n2", "t1", "Student Notif", "student", "", "", "2025-01-01T00:00:00Z"));
             when(storeService.readStore()).thenReturn(store);
+            when(jdbc.queryForList(any(String.class), eq(String.class), eq("u1"))).thenReturn(List.of());
 
             List<Map<String, Object>> result = notificationService.getUserNotifications("u1");
 
@@ -106,9 +110,10 @@ class NotificationServiceTest {
         void returnsNotificationsForAllRole() {
             Store store = createEmptyStore();
             store.users.add(makeUser("u1", "student", "c1"));
-            store.notifications.add(makeNotification("n1", "t1", "All Notif", "all", "", "", false, "2025-01-01T00:00:00Z"));
-            store.notifications.add(makeNotification("n2", "t1", "Teacher Only", "teacher", "", "", false, "2025-01-01T00:00:00Z"));
+            store.notifications.add(makeNotification("n1", "t1", "All Notif", "all", "", "", "2025-01-01T00:00:00Z"));
+            store.notifications.add(makeNotification("n2", "t1", "Teacher Only", "teacher", "", "", "2025-01-01T00:00:00Z"));
             when(storeService.readStore()).thenReturn(store);
+            when(jdbc.queryForList(any(String.class), eq(String.class), eq("u1"))).thenReturn(List.of());
 
             List<Map<String, Object>> result = notificationService.getUserNotifications("u1");
 
@@ -120,10 +125,11 @@ class NotificationServiceTest {
         void studentOnlySeesClassSpecificNotificationsForTheirClass() {
             Store store = createEmptyStore();
             store.users.add(makeUser("s1", "student", "c1"));
-            store.notifications.add(makeNotification("n1", "t1", "My Class", "student", "c1", "", false, "2025-01-01T00:00:00Z"));
-            store.notifications.add(makeNotification("n2", "t1", "Other Class", "student", "c2", "", false, "2025-01-01T00:00:00Z"));
-            store.notifications.add(makeNotification("n3", "t1", "All Classes", "student", "", "", false, "2025-01-01T00:00:00Z"));
+            store.notifications.add(makeNotification("n1", "t1", "My Class", "student", "c1", "", "2025-01-01T00:00:00Z"));
+            store.notifications.add(makeNotification("n2", "t1", "Other Class", "student", "c2", "", "2025-01-01T00:00:00Z"));
+            store.notifications.add(makeNotification("n3", "t1", "All Classes", "student", "", "", "2025-01-01T00:00:00Z"));
             when(storeService.readStore()).thenReturn(store);
+            when(jdbc.queryForList(any(String.class), eq(String.class), eq("s1"))).thenReturn(List.of());
 
             List<Map<String, Object>> result = notificationService.getUserNotifications("s1");
 
@@ -137,7 +143,7 @@ class NotificationServiceTest {
         @Test
         void returnsEmptyForUnknownUser() {
             Store store = createEmptyStore();
-            store.notifications.add(makeNotification("n1", "t1", "Title", "all", "", "", false, "2025-01-01T00:00:00Z"));
+            store.notifications.add(makeNotification("n1", "t1", "Title", "all", "", "", "2025-01-01T00:00:00Z"));
             when(storeService.readStore()).thenReturn(store);
 
             List<Map<String, Object>> result = notificationService.getUserNotifications("unknown");
@@ -152,8 +158,9 @@ class NotificationServiceTest {
             sender.put("name", "Teacher Wang");
             store.users.add(sender);
             store.users.add(makeUser("s1", "student", "c1"));
-            store.notifications.add(makeNotification("n1", "t1", "Title", "student", "", "", false, "2025-01-01T00:00:00Z"));
+            store.notifications.add(makeNotification("n1", "t1", "Title", "student", "", "", "2025-01-01T00:00:00Z"));
             when(storeService.readStore()).thenReturn(store);
+            when(jdbc.queryForList(any(String.class), eq(String.class), eq("s1"))).thenReturn(List.of());
 
             List<Map<String, Object>> result = notificationService.getUserNotifications("s1");
 
@@ -165,8 +172,9 @@ class NotificationServiceTest {
         void addsSystemSenderNameWhenSenderNotFound() {
             Store store = createEmptyStore();
             store.users.add(makeUser("s1", "student", "c1"));
-            store.notifications.add(makeNotification("n1", "unknown_sender", "Title", "student", "", "", false, "2025-01-01T00:00:00Z"));
+            store.notifications.add(makeNotification("n1", "unknown_sender", "Title", "student", "", "", "2025-01-01T00:00:00Z"));
             when(storeService.readStore()).thenReturn(store);
+            when(jdbc.queryForList(any(String.class), eq(String.class), eq("s1"))).thenReturn(List.of());
 
             List<Map<String, Object>> result = notificationService.getUserNotifications("s1");
 
@@ -179,10 +187,11 @@ class NotificationServiceTest {
             Store store = createEmptyStore();
             store.users.add(makeUser("s1", "student", "c1"));
             for (int i = 0; i < 60; i++) {
-                store.notifications.add(makeNotification("n" + i, "t1", "Title " + i, "all", "", "", false,
+                store.notifications.add(makeNotification("n" + i, "t1", "Title " + i, "all", "", "",
                         Instant.ofEpochMilli(1000L + i).toString()));
             }
             when(storeService.readStore()).thenReturn(store);
+            when(jdbc.queryForList(any(String.class), eq(String.class), eq("s1"))).thenReturn(List.of());
 
             List<Map<String, Object>> result = notificationService.getUserNotifications("s1");
 
@@ -201,10 +210,12 @@ class NotificationServiceTest {
         void countsOnlyUnreadNotifications() {
             Store store = createEmptyStore();
             store.users.add(makeUser("s1", "student", "c1"));
-            store.notifications.add(makeNotification("n1", "t1", "Unread1", "all", "", "", false, "2025-01-01T00:00:00Z"));
-            store.notifications.add(makeNotification("n2", "t1", "Read", "all", "", "", true, "2025-01-01T00:00:00Z"));
-            store.notifications.add(makeNotification("n3", "t1", "Unread2", "all", "", "", false, "2025-01-01T00:00:00Z"));
+            store.notifications.add(makeNotification("n1", "t1", "Unread1", "all", "", "", "2025-01-01T00:00:00Z"));
+            store.notifications.add(makeNotification("n2", "t1", "Read", "all", "", "", "2025-01-01T00:00:00Z"));
+            store.notifications.add(makeNotification("n3", "t1", "Unread2", "all", "", "", "2025-01-01T00:00:00Z"));
             when(storeService.readStore()).thenReturn(store);
+            // n2 is read
+            when(jdbc.queryForList(any(String.class), eq(String.class), eq("s1"))).thenReturn(List.of("n2"));
 
             long count = notificationService.getUnreadCount("s1");
 
@@ -215,9 +226,10 @@ class NotificationServiceTest {
         void returnsZeroForNoUnread() {
             Store store = createEmptyStore();
             store.users.add(makeUser("s1", "student", "c1"));
-            store.notifications.add(makeNotification("n1", "t1", "Read1", "all", "", "", true, "2025-01-01T00:00:00Z"));
-            store.notifications.add(makeNotification("n2", "t1", "Read2", "all", "", "", true, "2025-01-01T00:00:00Z"));
+            store.notifications.add(makeNotification("n1", "t1", "Read1", "all", "", "", "2025-01-01T00:00:00Z"));
+            store.notifications.add(makeNotification("n2", "t1", "Read2", "all", "", "", "2025-01-01T00:00:00Z"));
             when(storeService.readStore()).thenReturn(store);
+            when(jdbc.queryForList(any(String.class), eq(String.class), eq("s1"))).thenReturn(List.of("n1", "n2"));
 
             long count = notificationService.getUnreadCount("s1");
 
@@ -234,28 +246,21 @@ class NotificationServiceTest {
 
         @Test
         void marksNotificationAsRead() {
-            Store store = createEmptyStore();
-            Map<String, Object> notif = makeNotification("n1", "t1", "Title", "all", "", "", false, "2025-01-01T00:00:00Z");
-            store.notifications.add(notif);
-            when(storeService.readStore()).thenReturn(store);
+            when(jdbc.update(any(String.class), any(), any(), any(), any())).thenReturn(1);
 
             boolean result = notificationService.markAsRead("n1", "s1");
 
             assertTrue(result);
-            assertTrue((Boolean) notif.get("isRead"));
-            assertNotNull(notif.get("readAt"));
-            verify(storeService).saveRecord(eq("notifications"), eq(notif));
+            verify(jdbc).update(contains("INSERT IGNORE INTO notification_read"), any(), eq("n1"), eq("s1"), any());
         }
 
         @Test
-        void returnsFalseIfNotFound() {
-            Store store = createEmptyStore();
-            when(storeService.readStore()).thenReturn(store);
+        void returnsFalseOnException() {
+            when(jdbc.update(any(String.class), any(), any(), any(), any())).thenThrow(new RuntimeException("DB error"));
 
-            boolean result = notificationService.markAsRead("nonexistent", "s1");
+            boolean result = notificationService.markAsRead("n1", "s1");
 
             assertFalse(result);
-            verify(storeService, never()).saveRecord(any(), any());
         }
     }
 
@@ -270,29 +275,27 @@ class NotificationServiceTest {
         void marksAllUnreadAsRead() {
             Store store = createEmptyStore();
             store.users.add(makeUser("s1", "student", "c1"));
-            Map<String, Object> n1 = makeNotification("n1", "t1", "Unread1", "all", "", "", false, "2025-01-01T00:00:00Z");
-            Map<String, Object> n2 = makeNotification("n2", "t1", "Read", "all", "", "", true, "2025-01-01T00:00:00Z");
-            Map<String, Object> n3 = makeNotification("n3", "t1", "Unread2", "all", "", "", false, "2025-01-01T00:00:00Z");
-            store.notifications.add(n1);
-            store.notifications.add(n2);
-            store.notifications.add(n3);
+            store.notifications.add(makeNotification("n1", "t1", "Unread1", "all", "", "", "2025-01-01T00:00:00Z"));
+            store.notifications.add(makeNotification("n2", "t1", "Read", "all", "", "", "2025-01-01T00:00:00Z"));
+            store.notifications.add(makeNotification("n3", "t1", "Unread2", "all", "", "", "2025-01-01T00:00:00Z"));
             when(storeService.readStore()).thenReturn(store);
+            // n2 is already read
+            when(jdbc.queryForList(any(String.class), eq(String.class), eq("s1"))).thenReturn(List.of("n2"));
+            when(jdbc.update(any(String.class), any(), any(), any(), any())).thenReturn(1);
 
             int count = notificationService.markAllAsRead("s1");
 
             assertEquals(2, count);
-            assertTrue((Boolean) n1.get("isRead"));
-            assertTrue((Boolean) n3.get("isRead"));
-            verify(storeService, times(2)).saveRecord(eq("notifications"), any());
         }
 
         @Test
         void returnsCountOfMarked() {
             Store store = createEmptyStore();
             store.users.add(makeUser("s1", "student", "c1"));
-            Map<String, Object> n1 = makeNotification("n1", "t1", "Unread", "all", "", "", false, "2025-01-01T00:00:00Z");
-            store.notifications.add(n1);
+            store.notifications.add(makeNotification("n1", "t1", "Unread", "all", "", "", "2025-01-01T00:00:00Z"));
             when(storeService.readStore()).thenReturn(store);
+            when(jdbc.queryForList(any(String.class), eq(String.class), eq("s1"))).thenReturn(List.of());
+            when(jdbc.update(any(String.class), any(), any(), any(), any())).thenReturn(1);
 
             int count = notificationService.markAllAsRead("s1");
 
@@ -309,9 +312,6 @@ class NotificationServiceTest {
 
         @Test
         void createsNotificationWithCorrectFields() {
-            Store store = createEmptyStore();
-            when(storeService.readStore()).thenReturn(store);
-
             Map<String, Object> result = notificationService.createNotification(
                     "t1", "Exam Notice", "Exam tomorrow", "exam", "student", "c1");
 
@@ -322,7 +322,6 @@ class NotificationServiceTest {
             assertEquals("student", result.get("targetRole"));
             assertEquals("c1", result.get("targetClassId"));
             assertEquals("", result.get("targetUserId"));
-            assertFalse((Boolean) result.get("isRead"));
             assertNotNull(result.get("id"));
             assertNotNull(result.get("createdAt"));
             verify(storeService).saveRecord(eq("notifications"), eq(result));
@@ -330,9 +329,6 @@ class NotificationServiceTest {
 
         @Test
         void defaultsTypeToGeneralAndTargetClassIdToEmpty() {
-            Store store = createEmptyStore();
-            when(storeService.readStore()).thenReturn(store);
-
             Map<String, Object> result = notificationService.createNotification(
                     "t1", "Title", "Content", null, "all", null);
 

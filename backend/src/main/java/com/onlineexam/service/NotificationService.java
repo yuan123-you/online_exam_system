@@ -4,15 +4,19 @@ import com.onlineexam.StoreService;
 import com.onlineexam.StoreService.Store;
 import java.time.Instant;
 import java.util.*;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 @Service
 public class NotificationService {
 
   private final StoreService storeService;
+  private final JdbcTemplate jdbc;
 
-  public NotificationService(StoreService storeService) {
+  public NotificationService(StoreService storeService, JdbcTemplate jdbc) {
     this.storeService = storeService;
+    this.jdbc = jdbc;
   }
 
   /**
@@ -30,6 +34,9 @@ public class NotificationService {
 
     String role = str(user, "role");
     String classId = str(user, "classId");
+
+    // 获取该用户已读的通知ID集合
+    Set<String> readIds = getReadNotificationIds(userId);
 
     return store.notifications.stream()
         .filter(n -> {
@@ -53,6 +60,8 @@ public class NotificationService {
           // 添加发送者名称
           Map<String, Object> sender = findById(store.users, str(item, "senderId"));
           item.put("senderName", sender != null ? str(sender, "name") : "系统");
+          // 添加已读状态（基于 notification_read 表）
+          item.put("isRead", readIds.contains(str(item, "id")));
           return item;
         })
         .toList();
@@ -70,37 +79,32 @@ public class NotificationService {
   /**
    * 标记通知为已读
    */
+  @Transactional
   public boolean markAsRead(String notificationId, String userId) {
-    Store store = storeService.readStore();
-    for (Map<String, Object> notif : store.notifications) {
-      if (Objects.equals(str(notif, "id"), notificationId)) {
-        notif.put("isRead", true);
-        notif.put("readAt", Instant.now().toString());
-        storeService.saveRecord("notifications", notif);
-        return true;
-      }
+    try {
+      // 使用 INSERT IGNORE 避免重复插入
+      jdbc.update(
+        "INSERT IGNORE INTO notification_read (id, notification_id, user_id, read_at) VALUES (?, ?, ?, ?)",
+        "nr-" + System.currentTimeMillis() + "-" + Integer.toHexString((int) (Math.random() * 0xffffff)),
+        notificationId, userId, Instant.now().toString()
+      );
+      return true;
+    } catch (Exception e) {
+      return false;
     }
-    return false;
   }
 
   /**
    * 标记所有通知为已读
    */
+  @Transactional
   public int markAllAsRead(String userId) {
     List<Map<String, Object>> notifications = getUserNotifications(userId);
     int count = 0;
     for (Map<String, Object> notif : notifications) {
       if (!asBool(notif.get("isRead"))) {
-        String id = str(notif, "id");
-        Store store = storeService.readStore();
-        for (Map<String, Object> n : store.notifications) {
-          if (Objects.equals(str(n, "id"), id)) {
-            n.put("isRead", true);
-            n.put("readAt", Instant.now().toString());
-            storeService.saveRecord("notifications", n);
-            count++;
-            break;
-          }
+        if (markAsRead(str(notif, "id"), userId)) {
+          count++;
         }
       }
     }
@@ -110,9 +114,9 @@ public class NotificationService {
   /**
    * 创建通知
    */
+  @Transactional
   public Map<String, Object> createNotification(String senderId, String title, String content,
                                                   String type, String targetRole, String targetClassId) {
-    Store store = storeService.readStore();
     Map<String, Object> notif = new LinkedHashMap<>();
     notif.put("id", UUID.randomUUID().toString());
     notif.put("senderId", senderId);
@@ -122,10 +126,23 @@ public class NotificationService {
     notif.put("targetRole", targetRole);
     notif.put("targetClassId", targetClassId != null ? targetClassId : "");
     notif.put("targetUserId", "");
-    notif.put("isRead", false);
     notif.put("createdAt", Instant.now().toString());
     storeService.saveRecord("notifications", notif);
     return notif;
+  }
+
+  /**
+   * 获取用户已读的通知ID集合
+   */
+  private Set<String> getReadNotificationIds(String userId) {
+    try {
+      List<String> ids = jdbc.queryForList(
+        "SELECT notification_id FROM notification_read WHERE user_id = ?", String.class, userId
+      );
+      return new HashSet<>(ids);
+    } catch (Exception e) {
+      return Set.of();
+    }
   }
 
   private Map<String, Object> findById(List<Map<String, Object>> rows, String id) {

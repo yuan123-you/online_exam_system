@@ -32,7 +32,7 @@ public class WrongBookRepository {
       "lastWrongAt", json.asIso(row.get("last_wrong_at")), "lastRetryAt", json.asIso(row.get("last_retry_at")),
       "lastSourceSubmissionId", row.get("last_source_submission_id"), "lastSourceExamId", row.get("last_source_exam_id"),
       "lastRetryCorrect", asBool(row.get("last_retry_correct")), "removable", asBool(row.get("removable")),
-      "removedAt", json.asIso(row.get("removed_at")), "status", row.get("status")
+      "removedAt", json.asIso(row.get("removed_at")), "archivedAt", json.asIso(row.get("archived_at")), "status", row.get("status")
     ))).toList();
   }
 
@@ -41,20 +41,22 @@ public class WrongBookRepository {
     jdbc.update("""
       insert into wrong_book_entry(id,student_id,student_name,question_id,subject,knowledge_point,type,title,latest_answer_json,
       expected_answer_json,last_retry_answer_json,retry_count,wrong_count,full_score,last_score,last_wrong_at,last_retry_at,
-      last_source_submission_id,last_source_exam_id,last_retry_correct,removable,removed_at,status)
-      values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+      last_source_submission_id,last_source_exam_id,last_retry_correct,removable,removed_at,archived_at,status)
+      values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
       on duplicate key update student_name=values(student_name),subject=values(subject),knowledge_point=values(knowledge_point),
       type=values(type),title=values(title),latest_answer_json=values(latest_answer_json),expected_answer_json=values(expected_answer_json),
       last_retry_answer_json=values(last_retry_answer_json),retry_count=values(retry_count),wrong_count=values(wrong_count),
       full_score=values(full_score),last_score=values(last_score),last_wrong_at=values(last_wrong_at),last_retry_at=values(last_retry_at),
       last_source_submission_id=values(last_source_submission_id),last_source_exam_id=values(last_source_exam_id),
-      last_retry_correct=values(last_retry_correct),removable=values(removable),removed_at=values(removed_at),status=values(status)
+      last_retry_correct=values(last_retry_correct),removable=values(removable),removed_at=values(removed_at),
+      archived_at=values(archived_at),status=values(status)
       """, str(r, "id"), str(r, "studentId"), nullableStr(r, "studentName"), str(r, "questionId"),
       nullableStr(r, "subject"), nullableStr(r, "knowledgePoint"), nullableStr(r, "type"), nullableStr(r, "title"),
       json.json(r.get("latestAnswer")), json.json(r.get("expectedAnswer")), json.json(r.get("lastRetryAnswer")), asInt(r.get("retryCount")),
       asInt(r.get("wrongCount")), asInt(r.get("fullScore")), asInt(r.get("lastScore")), json.timestamp(r.get("lastWrongAt")),
       json.timestamp(r.get("lastRetryAt")), nullableStr(r, "lastSourceSubmissionId"), nullableStr(r, "lastSourceExamId"),
-      asBool(r, "lastRetryCorrect"), asBool(r, "removable"), json.timestamp(r.get("removedAt")), nullableStr(r, "status"));
+      asBool(r, "lastRetryCorrect"), asBool(r, "removable"), json.timestamp(r.get("removedAt")), json.timestamp(r.get("archivedAt")),
+      nullableStr(r, "status"));
   }
 
   /** 根据 ID 删除错题本条目 */
