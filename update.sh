@@ -120,7 +120,7 @@ do_rollback() {
         info "Restored code to commit ${PREV_COMMIT}"
     fi
     if [ -d "$BACKUP_DIR/${ROLLBACK_TAG}/dist" ]; then
-        rm -rf "$APP_DIR/dist"
+        sudo rm -rf "$APP_DIR/dist"
         sudo cp -r "$BACKUP_DIR/${ROLLBACK_TAG}/dist" "$APP_DIR/dist"
         sudo chown -R "$(whoami):$(whoami)" "$APP_DIR/dist"
         info "Restored dist/"
@@ -252,7 +252,7 @@ if [ "$UPDATE_FRONTEND" = true ]; then
     fi
 
     next_step "Building frontend..."
-    rm -rf dist
+    sudo rm -rf dist
     if npx vite build >> "$DEPLOY_LOG" 2>&1; then
         success "Frontend built -> dist/"
     else
@@ -263,7 +263,7 @@ if [ "$UPDATE_FRONTEND" = true ]; then
     fi
 
     next_step "Syncing dist to backend static resources..."
-    rm -rf backend/src/main/resources/static
+    sudo rm -rf backend/src/main/resources/static
     cp -r dist backend/src/main/resources/static
     # Also update the standalone dist directory for Nginx to serve
     success "Synced dist/ -> backend/src/main/resources/static/"
