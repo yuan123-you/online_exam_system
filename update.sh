@@ -108,6 +108,33 @@ ROLLBACK_TAG=""
 PREV_COMMIT=""
 DEPLOY_FAILED=false
 
+#--------------------------------------------------------------
+# Rollback function (must be defined before trap)
+#--------------------------------------------------------------
+do_rollback() {
+    warn "Attempting rollback to $ROLLBACK_TAG..."
+    # Restore code to previous commit
+    if [ -n "$PREV_COMMIT" ] && [ "$PREV_COMMIT" != "unknown" ]; then
+        cd "$APP_DIR"
+        git reset --hard "$PREV_COMMIT" 2>/dev/null || true
+        info "Restored code to commit ${PREV_COMMIT}"
+    fi
+    if [ -d "$BACKUP_DIR/${ROLLBACK_TAG}/dist" ]; then
+        rm -rf "$APP_DIR/dist"
+        sudo cp -r "$BACKUP_DIR/${ROLLBACK_TAG}/dist" "$APP_DIR/dist"
+        sudo chown -R "$(whoami):$(whoami)" "$APP_DIR/dist"
+        info "Restored dist/"
+    fi
+    if [ -f "$BACKUP_DIR/${ROLLBACK_TAG}/${JAR_NAME}" ]; then
+        mkdir -p "$APP_DIR/backend/target"
+        sudo cp "$BACKUP_DIR/${ROLLBACK_TAG}/${JAR_NAME}" "$APP_DIR/backend/target/${JAR_NAME}"
+        info "Restored JAR"
+    fi
+    sudo systemctl restart online-exam 2>/dev/null || true
+    sudo systemctl reload nginx 2>/dev/null || true
+    warn "Rollback complete. Verify manually."
+}
+
 cleanup() {
     local exit_code=$?
     rm -f "$LOCK_FILE"
@@ -186,6 +213,9 @@ success "Backup: $ROLLBACK_TAG"
 next_step "Pulling latest code from GitHub..."
 cd "$APP_DIR"
 
+# Fix permissions on static dir (may be owned by root from previous sudo cp)
+sudo chown -R "$(whoami):$(whoami)" "$APP_DIR/backend/src/main/resources/static" 2>/dev/null || true
+
 PREV_COMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 
 # Check for local changes before force-pulling
@@ -204,33 +234,6 @@ if [ "$PREV_COMMIT" = "$NEW_COMMIT" ]; then
 else
     success "Updated: ${PREV_COMMIT} -> ${NEW_COMMIT}"
 fi
-
-#--------------------------------------------------------------
-# Rollback function
-#--------------------------------------------------------------
-do_rollback() {
-    warn "Attempting rollback to $ROLLBACK_TAG..."
-    # Restore code to previous commit
-    if [ -n "$PREV_COMMIT" ] && [ "$PREV_COMMIT" != "unknown" ]; then
-        cd "$APP_DIR"
-        git reset --hard "$PREV_COMMIT" 2>/dev/null || true
-        info "Restored code to commit ${PREV_COMMIT}"
-    fi
-    if [ -d "$BACKUP_DIR/${ROLLBACK_TAG}/dist" ]; then
-        rm -rf "$APP_DIR/dist"
-        sudo cp -r "$BACKUP_DIR/${ROLLBACK_TAG}/dist" "$APP_DIR/dist"
-        sudo chown -R "$(whoami):$(whoami)" "$APP_DIR/dist"
-        info "Restored dist/"
-    fi
-    if [ -f "$BACKUP_DIR/${ROLLBACK_TAG}/${JAR_NAME}" ]; then
-        mkdir -p "$APP_DIR/backend/target"
-        sudo cp "$BACKUP_DIR/${ROLLBACK_TAG}/${JAR_NAME}" "$APP_DIR/backend/target/${JAR_NAME}"
-        info "Restored JAR"
-    fi
-    sudo systemctl restart online-exam 2>/dev/null || true
-    sudo systemctl reload nginx 2>/dev/null || true
-    warn "Rollback complete. Verify manually."
-}
 
 #--------------------------------------------------------------
 # Build Frontend
