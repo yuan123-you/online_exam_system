@@ -363,6 +363,7 @@ MYSQL_URL=jdbc:mysql://localhost:3306/${MYSQL_DB}?createDatabaseIfNotExist=true&
 MYSQL_USER=root
 MYSQL_PASSWORD=${MYSQL_ROOT_PASS}
 PORT=8080
+AI_CONCURRENT_LIMIT=10
 ENV_EOF
 sudo chmod 600 /opt/online-exam/env.conf
 
@@ -458,7 +459,7 @@ server {
         add_header Cache-Control "public, immutable";
     }
 
-    # API reverse proxy
+    # API reverse proxy (SSE 流式请求优化)
     location /api/ {
         proxy_pass http://127.0.0.1:8080/api/;
         proxy_set_header Host $host;
@@ -466,9 +467,16 @@ server {
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
         proxy_connect_timeout 60s;
-        proxy_read_timeout 120s;
+        proxy_read_timeout 200s;
         proxy_send_timeout 60s;
         client_max_body_size 10m;
+
+        # SSE 流式代理关键配置
+        proxy_buffering off;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_cache off;
+        chunked_transfer_encoding on;
     }
 
     # Let's Encrypt ACME challenge

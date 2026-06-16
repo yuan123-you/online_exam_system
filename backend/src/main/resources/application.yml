@@ -22,7 +22,7 @@ ai:
   model: glm-4-flash
   timeout-ms: 90000
   rate-limit-per-minute: 60
-  concurrent-limit: 10
+  concurrent-limit: ${AI_CONCURRENT_LIMIT:10}
   circuit-breaker:
     failure-threshold: 10
     reset-timeout-seconds: 30
