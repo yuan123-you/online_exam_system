@@ -616,6 +616,7 @@ label span {
   font-weight: 600;
   color: #fff;
   flex-shrink: 0;
+  transition: width 0.3s var(--ease), height 0.3s var(--ease), font-size 0.3s var(--ease);
 }
 
 .sidebar-user-info {
@@ -717,6 +718,7 @@ label span {
   align-items: center;
   justify-content: center;
   opacity: 0.8;
+  transition: width 0.3s var(--ease), height 0.3s var(--ease);
 }
 
 .menu-btn.active .menu-icon {
@@ -731,6 +733,7 @@ label span {
   stroke-width: 1.8;
   stroke-linecap: round;
   stroke-linejoin: round;
+  transition: width 0.3s var(--ease), height 0.3s var(--ease);
 }
 
 .menu-btn .menu-label {
@@ -764,8 +767,8 @@ label span {
   text-align: left;
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 6px 10px;
+  gap: 10px;
+  padding: 7px 10px;
   border-radius: 8px;
   background: transparent;
   color: var(--sidebar-text);
@@ -779,22 +782,24 @@ label span {
 }
 
 .menu-footer .menu-icon {
-  width: 20px;
-  height: 20px;
+  width: 22px;
+  height: 22px;
   flex-shrink: 0;
   display: flex;
   align-items: center;
   justify-content: center;
+  transition: width 0.3s var(--ease), height 0.3s var(--ease);
 }
 
 .menu-footer .menu-icon svg {
-  width: 17px;
-  height: 17px;
+  width: 20px;
+  height: 20px;
   stroke: currentColor;
   fill: none;
   stroke-width: 1.8;
   stroke-linecap: round;
   stroke-linejoin: round;
+  transition: width 0.3s var(--ease), height 0.3s var(--ease);
 }
 
 .menu-footer .danger-btn {
@@ -840,6 +845,12 @@ label span {
   padding: 10px;
 }
 
+.sidebar-collapsed .sidebar-user-avatar {
+  width: 24px;
+  height: 24px;
+  font-size: 11px;
+}
+
 .sidebar-collapsed .sidebar-body {
   padding: 8px 6px;
   align-items: center;
@@ -872,6 +883,16 @@ label span {
 .sidebar-collapsed .menu-footer button {
   justify-content: center;
   padding: 10px;
+}
+
+.sidebar-collapsed .menu-footer .menu-icon {
+  width: 24px;
+  height: 24px;
+}
+
+.sidebar-collapsed .menu-footer .menu-icon svg {
+  width: 22px;
+  height: 22px;
 }
 
 

@@ -10,6 +10,8 @@
       msg.role,
       idx === messages.length - 1 && streamingActive,
       idx === messages.length - 1 && !!streamingReasoning,
+      idx === messages.length - 1 && !!streamingContent,
+      idx === messages.length - 1 && !!streamingHint,
       submitted[idx],
       copiedIdx === idx,
     ]"
@@ -49,7 +51,7 @@
         <!-- Streaming content: RAF-batched, flicker-free rendering -->
         <div
           v-if="msg.role === 'assistant' && isLast(idx) && streamingActive && (streamingContent || streamingHint)"
-          ref="streamingContentEl"
+          :ref="(el: any) => setStreamingEl(idx, el as HTMLElement | null)"
           class="message-content streaming"
         ></div>
         <!-- Stable content: rendered once after streaming completes -->
@@ -80,9 +82,9 @@
         <button class="copy-btn" @click="copyPlain(msg.content, idx)">📋 复制</button>
       </div>
 
-      <!-- Parsed practice question cards — exam paper style -->
+      <!-- Parsed practice question cards — exam paper style (practice tab only) -->
       <div
-        v-if="msg.role === 'assistant' && msg.content && parsedQuestions(idx).length > 0"
+        v-if="tab === 'practice' && msg.role === 'assistant' && msg.content && parsedQuestions(idx).length > 0"
         class="exam-paper"
       >
         <div class="exam-header">
@@ -211,7 +213,8 @@ const store = useAppStore()
 const copiedIdx = ref<number | null>(null)
 
 // ===== Streaming content renderer — RAF-batched, flicker-free =====
-const streamingContentEl = ref<HTMLElement | null>(null)
+// Use a Map keyed by message index to support v-for streaming elements
+const streamingContentEls = new Map<number, HTMLElement>()
 let streamingRafId = 0
 let lastStreamingHtml = ''
 
@@ -227,7 +230,10 @@ function renderStreamingContent(text: string): string {
 
 /** Update the streaming container DOM — called via RAF batching */
 function updateStreamingDOM() {
-  const el = streamingContentEl.value
+  // Find the last message index (the one being streamed)
+  const lastIdx = props.messages.length - 1
+  if (lastIdx < 0) return
+  const el = streamingContentEls.get(lastIdx)
   if (!el) return
   const content = props.streamingContent || props.streamingHint || ''
   if (!content) {
@@ -251,6 +257,15 @@ function scheduleStreamingUpdate() {
   })
 }
 
+/** Set the streaming element ref for a given message index */
+function setStreamingEl(idx: number, el: HTMLElement | null) {
+  if (el) {
+    streamingContentEls.set(idx, el)
+  } else {
+    streamingContentEls.delete(idx)
+  }
+}
+
 // Watch streaming content changes — batch via RAF
 watch(() => props.streamingContent, () => {
   if (props.streamingActive) scheduleStreamingUpdate()
@@ -270,11 +285,13 @@ watch(() => props.streamingActive, (active, wasActive) => {
     // Streaming completed — cancel pending RAF, clear streaming state
     if (streamingRafId) { cancelAnimationFrame(streamingRafId); streamingRafId = 0 }
     lastStreamingHtml = ''
+    streamingContentEls.clear()
   }
 })
 
 onBeforeUnmount(() => {
   if (streamingRafId) { cancelAnimationFrame(streamingRafId); streamingRafId = 0 }
+  streamingContentEls.clear()
 })
 
 // ===== Stream start time from store (persists across component re-creations) =====
@@ -999,30 +1016,32 @@ function renderContent(text: string, role: string, idx: number): string {
   const isPractice = props.tab === 'practice'
   const isStreaming = isLast(idx) && props.streamingActive
 
-  // --- Practice mode: detect and hide raw JSON question data ---
-  if (isPractice) {
-    // First, check if cards were already parsed successfully (non-streaming, content present)
-    if (!isStreaming) {
-      const parsed = parsedQuestions(idx)
-      if (parsed.length > 0) {
-        return `<p style="color:var(--muted);font-style:italic;">📋 已生成 ${parsed.length} 道练习题，请在下方作答 👇</p>`
-      }
-      // Parsing failed — hide raw JSON, show friendly message
-      if (/[\{\[]/.test(text) && (text.includes('"title"') || text.includes('"type"') || text.includes('"options"'))) {
-        return '<p style="color:var(--muted);">📋 题目解析中，如未显示卡片请重新生成</p>'
-      }
-      // Not JSON-like — render normally
-      return renderMarkdown(text)
+  // --- Chat mode: hide raw JSON question data, show friendly hint ---
+  if (!isPractice) {
+    // If the content looks like structured question JSON, hide it and suggest switching to practice tab
+    if (/[\{\[]/.test(text) && (text.includes('"title"') || text.includes('"type"')) && (text.includes('"options"') || text.includes('"answer"'))) {
+      return '<p style="color:var(--muted);">💡 如需练习题目，请切换到「📝 练题」模式</p>'
     }
-
-    // During streaming: hide ALL potential JSON from view
-    if (isStreaming) {
-      return '<div class="generating-hint">📝 正在生成题目<span class="gen-dots">...</span></div>'
-    }
+    return renderMarkdown(text)
   }
 
-  // --- Chat mode (or practice with non-JSON content): normal markdown ---
-  return renderMarkdown(text)
+  // --- Practice mode ---
+  // First, check if cards were already parsed successfully (non-streaming, content present)
+  if (!isStreaming) {
+    const parsed = parsedQuestions(idx)
+    if (parsed.length > 0) {
+      return `<p style="color:var(--muted);font-style:italic;">📋 已生成 ${parsed.length} 道练习题，请在下方作答 👇</p>`
+    }
+    // Parsing failed — hide raw JSON, show friendly message
+    if (/[\{\[]/.test(text) && (text.includes('"title"') || text.includes('"type"') || text.includes('"options"'))) {
+      return '<p style="color:var(--muted);">📋 题目解析中，如未显示卡片请重新生成</p>'
+    }
+    // Not JSON-like — render normally
+    return renderMarkdown(text)
+  }
+
+  // During streaming: hide ALL potential JSON from view
+  return '<div class="generating-hint">📝 正在生成题目<span class="gen-dots">...</span></div>'
 }
 
 /** Find the range [start, end) of a JSON question array in text. Returns null if not found. */
@@ -1135,6 +1154,7 @@ function escapeHtml(s: string) {
 /* ===== Bubbles ===== */
 .chat-bubble {
   display: flex; gap: 8px; max-width: 85%;
+  min-width: 0;
 }
 .bubble-user { align-self: flex-end; flex-direction: row-reverse; }
 .bubble-ai { align-self: flex-start; }
@@ -1256,7 +1276,12 @@ function escapeHtml(s: string) {
 .reasoning-text :deep(em) { color: #6b7280; }
 
 /* Message content */
-.message-content { word-break: break-word; }
+.message-content {
+  word-break: break-word;
+  overflow-wrap: anywhere;
+  max-width: 100%;
+  overflow: hidden;
+}
 /* Streaming content — GPU-accelerated, contained layout */
 .message-content.streaming {
   contain: content;
@@ -1321,6 +1346,8 @@ function escapeHtml(s: string) {
   padding: 12px 14px; border-radius: 8px; overflow-x: auto;
   font-size: 13px; line-height: 1.55; margin: 8px 0;
   border: 1px solid #2a2a3e;
+  max-width: 100%;
+  box-sizing: border-box;
 }
 /* Inline code in AI bubbles */
 .bubble-ai .message-content :deep(.md-inline) {
@@ -1336,7 +1363,15 @@ function escapeHtml(s: string) {
 }
 .message-content :deep(.md-h4),
 .message-content :deep(.md-h5) { margin: 8px 0 3px; font-weight: 600; }
-.message-content :deep(.md-li) { margin: 1px 0; padding-left: 2px; }
+.message-content :deep(.md-li) { margin: 1px 0; padding-left: 2px; overflow-wrap: anywhere; word-break: break-word; }
+/* Links and long URLs inside message content */
+.message-content :deep(a) {
+  word-break: break-all;
+  overflow-wrap: anywhere;
+  max-width: 100%;
+  display: inline-block;
+  vertical-align: bottom;
+}
 
 /* ===== Exam Paper Style ===== */
 .exam-paper {
@@ -1630,9 +1665,9 @@ function escapeHtml(s: string) {
   color: #92400e;
 }
 
-/* ===== Responsive — Mobile ===== */
+/* ===== Responsive — Mobile (≤768px) ===== */
 @media (max-width: 768px) {
-  .chat-bubble { max-width: 92%; }
+  .chat-bubble { max-width: 90%; }
 
   .bubble-body {
     padding: 10px 14px;
@@ -1644,6 +1679,37 @@ function escapeHtml(s: string) {
     font-size: 12px;
   }
 
+  /* Force message-content to stay within screen bounds */
+  .message-content {
+    max-width: 100%;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+  }
+
+  /* Code blocks: allow horizontal scroll within container, never overflow parent */
+  .message-content :deep(.md-code) {
+    padding: 10px 10px;
+    font-size: 12px;
+    max-width: 100%;
+    box-sizing: border-box;
+  }
+
+  /* Inline code: prevent long inline code from overflowing */
+  .message-content :deep(.md-inline) {
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    vertical-align: bottom;
+  }
+
+  /* Paragraphs and lists: ensure wrapping */
+  .message-content :deep(.md-p) { overflow-wrap: anywhere; }
+  .message-content :deep(.md-li) { overflow-wrap: anywhere; }
+
+  /* Reasoning block compact on mobile */
+  .reasoning-block summary { font-size: 12px; padding: 6px 10px; }
+  .reasoning-text { font-size: 12px; padding: 8px 10px; }
+
   .msg-meta { margin-top: 4px; padding: 0 2px; }
   .copy-trigger { font-size: 11px; padding: 4px 8px; }
 
@@ -1652,10 +1718,67 @@ function escapeHtml(s: string) {
   .exam-title { font-size: 12px; }
   .exam-submit { font-size: 11px; padding: 4px 12px; }
   .exam-question { padding: 10px 12px; }
-  .eq-body { font-size: 13px; }
+  .eq-body { font-size: 13px; overflow-wrap: anywhere; }
   .eq-opt { padding: 6px 10px; gap: 6px; }
   .eo-letter { width: 22px; height: 22px; font-size: 11px; }
-  .eo-text { font-size: 12px; }
+  .eo-text { font-size: 12px; overflow-wrap: anywhere; }
   .eq-textarea textarea { font-size: 12px; padding: 8px 10px; }
+}
+
+/* ===== Responsive — Small mobile (≤480px) ===== */
+@media (max-width: 480px) {
+  .chat-bubble { max-width: 88%; gap: 6px; }
+
+  .bubble-body {
+    padding: 8px 12px;
+    font-size: 13px;
+    border-radius: 12px;
+  }
+  .bubble-avatar {
+    width: 24px; height: 24px;
+    font-size: 11px;
+  }
+
+  .message-content :deep(.md-code) {
+    padding: 8px 8px;
+    font-size: 11px;
+    border-radius: 6px;
+  }
+
+  .message-content :deep(.md-h4) { font-size: 13px; }
+  .message-content :deep(.md-h5) { font-size: 12px; }
+
+  .exam-paper { border-radius: 6px; }
+  .exam-header { padding: 6px 10px; }
+  .exam-question { padding: 8px 10px; }
+  .eq-opt { padding: 5px 8px; gap: 5px; }
+  .eo-text { font-size: 11px; }
+}
+
+/* ===== Responsive — Tablet (769px–1024px) ===== */
+@media (min-width: 769px) and (max-width: 1024px) {
+  .chat-bubble { max-width: 80%; }
+
+  .bubble-body {
+    padding: 11px 16px;
+    font-size: 14px;
+  }
+
+  .message-content :deep(.md-code) {
+    max-width: 100%;
+    box-sizing: border-box;
+  }
+}
+
+/* ===== Responsive — Landscape on mobile ===== */
+@media (max-width: 1023px) and (orientation: landscape) {
+  .chat-bubble { max-width: 85%; }
+  .bubble-body { padding: 8px 12px; font-size: 13px; }
+  .bubble-avatar { width: 24px; height: 24px; font-size: 11px; }
+
+  .message-content :deep(.md-code) {
+    padding: 8px 10px;
+    font-size: 12px;
+  }
 }
 </style>

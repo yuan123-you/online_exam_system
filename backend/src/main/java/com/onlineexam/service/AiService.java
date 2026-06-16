@@ -144,10 +144,19 @@ public class AiService {
   /** 活跃 SSE 连接计数 */
   private final AtomicInteger activeSseConnections = new AtomicInteger(0);
 
+  /** 性能监控：响应延迟统计 */
+  private final AtomicInteger totalRequests = new AtomicInteger(0);
+  private final AtomicInteger successRequests = new AtomicInteger(0);
+  private final AtomicInteger failedRequests = new AtomicInteger(0);
+  private volatile long totalResponseTimeMs = 0;
+  private volatile long minResponseTimeMs = Long.MAX_VALUE;
+  private volatile long maxResponseTimeMs = 0;
+  private volatile long lastResponseTimeMs = 0;
+
   /** 会话上下文：userId -> 最近对话历史（线程安全隔离） */
   private final ConcurrentHashMap<String, ConversationSession> conversationSessions = new ConcurrentHashMap<>();
   private static final int MAX_SESSIONS = 500;
-  private static final int MAX_SESSION_HISTORY = 20;
+  private static final int MAX_SESSION_HISTORY = 40;
 
   public AiService(StoreService storeService, SystemLogService systemLogService,
                    RestTemplate restTemplate, ObjectMapper objectMapper,
@@ -169,9 +178,9 @@ public class AiService {
     private volatile long lastAccessTime = System.currentTimeMillis();
 
     void addMessage(String role, String content) {
-      // 截断过长消息节省内存
-      if (content.length() > 500) {
-        content = content.substring(0, 500) + "...(已省略)";
+      // 智能截断：保留更多上下文，仅对超长消息做截断
+      if (content.length() > 1500) {
+        content = content.substring(0, 1500) + "...(已省略)";
       }
       history.addLast(Map.of("role", role, "content", content));
       // 滑动窗口：保留最近 N 条
@@ -886,6 +895,17 @@ public class AiService {
   public void callAiApiStream(String systemPrompt, String userPrompt, boolean thinkingEnabled,
                                double temperature, boolean jsonMode, String circuitType,
                                UserIntent intent, SseEmitter emitter) {
+    callAiApiStream(systemPrompt, userPrompt, thinkingEnabled, temperature, jsonMode, circuitType, intent, emitter, null);
+  }
+
+  /**
+   * 智能流式API调用 - 根据UserIntent自动选择最优模型、temperature和max_tokens。
+   * 当intent非null时，自动应用智能参数调节；否则使用传入的默认参数。
+   * @param session 可选的会话引用，流式完成后自动记录AI响应到会话上下文
+   */
+  public void callAiApiStream(String systemPrompt, String userPrompt, boolean thinkingEnabled,
+                               double temperature, boolean jsonMode, String circuitType,
+                               UserIntent intent, SseEmitter emitter, ConversationSession session) {
     if (apiKey == null || apiKey.isBlank()) {
       log.error("[AiService SSE] API密钥未配置，无法发起流式请求");
       try { emitter.send(SseEmitter.event().name("error").data("{\"error\":\"AI 功能暂未启用，请联系管理员配置 AI API 密钥\"}")); emitter.complete(); }
@@ -953,8 +973,8 @@ public class AiService {
         conn.setRequestProperty("Authorization", "Bearer " + apiKey);
         conn.setRequestProperty("Accept", "text/event-stream");
         conn.setDoOutput(true);
-        conn.setConnectTimeout(30000);
-        conn.setReadTimeout(120000);
+        conn.setConnectTimeout(15000);
+        conn.setReadTimeout(90000);
 
         // Build request body - 智能参数调节：根据intent自动选择最优模型和参数
         String effectiveModel = model;
@@ -1041,10 +1061,17 @@ public class AiService {
               log.info("[AiService SSE] [{}] 收到[DONE], 共{}个chunk, 内容长度={}, 推理长度={}, 耗时={}ms",
                 threadId, chunkCount, contentBuilder.length(), reasoningBuilder.length(), elapsed);
               circuitBreaker.recordSuccess(circuitType);
+              // 记录性能指标
+              recordLatency(elapsed, true);
+              // 流式完成后将AI响应存入会话上下文
+              if (session != null && contentBuilder.length() > 0) {
+                session.addMessage("assistant", contentBuilder.toString());
+              }
               java.util.Map<String, Object> donePayload = new java.util.LinkedHashMap<>();
               donePayload.put("content", contentBuilder.toString());
               donePayload.put("reasoning", reasoningBuilder.toString());
               donePayload.put("done", true);
+              donePayload.put("durationMs", elapsed);
               emitter.send(SseEmitter.event().name("complete").data(objectMapper.writeValueAsString(donePayload)));
               emitter.complete();
               return;
@@ -1101,11 +1128,18 @@ public class AiService {
           threadId, chunkCount, contentBuilder.length(), elapsed);
         if (contentBuilder.length() > 0) {
           circuitBreaker.recordSuccess(circuitType);
+          // 记录性能指标
+          recordLatency(elapsed, true);
+          // 流式完成后将AI响应存入会话上下文
+          if (session != null) {
+            session.addMessage("assistant", contentBuilder.toString());
+          }
         }
         java.util.Map<String, Object> donePayload = new java.util.LinkedHashMap<>();
         donePayload.put("content", contentBuilder.toString());
         donePayload.put("reasoning", reasoningBuilder.toString());
         donePayload.put("done", true);
+        donePayload.put("durationMs", elapsed);
         emitter.send(SseEmitter.event().name("complete").data(objectMapper.writeValueAsString(donePayload)));
         emitter.complete();
         return;
@@ -1116,6 +1150,7 @@ public class AiService {
           threadId, attempt, elapsed, e.getClass().getSimpleName(), e.getMessage());
         if (attempt >= maxRetries) {
           circuitBreaker.recordFailure(circuitType);
+          recordLatency(elapsed, false);
           try {
             String errMsg = e.getMessage() != null ? e.getMessage() : "Unknown error";
             emitter.send(SseEmitter.event().name("error")
@@ -1441,21 +1476,18 @@ public class AiService {
     boolean deepThinking = Boolean.TRUE.equals(body.get("deepThinking"));
     systemLogService.log(user, "AI对话流", "深度思考=" + deepThinking);
 
-    // 流式对话完成后，将 AI 响应存入会话上下文
-    // 通过 SSE 生命周期回调在 complete 事件时记录
-    emitter.onCompletion(() -> {
-      // 注意：此时无法获取完整 AI 响应内容，会话上下文由客户端下次请求时补充
-      // 或通过流式累积的方式记录（已在 callAiApiStream 内部完成）
-    });
-
     // Chat always uses null intent — no smart parameter routing for question generation
-    callAiApiStream(systemPrompt, userPrompt, deepThinking, 0.7, false, "chat", null, emitter);
+    // 传入会话引用，流式完成后自动记录AI响应到会话上下文
+    callAiApiStream(systemPrompt, userPrompt, deepThinking, 0.7, false, "chat", null, emitter, session);
   }
 
   /** Build system prompt for general chat */
   private String buildChatSystemPrompt() {
+    String today = java.time.LocalDate.now().format(java.time.format.DateTimeFormatter.ofPattern("yyyy年M月d日"));
     return """
       你是在线考试系统的AI学习助手，名叫"智学"。你的职责是帮助学生学习和解答问题。
+
+      当前日期：""" + today + """
 
       核心原则：
       1. 直接给出最终回答，严禁输出你的思考过程、分析步骤、自我审查等内容（如"第1步分析"、"解构主题"、"起草内容"、"自我修正"等）
@@ -1465,12 +1497,20 @@ public class AiService {
       5. 提供学习建议：回答完问题后，可以推荐相关的延伸学习方向或练习题
       6. 使用中文回答，语言风格友好专业，像一位耐心且博学的导师
 
+      【严禁事项 - 最高优先级】
+      1. 你是"对话"模式的AI助手，不是"出题"模式。严禁输出任何结构化的题目JSON数据（如包含title/type/options/answer/explanation字段的JSON数组）。
+      2. 如果用户要求"出题"、"生成练习题"、"帮我出X道题"等，请用自然语言回复，引导用户切换到"练题"模式。例如："我可以在对话中为你讲解知识点，如果你需要练习题，请切换到「📝 练题」模式，那里可以为你生成可交互的练习题卡片！"
+      3. 你可以用自然语言举例说明题目类型、出题思路、解题技巧等，但绝不能输出JSON格式的题目数据。
+
       注意：只输出给用户看的最终回答，不要输出任何中间过程。""";
   }
 
   /** Build user prompt for chat, including conversation history from session.
-   *  Implements sliding window: keeps only the last N messages to avoid context bloat. */
-  private static final int MAX_HISTORY_MESSAGES = 6; // 3 Q&A rounds
+   *  Implements sliding window: keeps only the last N messages to avoid context bloat.
+   *  智能上下文压缩：超过10轮时，对较早消息自动摘要压缩，保留关键信息。 */
+  private static final int MAX_HISTORY_MESSAGES = 20; // 10 Q&A rounds
+  private static final int COMPRESS_THRESHOLD = 14;   // 超过7轮时开始压缩旧消息
+  private static final int KEEP_RECENT_MESSAGES = 10;  // 始终保留最近5轮（10条）不压缩
 
   private String buildChatUserPrompt(String currentMessage, Map<String, Object> body,
                                       ConversationSession session) {
@@ -1478,26 +1518,7 @@ public class AiService {
     @SuppressWarnings("unchecked")
     List<Map<String, Object>> history = (List<Map<String, Object>>) body.get("messages");
     if (history != null && !history.isEmpty()) {
-      int startIndex = Math.max(0, history.size() - MAX_HISTORY_MESSAGES);
-      StringBuilder sb = new StringBuilder();
-      sb.append("以下是最近对话：\n");
-      for (int i = startIndex; i < history.size(); i++) {
-        Map<String, Object> msg = history.get(i);
-        String role = str(msg, "role");
-        String content = str(msg, "content");
-        if (!content.isBlank()) {
-          if (content.length() > 500) {
-            content = content.substring(0, 500) + "...(已省略)";
-          }
-          if ("user".equals(role)) {
-            sb.append("用户：").append(content).append("\n");
-          } else if ("assistant".equals(role)) {
-            sb.append("AI：").append(content).append("\n");
-          }
-        }
-      }
-      sb.append("\n用户新消息：").append(currentMessage);
-      return sb.toString();
+      return buildPromptFromHistory(history, currentMessage);
     }
 
     // 回退到服务端会话上下文
@@ -1506,17 +1527,87 @@ public class AiService {
       return currentMessage;
     }
 
-    StringBuilder sb = new StringBuilder();
-    sb.append("以下是最近对话：\n");
+    // 将 session history 转换为通用格式
+    List<Map<String, Object>> converted = new ArrayList<>();
     for (Map<String, String> msg : sessionHistory) {
-      String role = msg.get("role");
-      String content = msg.get("content");
-      if ("user".equals(role)) {
-        sb.append("用户：").append(content).append("\n");
-      } else if ("assistant".equals(role)) {
-        sb.append("AI：").append(content).append("\n");
+      Map<String, Object> m = new LinkedHashMap<>();
+      m.put("role", msg.get("role"));
+      m.put("content", msg.get("content"));
+      converted.add(m);
+    }
+    return buildPromptFromHistory(converted, currentMessage);
+  }
+
+  /**
+   * 从历史消息构建用户提示词，支持智能上下文压缩。
+   * 当消息数超过 COMPRESS_THRESHOLD 时，对较早的消息进行摘要压缩，
+   * 始终保留最近 KEEP_RECENT_MESSAGES 条消息不压缩。
+   */
+  private String buildPromptFromHistory(List<Map<String, Object>> history, String currentMessage) {
+    int startIndex = Math.max(0, history.size() - MAX_HISTORY_MESSAGES);
+    List<Map<String, Object>> visibleHistory = history.subList(startIndex, history.size());
+
+    StringBuilder sb = new StringBuilder();
+
+    if (visibleHistory.size() > COMPRESS_THRESHOLD) {
+      // 智能压缩：对较早的消息进行摘要，保留最近的消息完整
+      int compressEnd = visibleHistory.size() - KEEP_RECENT_MESSAGES;
+      sb.append("以下是之前对话的摘要：\n");
+
+      // 将较早的消息压缩为摘要
+      StringBuilder oldMessages = new StringBuilder();
+      for (int i = 0; i < compressEnd; i++) {
+        Map<String, Object> msg = visibleHistory.get(i);
+        String role = str(msg, "role");
+        String content = str(msg, "content");
+        if (!content.isBlank()) {
+          if (content.length() > 300) {
+            content = content.substring(0, 300) + "...";
+          }
+          if ("user".equals(role)) {
+            oldMessages.append("用户问了：").append(content).append("；");
+          } else if ("assistant".equals(role)) {
+            oldMessages.append("AI回答了：").append(content).append("；");
+          }
+        }
+      }
+      sb.append(oldMessages).append("\n\n以下是最近对话：\n");
+
+      // 保留最近的消息完整
+      for (int i = compressEnd; i < visibleHistory.size(); i++) {
+        Map<String, Object> msg = visibleHistory.get(i);
+        String role = str(msg, "role");
+        String content = str(msg, "content");
+        if (!content.isBlank()) {
+          if (content.length() > 1500) {
+            content = content.substring(0, 1500) + "...(已省略)";
+          }
+          if ("user".equals(role)) {
+            sb.append("用户：").append(content).append("\n");
+          } else if ("assistant".equals(role)) {
+            sb.append("AI：").append(content).append("\n");
+          }
+        }
+      }
+    } else {
+      // 消息数未超过阈值，全部保留
+      sb.append("以下是最近对话：\n");
+      for (Map<String, Object> msg : visibleHistory) {
+        String role = str(msg, "role");
+        String content = str(msg, "content");
+        if (!content.isBlank()) {
+          if (content.length() > 1500) {
+            content = content.substring(0, 1500) + "...(已省略)";
+          }
+          if ("user".equals(role)) {
+            sb.append("用户：").append(content).append("\n");
+          } else if ("assistant".equals(role)) {
+            sb.append("AI：").append(content).append("\n");
+          }
+        }
       }
     }
+
     sb.append("\n用户新消息：").append(currentMessage);
     return sb.toString();
   }
@@ -1841,7 +1932,23 @@ public class AiService {
 
   // ========== 健康检查 ==========
 
-  /** 获取 AI 服务健康状态（含熔断器状态、活跃连接数、缓存大小等） */
+  /** 记录响应延迟（线程安全） */
+  private void recordLatency(long durationMs, boolean success) {
+    totalRequests.incrementAndGet();
+    if (success) {
+      successRequests.incrementAndGet();
+      synchronized (this) {
+        totalResponseTimeMs += durationMs;
+        if (durationMs < minResponseTimeMs) minResponseTimeMs = durationMs;
+        if (durationMs > maxResponseTimeMs) maxResponseTimeMs = durationMs;
+        lastResponseTimeMs = durationMs;
+      }
+    } else {
+      failedRequests.incrementAndGet();
+    }
+  }
+
+  /** 获取 AI 服务健康状态（含熔断器状态、活跃连接数、缓存大小、性能指标等） */
   public ResponseEntity<?> getHealthStatus() {
     Map<String, Object> status = new LinkedHashMap<>();
     status.put("apiKeyConfigured", apiKey != null && !apiKey.isBlank());
@@ -1851,6 +1958,37 @@ public class AiService {
     status.put("activeSessions", conversationSessions.size());
     status.put("concurrentLimit", concurrentLimit);
     status.put("rateLimitPerMinute", rateLimitPerMinute);
+
+    // 性能指标
+    Map<String, Object> performance = new LinkedHashMap<>();
+    int total = totalRequests.get();
+    int success = successRequests.get();
+    performance.put("totalRequests", total);
+    performance.put("successRequests", success);
+    performance.put("failedRequests", failedRequests.get());
+    performance.put("successRate", total > 0 ? String.format("%.1f%%", (double) success / total * 100) : "N/A");
+    synchronized (this) {
+      performance.put("avgResponseTimeMs", total > 0 ? totalResponseTimeMs / success : 0);
+      performance.put("minResponseTimeMs", minResponseTimeMs == Long.MAX_VALUE ? 0 : minResponseTimeMs);
+      performance.put("maxResponseTimeMs", maxResponseTimeMs);
+      performance.put("lastResponseTimeMs", lastResponseTimeMs);
+    }
+    status.put("performance", performance);
+
+    // 上下文利用率
+    Map<String, Object> contextStats = new LinkedHashMap<>();
+    contextStats.put("maxHistoryMessages", MAX_HISTORY_MESSAGES);
+    contextStats.put("maxSessionHistory", MAX_SESSION_HISTORY);
+    contextStats.put("compressThreshold", COMPRESS_THRESHOLD);
+    contextStats.put("activeSessionCount", conversationSessions.size());
+    // 计算平均会话历史长度
+    if (!conversationSessions.isEmpty()) {
+      double avgLen = conversationSessions.values().stream()
+        .mapToInt(s -> s.getRecentHistory(MAX_SESSION_HISTORY).size())
+        .average().orElse(0);
+      contextStats.put("avgSessionHistoryLength", String.format("%.1f", avgLen));
+    }
+    status.put("contextStats", contextStats);
 
     // 各功能类型的熔断器状态
     Map<String, Object> circuitStatus = new LinkedHashMap<>();

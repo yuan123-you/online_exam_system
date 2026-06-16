@@ -143,6 +143,7 @@
           :messages="messages"
           :streaming-active="streamingActive"
           :streaming-reasoning="streamingReasoning"
+          :streaming-content="streamingContent"
           :loading="false"
         />
 
@@ -364,6 +365,11 @@ const {
   streamingScrollDuration: 0,
 })
 
+// Auto-scroll on streaming content changes
+watch(streamingContent, () => { if (streamingActive.value) onStreamingUpdate() })
+watch(streamingReasoning, () => { if (streamingActive.value) onStreamingUpdate() })
+watch(() => messages.value.length, () => { onNewMessage() })
+
 // ---- Generate (structured) ----
 function handleGenerate() {
   if (genLoading.value) return
@@ -496,8 +502,17 @@ function onKeydown(e: KeyboardEvent) {
 
 function autoResize() {
   if (inputRef.value) {
-    inputRef.value.style.height = 'auto'
-    inputRef.value.style.height = Math.min(inputRef.value.scrollHeight, 150) + 'px'
+    const el = inputRef.value
+    el.style.height = 'auto'
+    const maxH = 150
+    const threshold = maxH * 0.5
+    if (el.scrollHeight <= threshold) {
+      el.style.height = el.scrollHeight + 'px'
+      el.style.overflowY = 'hidden'
+    } else {
+      el.style.height = Math.min(el.scrollHeight, maxH) + 'px'
+      el.style.overflowY = 'auto'
+    }
   }
 }
 
@@ -1014,27 +1029,35 @@ onMounted(() => {
 .input-wrapper { position: relative; display: flex; align-items: flex-end; overflow: hidden; }
 .msg-input {
   width: 100%;
-  padding: 12px 52px 12px 16px;
+  padding: 12px 44px 12px 16px;
   border: 2px solid #e5e7eb; border-radius: 14px;
   font-size: 14px; font-family: inherit; line-height: 1.5;
   resize: none; outline: none; background: #f9fafb; color: #111827;
   max-height: 150px;
+  overflow-y: hidden;
   transition: border-color 0.15s, box-shadow 0.15s;
+  scrollbar-width: thin;
+  scrollbar-color: #d4d4d8 transparent;
 }
+.msg-input::-webkit-scrollbar { width: 4px; }
+.msg-input::-webkit-scrollbar-track { background: transparent; }
+.msg-input::-webkit-scrollbar-thumb { background: #d4d4d8; border-radius: 2px; }
+.msg-input::-webkit-scrollbar-button { display: none; }
 .msg-input:focus { border-color: var(--primary); background: #fff; box-shadow: 0 0 0 4px rgba(99,102,241,0.1); }
 .msg-input:disabled { opacity: 0.5; }
 
 .action-btn {
-  position: absolute; right: 8px; top: 50%; transform: translateY(-50%);
-  width: 44px; height: 44px; border: none; border-radius: 12px;
+  position: absolute; right: 6px; bottom: 50%;
+  transform: translateY(50%);
+  width: 36px; height: 36px; border: none; border-radius: 10px;
   cursor: pointer; display: flex; align-items: center; justify-content: center;
   transition: all 0.15s; z-index: 2;
 }
 .send-action { background: var(--primary); color: #fff; }
-.send-action:hover:not(:disabled) { background: var(--primary-hover); transform: translateY(-50%) scale(1.06); }
+.send-action:hover:not(:disabled) { background: var(--primary-hover); transform: scale(1.06); }
 .send-action:disabled { opacity: 0.3; cursor: not-allowed; }
 .stop-action { background: #ef4444; color: #fff; }
-.stop-action:hover { background: #dc2626; transform: translateY(-50%) scale(1.06); }
+.stop-action:hover { background: #dc2626; transform: scale(1.06); }
 
 /* Shared buttons */
 .ghost-btn {

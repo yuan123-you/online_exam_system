@@ -20,16 +20,16 @@ ai:
   api-url: https://open.bigmodel.cn/api/paas/v4/chat/completions
   api-key: ${AI_API_KEY:82f20bac24a545c595dc30f7eee3dfd1.eJmxuTgiNAxaDNEX}
   model: glm-4-flash
-  timeout-ms: 120000
+  timeout-ms: 90000
   rate-limit-per-minute: 60
-  concurrent-limit: 5
+  concurrent-limit: 10
   circuit-breaker:
     failure-threshold: 10
     reset-timeout-seconds: 30
   thread-pool:
-    core-size: 8
-    max-size: 32
-    queue-capacity: 200
+    core-size: 10
+    max-size: 40
+    queue-capacity: 300
     keep-alive-seconds: 60
 
 cors:

@@ -286,8 +286,17 @@ function onKeydown(e: KeyboardEvent) {
 
 function autoResize() {
   if (inputRef.value) {
-    inputRef.value.style.height = 'auto'
-    inputRef.value.style.height = Math.min(inputRef.value.scrollHeight, 150) + 'px'
+    const el = inputRef.value
+    el.style.height = 'auto'
+    const maxH = 200
+    const threshold = maxH * 0.5
+    if (el.scrollHeight <= threshold) {
+      el.style.height = el.scrollHeight + 'px'
+      el.style.overflowY = 'hidden'
+    } else {
+      el.style.height = Math.min(el.scrollHeight, maxH) + 'px'
+      el.style.overflowY = 'auto'
+    }
   }
 }
 
@@ -720,7 +729,7 @@ onUnmounted(() => {
 
 .msg-input {
   width: 100%;
-  padding: 12px 48px 12px 14px;  /* right padding for button */
+  padding: 12px 44px 12px 14px;  /* right padding for button */
   border: 2px solid #e5e7eb;
   border-radius: 14px;
   font-size: 14px;
@@ -732,7 +741,23 @@ onUnmounted(() => {
   color: #111827;
   min-height: 44px;
   max-height: 200px;
+  overflow-y: hidden;
   transition: border-color 0.15s, box-shadow 0.15s, background 0.15s;
+  scrollbar-width: thin;
+  scrollbar-color: #d4d4d8 transparent;
+}
+.msg-input::-webkit-scrollbar {
+  width: 4px;
+}
+.msg-input::-webkit-scrollbar-track {
+  background: transparent;
+}
+.msg-input::-webkit-scrollbar-thumb {
+  background: #d4d4d8;
+  border-radius: 2px;
+}
+.msg-input::-webkit-scrollbar-button {
+  display: none;
 }
 .msg-input:focus {
   border-color: #6366f1;
@@ -744,13 +769,13 @@ onUnmounted(() => {
 /* Unified action button inside input */
 .action-btn {
   position: absolute;
-  right: 8px;
-  top: 50%;
-  transform: translateY(-50%);
-  width: 44px;
-  height: 44px;
+  right: 6px;
+  bottom: 50%;
+  transform: translateY(50%);
+  width: 36px;
+  height: 36px;
   border: none;
-  border-radius: 12px;
+  border-radius: 10px;
   cursor: pointer;
   display: flex;
   align-items: center;
@@ -764,7 +789,7 @@ onUnmounted(() => {
 }
 .send-action:hover:not(:disabled) {
   background: #4f46e5;
-  transform: translateY(-50%) scale(1.06);
+  transform: scale(1.06);
   box-shadow: 0 2px 8px rgba(99,102,241,0.35);
 }
 .send-action:disabled {
@@ -779,7 +804,7 @@ onUnmounted(() => {
 }
 .stop-action:hover {
   background: #dc2626;
-  transform: translateY(-50%) scale(1.06);
+  transform: scale(1.06);
   box-shadow: 0 2px 8px rgba(239,68,68,0.35);
 }
 @keyframes stop-pulse {
@@ -901,14 +926,14 @@ onUnmounted(() => {
 
   .input-row { padding: 6px 8px; }
   .msg-input {
-    padding: 10px 40px 10px 12px;
+    padding: 10px 38px 10px 12px;
     font-size: 13px;
     border-radius: 12px;
   }
   .action-btn {
-    width: 36px; height: 36px;
-    right: 6px;
-    border-radius: 10px;
+    width: 32px; height: 32px;
+    right: 5px;
+    border-radius: 8px;
   }
 
   .rec-list {
@@ -924,6 +949,44 @@ onUnmounted(() => {
   }
 }
 
+/* ===== Responsive — Small mobile (≤480px) ===== */
+@media (max-width: 480px) {
+  .msg-area {
+    padding: 8px 4px;
+    padding-top: 52px;
+    gap: 6px;
+  }
+
+  .welcome { padding: 16px 8px; padding-top: 36px; }
+  .welcome h3 { font-size: 14px; }
+  .welcome-chips { gap: 4px; }
+  .wc-chip { font-size: 10px; padding: 3px 6px; }
+
+  .quick-chips { padding: 2px 4px 0; }
+  .quick-chips button { font-size: 10px; padding: 2px 6px; }
+
+  .input-row { padding: 4px 6px; }
+  .msg-input {
+    padding: 8px 34px 8px 10px;
+    font-size: 13px;
+    border-radius: 10px;
+  }
+  .action-btn {
+    width: 30px; height: 30px;
+    right: 4px;
+    border-radius: 7px;
+  }
+
+  .recommendations-panel { margin: 10px 4px 0; }
+
+  .scroll-to-bottom-btn {
+    bottom: 60px;
+    right: 8px;
+    width: 36px;
+    height: 36px;
+  }
+}
+
 /* ===== Responsive — Tablet (768-1023) ===== */
 @media (min-width: 769px) and (max-width: 1023px) {
   .msg-area {
@@ -936,6 +999,11 @@ onUnmounted(() => {
   .float-btn {
     width: 38px;
     height: 38px;
+  }
+
+  .recommendations-panel { max-width: 100%; }
+  .rec-list {
+    grid-template-columns: repeat(auto-fill, minmax(min(100%, 220px), 1fr));
   }
 }
 

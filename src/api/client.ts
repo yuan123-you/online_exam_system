@@ -458,6 +458,7 @@ export interface SseComplete {
   content: string;
   reasoning: string;
   done: boolean;
+  durationMs?: number;
 }
 
 export interface SseError {
@@ -481,7 +482,7 @@ function sseStream(
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
   if (currentAuthToken) headers['X-User-Id'] = currentAuthToken;
 
-  const HEARTBEAT_TIMEOUT_MS = 30_000;
+  const HEARTBEAT_TIMEOUT_MS = 45_000;
   let heartbeatTimer: ReturnType<typeof setTimeout> | null = null;
 
   const clearHeartbeat = () => {
