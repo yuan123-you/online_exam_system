@@ -12,12 +12,15 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 @Service
 public class StoreService {
+  private static final Logger log = LoggerFactory.getLogger(StoreService.class);
   private final JdbcTemplate jdbc;
   private final ObjectMapper mapper;
   private final ZoneId zone = ZoneId.systemDefault();
@@ -29,76 +32,126 @@ public class StoreService {
 
   public Store readStore() {
     Store store = new Store();
-    store.departments = jdbc.queryForList("select id,name from department order by id").stream().map(row -> mapOf(
-      "id", row.get("id"), "name", row.get("name"), "createdBy", null
-    )).toList();
-    store.classes = jdbc.queryForList("select id,name,major,department_id from class_info order by id").stream().map(row -> mapOf(
-      "id", row.get("id"), "name", row.get("name"), "major", row.get("major"), "departmentId", row.get("department_id"), "createdBy", null
-    )).toList();
-    store.users = jdbc.queryForList("select id,role,username,name,department_id,class_id,major from user_account order by id").stream().map(row -> compact(mapOf(
-      "id", row.get("id"), "role", row.get("role"), "username", row.get("username"),
-      "name", row.get("name"), "departmentId", row.get("department_id"), "classId", row.get("class_id"), "major", row.get("major")
-    ))).toList();
-    store.questions = jdbc.queryForList("select * from question order by id").stream().map(row -> compact(mapOf(
-      "id", row.get("id"), "teacherId", row.get("teacher_id"), "subject", row.get("subject"),
-      "knowledgePoint", row.get("knowledge_point"), "difficulty", row.get("difficulty"), "type", row.get("type"),
-      "title", row.get("title"), "options", readList(row.get("options_json")), "answer", readList(row.get("answer_json")),
-      "score", asInt(row.get("score")), "sourceTag", row.get("source_tag"), "deleted", false
-    ))).toList();
-    store.papers = jdbc.queryForList("select * from paper order by id").stream().map(row -> compact(mapOf(
-      "id", row.get("id"), "teacherId", row.get("teacher_id"), "name", row.get("name"),
-      "durationMinutes", asInt(row.get("duration_minutes")), "totalScore", asInt(row.get("total_score")),
-      "passScore", asInt(row.get("pass_score")), "questionIds", readList(row.get("question_ids_json")),
-      "paperType", row.get("paper_type"), "sourceTag", row.get("source_tag"), "deleted", false
-    ))).toList();
-    store.exams = jdbc.queryForList("select * from exam order by start_time desc,id").stream().map(row -> compact(mapOf(
-      "id", row.get("id"), "teacherId", row.get("teacher_id"), "paperId", row.get("paper_id"), "name", row.get("name"),
-      "targetClassIds", readList(row.get("target_class_ids_json")), "startTime", asIso(row.get("start_time")),
-      "endTime", asIso(row.get("end_time")), "antiCheatLimit", asInt(row.get("anti_cheat_limit")),
-      "published", asBool(row.get("published")), "deleted", false
-    ))).toList();
-    store.submissions = jdbc.queryForList("select * from submission order by updated_at desc,id").stream().map(row -> compact(mapOf(
-      "id", row.get("id"), "examId", row.get("exam_id"), "studentId", row.get("student_id"), "studentName", row.get("student_name"),
-      "answers", readList(row.get("answers_json")), "answerDetail", readList(row.get("answer_detail_json")),
-      "switchCount", asInt(row.get("switch_count")), "suspicious", asBool(row.get("suspicious")),
-      "suspiciousReasons", readList(row.get("suspicious_reasons_json")), "autoScore", asInt(row.get("auto_score")),
-      "finalScore", asInt(row.get("final_score")), "status", normalizeStatus(str(row.get("status"))),
-      "startedAt", asIso(row.get("started_at")), "deadlineAt", asIso(row.get("deadline_at")),
-      "submittedAt", asIso(row.get("submitted_at")), "updatedAt", asIso(row.get("updated_at")),
-      "manualExtendedMinutes", asInt(row.get("manual_extended_minutes")), "gradedBy", row.get("graded_by"),
-      "questionOrder", readList(row.get("question_order_json")),
-      "optionOrder", readMap(row.get("option_order_json"))
-    ))).toList();
-    store.wrongBookEntries = jdbc.queryForList("select * from wrong_book_entry order by last_wrong_at desc,id").stream().map(row -> compact(mapOf(
-      "id", row.get("id"), "studentId", row.get("student_id"), "studentName", row.get("student_name"),
-      "questionId", row.get("question_id"), "subject", row.get("subject"), "knowledgePoint", row.get("knowledge_point"),
-      "type", row.get("type"), "title", row.get("title"), "latestAnswer", readList(row.get("latest_answer_json")),
-      "expectedAnswer", readList(row.get("expected_answer_json")), "lastRetryAnswer", readList(row.get("last_retry_answer_json")),
-      "retryCount", asInt(row.get("retry_count")), "wrongCount", asInt(row.get("wrong_count")),
-      "fullScore", asInt(row.get("full_score")), "lastScore", asInt(row.get("last_score")),
-      "lastWrongAt", asIso(row.get("last_wrong_at")), "lastRetryAt", asIso(row.get("last_retry_at")),
-      "lastSourceSubmissionId", row.get("last_source_submission_id"), "lastSourceExamId", row.get("last_source_exam_id"),
-      "lastRetryCorrect", asBool(row.get("last_retry_correct")), "removable", asBool(row.get("removable")),
-      "removedAt", asIso(row.get("removed_at")), "status", row.get("status")
-    ))).toList();
-    store.logs = jdbc.queryForList("select id,actor_id,action,detail,time from system_log order by time desc limit 100").stream().map(row -> {
-      String actorId = str(row.get("actor_id"));
-      return compact(mapOf(
+    try {
+      store.departments = jdbc.queryForList("select id,name from department order by id").stream().map(row -> mapOf(
+        "id", row.get("id"), "name", row.get("name"), "createdBy", null
+      )).toList();
+    } catch (Exception e) {
+      log.error("Failed to load departments from database", e);
+      store.departments = new ArrayList<>();
+    }
+    try {
+      store.classes = jdbc.queryForList("select id,name,major,department_id from class_info order by id").stream().map(row -> mapOf(
+        "id", row.get("id"), "name", row.get("name"), "major", row.get("major"), "departmentId", row.get("department_id"), "createdBy", null
+      )).toList();
+    } catch (Exception e) {
+      log.error("Failed to load classes from database", e);
+      store.classes = new ArrayList<>();
+    }
+    try {
+      store.users = jdbc.queryForList("select id,role,username,name,department_id,class_id,major from user_account order by id").stream().map(row -> compact(mapOf(
+        "id", row.get("id"), "role", row.get("role"), "username", row.get("username"),
+        "name", row.get("name"), "departmentId", row.get("department_id"), "classId", row.get("class_id"), "major", row.get("major")
+      ))).toList();
+    } catch (Exception e) {
+      log.error("Failed to load users from database", e);
+      store.users = new ArrayList<>();
+    }
+    try {
+      store.questions = jdbc.queryForList("select * from question order by id").stream().map(row -> compact(mapOf(
+        "id", row.get("id"), "teacherId", row.get("teacher_id"), "subject", row.get("subject"),
+        "knowledgePoint", row.get("knowledge_point"), "difficulty", row.get("difficulty"), "type", row.get("type"),
+        "title", row.get("title"), "options", readList(row.get("options_json")), "answer", readList(row.get("answer_json")),
+        "score", asInt(row.get("score")), "sourceTag", row.get("source_tag"), "deleted", asBool(row.get("deleted"))
+      ))).toList();
+    } catch (Exception e) {
+      log.error("Failed to load questions from database", e);
+      store.questions = new ArrayList<>();
+    }
+    try {
+      store.papers = jdbc.queryForList("select * from paper order by id").stream().map(row -> compact(mapOf(
+        "id", row.get("id"), "teacherId", row.get("teacher_id"), "name", row.get("name"),
+        "durationMinutes", asInt(row.get("duration_minutes")), "totalScore", asInt(row.get("total_score")),
+        "passScore", asInt(row.get("pass_score")), "questionIds", readList(row.get("question_ids_json")),
+        "paperType", row.get("paper_type"), "sourceTag", row.get("source_tag"), "deleted", false
+      ))).toList();
+    } catch (Exception e) {
+      log.error("Failed to load papers from database", e);
+      store.papers = new ArrayList<>();
+    }
+    try {
+      store.exams = jdbc.queryForList("select * from exam order by start_time desc,id").stream().map(row -> compact(mapOf(
+        "id", row.get("id"), "teacherId", row.get("teacher_id"), "paperId", row.get("paper_id"), "name", row.get("name"),
+        "targetClassIds", readList(row.get("target_class_ids_json")), "startTime", asIso(row.get("start_time")),
+        "endTime", asIso(row.get("end_time")), "antiCheatLimit", asInt(row.get("anti_cheat_limit")),
+        "published", asBool(row.get("published")), "deleted", false
+      ))).toList();
+    } catch (Exception e) {
+      log.error("Failed to load exams from database", e);
+      store.exams = new ArrayList<>();
+    }
+    try {
+      store.submissions = jdbc.queryForList("select * from submission order by updated_at desc,id").stream().map(row -> compact(mapOf(
+        "id", row.get("id"), "examId", row.get("exam_id"), "studentId", row.get("student_id"), "studentName", row.get("student_name"),
+        "answers", readList(row.get("answers_json")), "answerDetail", readList(row.get("answer_detail_json")),
+        "switchCount", asInt(row.get("switch_count")), "suspicious", asBool(row.get("suspicious")),
+        "suspiciousReasons", readList(row.get("suspicious_reasons_json")), "autoScore", asInt(row.get("auto_score")),
+        "finalScore", asInt(row.get("final_score")), "status", normalizeStatus(str(row.get("status"))),
+        "startedAt", asIso(row.get("started_at")), "deadlineAt", asIso(row.get("deadline_at")),
+        "submittedAt", asIso(row.get("submitted_at")), "updatedAt", asIso(row.get("updated_at")),
+        "manualExtendedMinutes", asInt(row.get("manual_extended_minutes")), "gradedBy", row.get("graded_by"),
+        "questionOrder", readList(row.get("question_order_json")),
+        "optionOrder", readMap(row.get("option_order_json"))
+      ))).toList();
+    } catch (Exception e) {
+      log.error("Failed to load submissions from database", e);
+      store.submissions = new ArrayList<>();
+    }
+    try {
+      store.wrongBookEntries = jdbc.queryForList("select * from wrong_book_entry order by last_wrong_at desc,id").stream().map(row -> compact(mapOf(
+        "id", row.get("id"), "studentId", row.get("student_id"), "studentName", row.get("student_name"),
+        "questionId", row.get("question_id"), "subject", row.get("subject"), "knowledgePoint", row.get("knowledge_point"),
+        "type", row.get("type"), "title", row.get("title"), "latestAnswer", readList(row.get("latest_answer_json")),
+        "expectedAnswer", readList(row.get("expected_answer_json")), "lastRetryAnswer", readList(row.get("last_retry_answer_json")),
+        "retryCount", asInt(row.get("retry_count")), "wrongCount", asInt(row.get("wrong_count")),
+        "fullScore", asInt(row.get("full_score")), "lastScore", asInt(row.get("last_score")),
+        "lastWrongAt", asIso(row.get("last_wrong_at")), "lastRetryAt", asIso(row.get("last_retry_at")),
+        "lastSourceSubmissionId", row.get("last_source_submission_id"), "lastSourceExamId", row.get("last_source_exam_id"),
+        "lastRetryCorrect", asBool(row.get("last_retry_correct")), "removable", asBool(row.get("removable")),
+        "removedAt", asIso(row.get("removed_at")), "status", row.get("status")
+      ))).toList();
+    } catch (Exception e) {
+      log.error("Failed to load wrongBookEntries from database", e);
+      store.wrongBookEntries = new ArrayList<>();
+    }
+    try {
+      store.logs = jdbc.queryForList("select id,actor_id,action,detail,time from system_log order by time desc limit 100").stream().map(row -> {
+        String actorId = str(row.get("actor_id"));
+        return compact(mapOf(
+          "id", row.get("id"),
+          "actorId", actorId,
+          "actorName", resolveActorName(actorId, store),
+          "action", row.get("action"),
+          "detail", row.get("detail"),
+          "time", asIso(row.get("time"))
+        ));
+      }).toList();
+    } catch (Exception e) {
+      log.error("Failed to load logs from database", e);
+      store.logs = new ArrayList<>();
+    }
+    try {
+      store.backups = jdbc.queryForList("select id,teacher_id,questions_json,question_count,created_at from question_backup order by created_at desc").stream().map(row -> compact(mapOf(
         "id", row.get("id"),
-        "actorId", actorId,
-        "actorName", resolveActorName(actorId, store),
-        "action", row.get("action"),
-        "detail", row.get("detail"),
-        "time", asIso(row.get("time"))
-      ));
-    }).toList();
-    store.backups = jdbc.queryForList("select id,teacher_id,questions_json,question_count,created_at from question_backup order by created_at desc").stream().map(row -> compact(mapOf(
-      "id", row.get("id"),
-      "teacherId", row.get("teacher_id"),
-      "questions", readList(row.get("questions_json")),
-      "questionCount", asInt(row.get("question_count")),
-      "createdAt", asIso(row.get("created_at"))
-    ))).toList();
+        "teacherId", row.get("teacher_id"),
+        "questions", readList(row.get("questions_json")),
+        "questionCount", asInt(row.get("question_count")),
+        "createdAt", asIso(row.get("created_at"))
+      ))).toList();
+    } catch (Exception e) {
+      log.error("Failed to load backups from database", e);
+      store.backups = new ArrayList<>();
+    }
     try {
       store.notifications = jdbc.queryForList("select * from notification order by created_at desc limit 200").stream().map(row -> compact(mapOf(
         "id", row.get("id"), "senderId", row.get("sender_id"),
@@ -109,7 +162,7 @@ public class StoreService {
         "readAt", asIso(row.get("read_at")), "createdAt", asIso(row.get("created_at"))
       ))).toList();
     } catch (Exception e) {
-      // notification 表可能尚未创建，容错处理
+      log.error("Failed to load notifications from database", e);
       store.notifications = new ArrayList<>();
     }
     return store;
@@ -519,7 +572,7 @@ public class StoreService {
    * 通用分页查询 - 错题本
    */
   public Map<String, Object> queryWrongBookPage(String studentId, int page, int pageSize, String subject, String status) {
-    StringBuilder where = new StringBuilder("WHERE removable=0");
+    StringBuilder where = new StringBuilder("WHERE removed_at IS NULL");
     List<Object> params = new ArrayList<>();
     if (studentId != null && !studentId.isBlank()) {
       where.append(" AND student_id = ?");
@@ -550,7 +603,7 @@ public class StoreService {
         "fullScore", asInt(row.get("full_score")), "lastScore", asInt(row.get("last_score")),
         "lastWrongAt", asIso(row.get("last_wrong_at")), "lastRetryAt", asIso(row.get("last_retry_at")),
         "lastRetryCorrect", asBool(row.get("last_retry_correct")), "removable", asBool(row.get("removable")),
-        "status", row.get("status")
+        "removedAt", asIso(row.get("removed_at")), "status", row.get("status")
       ))).toList();
     return mapOf("rows", rows, "total", total, "page", page, "pageSize", pageSize);
   }

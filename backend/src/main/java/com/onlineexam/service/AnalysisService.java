@@ -32,8 +32,7 @@ public class AnalysisService {
   /**
    * 成绩趋势
    */
-  public ResponseEntity<?> scoreTrend(String userId) {
-    Store store = storeService.readStore();
+  public ResponseEntity<?> scoreTrend(String userId, Store store) {
     Map<String, Object> user = find(store.users, userId);
     if (!isRole(user, "student")) return error(HttpStatus.FORBIDDEN, "Forbidden.");
     List<Map<String, Object>> mySubmissions = store.submissions.stream()
@@ -53,8 +52,7 @@ public class AnalysisService {
   /**
    * 知识点雷达
    */
-  public ResponseEntity<?> knowledgeRadar(String userId) {
-    Store store = storeService.readStore();
+  public ResponseEntity<?> knowledgeRadar(String userId, Store store) {
     Map<String, Object> user = find(store.users, userId);
     if (!isRole(user, "student")) return error(HttpStatus.FORBIDDEN, "Forbidden.");
     List<Map<String, Object>> mySubmissions = store.submissions.stream()

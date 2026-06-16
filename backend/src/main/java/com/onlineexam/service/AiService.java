@@ -1155,7 +1155,16 @@ public class AiService {
    */
   public void practiceQuestionsStream(String userId, Map<String, Object> body,
                                        SseEmitter emitter) {
-    Store store = storeService.readStore();
+    Store store;
+    try {
+      store = storeService.readStore();
+    } catch (Exception e) {
+      try {
+        emitter.send(SseEmitter.event().name("error").data("{\"error\":\"服务暂时不可用，请稍后重试\"}"));
+        emitter.complete();
+      } catch (Exception ignored) {}
+      return;
+    }
     Map<String, Object> user = find(store.users, userId);
     if (!isRole(user, "student")) {
       try {
@@ -1231,7 +1240,16 @@ public class AiService {
    */
   public void generateQuestionsStream(String userId, Map<String, Object> body,
                                        SseEmitter emitter) {
-    Store store = storeService.readStore();
+    Store store;
+    try {
+      store = storeService.readStore();
+    } catch (Exception e) {
+      try {
+        emitter.send(SseEmitter.event().name("error").data("{\"error\":\"服务暂时不可用，请稍后重试\"}"));
+        emitter.complete();
+      } catch (Exception ignored) {}
+      return;
+    }
     Map<String, Object> user = find(store.users, userId);
     if (!isRole(user, "teacher")) {
       try {
@@ -1361,7 +1379,16 @@ public class AiService {
    */
   public void chatStream(String userId, Map<String, Object> body,
                           SseEmitter emitter) {
-    Store store = storeService.readStore();
+    Store store;
+    try {
+      store = storeService.readStore();
+    } catch (Exception e) {
+      try {
+        emitter.send(SseEmitter.event().name("error").data("{\"error\":\"服务暂时不可用，请稍后重试\"}"));
+        emitter.complete();
+      } catch (Exception ignored) {}
+      return;
+    }
     Map<String, Object> user = find(store.users, userId);
     if (user == null) {
       try {

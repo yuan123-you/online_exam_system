@@ -32,7 +32,7 @@ public class StudentController {
     Store store = storeService.readStore();
     Map<String, Object> user = find(store.users, userId);
     if (!isRole(user, "student")) return error(HttpStatus.FORBIDDEN, "Forbidden.");
-    return analysisService.scoreTrend(userId);
+    return analysisService.scoreTrend(userId, store);
   }
 
   @GetMapping("/student/knowledge-radar")
@@ -40,7 +40,7 @@ public class StudentController {
     Store store = storeService.readStore();
     Map<String, Object> user = find(store.users, userId);
     if (!isRole(user, "student")) return error(HttpStatus.FORBIDDEN, "Forbidden.");
-    return analysisService.knowledgeRadar(userId);
+    return analysisService.knowledgeRadar(userId, store);
   }
 
   private Map<String, Object> find(java.util.List<Map<String, Object>> rows, String id) {
