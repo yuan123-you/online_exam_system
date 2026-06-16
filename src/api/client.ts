@@ -848,6 +848,7 @@ export function savePracticeRecords(records: Array<Record<string, unknown>>) {
 // ========== AI Chat API ==========
 
 export interface ChatMessage {
+  id?: string;         // 消息ID（从数据库加载时存在）
   role: 'user' | 'assistant';
   content: string;
   reasoning?: string;  // 深度思考内容，流式结束后保留供查阅

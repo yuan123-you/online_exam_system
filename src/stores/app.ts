@@ -292,9 +292,19 @@ export const useAppStore = defineStore('app', () => {
   const chatStreamStartTime = ref(0)
   const chatStreamingHint = ref('')
   const chatDisplayContent = ref('')
+  // Typewriter effect: displayed content appears character-by-character
+  const chatTypewriterContent = ref('')
+  // Feedback system: pre-output and in-output messages
+  const chatFeedbackMessage = ref('')
+  const chatFeedbackVisible = ref(false)
   let chatDisplayRafId = 0
   let chatAbortController: AbortController | null = null
   let chatTimeoutId: ReturnType<typeof setTimeout> | null = null
+  // Typewriter timer
+  let chatTypewriterTimerId: ReturnType<typeof setTimeout> | null = null
+  let chatTypewriterIndex = 0
+  // In-output feedback timer
+  let chatFeedbackTimerId: ReturnType<typeof setInterval> | null = null
 
   // Practice state (question generation session — separate from chat)
   const practiceMessages = ref<ChatMessage[]>([])
@@ -305,9 +315,16 @@ export const useAppStore = defineStore('app', () => {
   const practiceStreamStartTime = ref(0)
   const practiceStreamingHint = ref('')
   const practiceDisplayContent = ref('')
+  // Question-by-question streaming: parsed questions appear one by one
+  const practiceStreamingQuestions = ref<Array<Record<string, unknown>>>([])
+  // Feedback system for practice mode
+  const practiceFeedbackMessage = ref('')
+  const practiceFeedbackVisible = ref(false)
   let practiceDisplayRafId = 0
   let practiceAbortController: AbortController | null = null
   let practiceTimeoutId: ReturnType<typeof setTimeout> | null = null
+  // In-output feedback timer for practice
+  let practiceFeedbackTimerId: ReturnType<typeof setInterval> | null = null
 
   // Chat history state
   const conversations = ref<Conversation[]>([])
@@ -785,12 +802,21 @@ export const useAppStore = defineStore('app', () => {
     chatStreamStartTime.value = 0
     chatStreamingHint.value = ''
     chatDisplayContent.value = ''
+    chatTypewriterContent.value = ''
+    chatFeedbackMessage.value = ''
+    chatFeedbackVisible.value = false
+    stopChatTypewriter()
+    stopChatFeedbackTimer()
     practiceStreamingContent.value = ''
     practiceStreamingActive.value = false
     practiceStreamingReasoning.value = ''
     practiceStreamStartTime.value = 0
     practiceStreamingHint.value = ''
     practiceDisplayContent.value = ''
+    practiceStreamingQuestions.value = []
+    practiceFeedbackMessage.value = ''
+    practiceFeedbackVisible.value = false
+    stopPracticeFeedbackTimer()
     conversations.value = []
     activeConversationId.value = null
     conversationsLoading.value = false
@@ -1250,7 +1276,9 @@ export const useAppStore = defineStore('app', () => {
 
   /** Load personalized recommendations and user profile */
   async function loadRecommendations(forceRefresh = false) {
-    if (!currentUser.value || recommendationsLoading.value) return
+    if (!currentUser.value) return
+    // Allow force refresh even if a previous load is in progress
+    if (recommendationsLoading.value && !forceRefresh) return
     recommendationsLoading.value = true
     try {
       const recResult = await getRecommendations(forceRefresh)
@@ -1271,12 +1299,14 @@ export const useAppStore = defineStore('app', () => {
     recommendationType: string,
     feedbackType: string,
     detail?: string,
+    recommendationContent?: Record<string, unknown>,
   ) {
     try {
       await submitRecommendationFeedback({
         recommendationType,
         feedbackType,
         feedbackDetail: detail,
+        recommendationContent,
       })
       const label = feedbackType === 'helpful' ? '感谢反馈，我们会继续推荐类似内容' : '感谢反馈，我们会优化推荐内容'
       showToast(label, 'success')
@@ -1346,12 +1376,13 @@ export const useAppStore = defineStore('app', () => {
 
       const result = await getConversationMessages(conversationId)
       activeConversationId.value = conversationId
-      // Deduplicate messages on load (fixes any pre-existing duplicates in DB)
-      const seen = new Set<string>()
+      // Deduplicate by message id from DB (content-based dedup was too aggressive —
+      // it removed legitimate messages that happened to share the same text)
+      const seenIds = new Set<string>()
       const deduped = result.messages.filter(m => {
-        const key = `${m.role}|${m.content}|${m.reasoning || ''}`
-        if (seen.has(key)) return false
-        seen.add(key)
+        if (!m.id) return true // no id → keep
+        if (seenIds.has(m.id)) return false
+        seenIds.add(m.id)
         return true
       })
       // Load into the appropriate message array based on session type
@@ -1439,6 +1470,185 @@ export const useAppStore = defineStore('app', () => {
     }
   }
 
+  // ========== Typewriter & Feedback Helpers ==========
+
+  /** Pre-output feedback messages for chat mode */
+  const CHAT_PRE_FEEDBACK = [
+    '我正在为你准备详细的回答 ✨',
+    '让我认真思考一下你的问题 🤔',
+    '好问题！让我为你详细解答 💡',
+    '正在构思最佳答案，请稍候... 📝',
+  ]
+  /** In-output feedback messages for chat mode */
+  const CHAT_IN_FEEDBACK = [
+    '继续完善回答中...',
+    '正在补充更多细节...',
+    '马上就好，正在整理思路...',
+    '快完成了，请稍候...',
+  ]
+  /** Pre-output feedback messages for practice mode */
+  const PRACTICE_PRE_FEEDBACK = [
+    '正在为你精心出题，请稍候 📝',
+    '让我为你准备高质量的练习题 ✨',
+    '好题目值得等待，正在生成中... 🎯',
+  ]
+  /** In-output feedback messages for practice mode */
+  const PRACTICE_IN_FEEDBACK = [
+    '题目生成中，已接近完成...',
+    '正在完善最后一道题...',
+    '快好了，正在添加解析...',
+  ]
+
+  /** Pick a random message from pool, avoiding consecutive repeats */
+  function pickFeedback(pool: string[], lastIndex: number): { message: string; index: number } {
+    let idx: number
+    do { idx = Math.floor(Math.random() * pool.length) } while (idx === lastIndex && pool.length > 1)
+    return { message: pool[idx], index: idx }
+  }
+
+  let chatPreFeedbackIdx = -1
+  let chatInFeedbackIdx = -1
+  let practicePreFeedbackIdx = -1
+  let practiceInFeedbackIdx = -1
+
+  /** Typewriter tick: advance one character with natural delay */
+  function chatTypewriterTick() {
+    const target = chatStreamingContent.value
+    if (chatTypewriterIndex >= target.length) {
+      // All current content displayed; wait for more or complete
+      if (!chatStreamingActive.value) {
+        // Streaming done — finish
+        chatTypewriterContent.value = target
+      }
+      return
+    }
+
+    // Advance 1-3 characters (faster for ASCII)
+    let step = 1
+    const ch = target[chatTypewriterIndex]
+    if (/[a-zA-Z0-9\s]/.test(ch)) {
+      step = Math.random() < 0.3 ? 2 : 1
+    }
+    chatTypewriterIndex = Math.min(chatTypewriterIndex + step, target.length)
+    chatTypewriterContent.value = target.substring(0, chatTypewriterIndex)
+
+    // Natural delay with punctuation pauses
+    const baseInterval = 80 // ~12.5 chars/sec
+    const jitter = baseInterval * 0.3 * (Math.random() * 2 - 1)
+    let delay = baseInterval + jitter
+    // Punctuation pauses
+    if (chatTypewriterIndex > 0) {
+      const prevChar = target[chatTypewriterIndex - 1]
+      const pauseMap: Record<string, number> = {
+        '。': 180, '？': 180, '！': 180, '.': 150, '?': 150, '!': 150,
+        '，': 100, '；': 100, '：': 100, ',': 80, ';': 80, ':': 80,
+        '\n': 120, '…': 200,
+      }
+      delay += pauseMap[prevChar] || 0
+    }
+    delay = Math.min(Math.max(delay, 30), 200)
+
+    chatTypewriterTimerId = setTimeout(chatTypewriterTick, delay)
+  }
+
+  /** Start the typewriter effect */
+  function startChatTypewriter() {
+    stopChatTypewriter()
+    chatTypewriterIndex = 0
+    chatTypewriterContent.value = ''
+    chatTypewriterTick()
+  }
+
+  /** Stop the typewriter effect */
+  function stopChatTypewriter() {
+    if (chatTypewriterTimerId !== null) {
+      clearTimeout(chatTypewriterTimerId)
+      chatTypewriterTimerId = null
+    }
+  }
+
+  /** Finish typewriter immediately (skip animation) */
+  function finishChatTypewriter() {
+    stopChatTypewriter()
+    chatTypewriterContent.value = chatStreamingContent.value
+    chatTypewriterIndex = chatStreamingContent.value.length
+  }
+
+  /** Start in-output feedback timer for chat */
+  function startChatFeedbackTimer() {
+    stopChatFeedbackTimer()
+    chatFeedbackTimerId = setInterval(() => {
+      if (chatStreamingActive.value && chatStreamingContent.value.length > 500) {
+        const { message, index } = pickFeedback(CHAT_IN_FEEDBACK, chatInFeedbackIdx)
+        chatInFeedbackIdx = index
+        chatFeedbackMessage.value = message
+        chatFeedbackVisible.value = true
+        // Auto-hide after 3 seconds
+        setTimeout(() => {
+          if (chatFeedbackMessage.value === message) {
+            chatFeedbackVisible.value = false
+          }
+        }, 3000)
+      }
+    }, 8000)
+  }
+
+  /** Stop in-output feedback timer for chat */
+  function stopChatFeedbackTimer() {
+    if (chatFeedbackTimerId !== null) {
+      clearInterval(chatFeedbackTimerId)
+      chatFeedbackTimerId = null
+    }
+  }
+
+  /** Start in-output feedback timer for practice */
+  function startPracticeFeedbackTimer() {
+    stopPracticeFeedbackTimer()
+    practiceFeedbackTimerId = setInterval(() => {
+      if (practiceStreamingActive.value && practiceStreamingContent.value.length > 300) {
+        const { message, index } = pickFeedback(PRACTICE_IN_FEEDBACK, practiceInFeedbackIdx)
+        practiceInFeedbackIdx = index
+        practiceFeedbackMessage.value = message
+        practiceFeedbackVisible.value = true
+        setTimeout(() => {
+          if (practiceFeedbackMessage.value === message) {
+            practiceFeedbackVisible.value = false
+          }
+        }, 3000)
+      }
+    }, 8000)
+  }
+
+  /** Stop in-output feedback timer for practice */
+  function stopPracticeFeedbackTimer() {
+    if (practiceFeedbackTimerId !== null) {
+      clearInterval(practiceFeedbackTimerId)
+      practiceFeedbackTimerId = null
+    }
+  }
+
+  /** Try to parse complete questions from streaming content for question-by-question display */
+  function tryParseStreamingQuestions(content: string): Array<Record<string, unknown>> {
+    const result: Array<Record<string, unknown>> = []
+    // Extract complete JSON objects from the streaming content
+    const objectPattern = /\{\s*(?:"[^"]*"\s*:\s*(?:"[^"]*"|\[[^\]]*\]|\d+|true|false)\s*,?\s*)+\}/g
+    let match
+    while ((match = objectPattern.exec(content)) !== null) {
+      try {
+        const obj = JSON.parse(match[0])
+        if (obj.title && obj.type) {
+          const exists = result.some(q => q.title === obj.title)
+          if (!exists) {
+            // Mark as new if not already in the current streaming questions list
+            const alreadySeen = practiceStreamingQuestions.value.some(q => q.title === obj.title)
+            result.push({ ...obj, _isNew: !alreadySeen })
+          }
+        }
+      } catch { /* skip */ }
+    }
+    return result
+  }
+
   // ========== Chat Actions ==========
 
   /** Send a chat message and get streaming response */
@@ -1459,6 +1669,12 @@ export const useAppStore = defineStore('app', () => {
     chatStreamStartTime.value = startTime
     chatLoading.value = true
 
+    // Pre-output feedback: show encouraging message immediately
+    const { message: preMsg, index: preIdx } = pickFeedback(CHAT_PRE_FEEDBACK, chatPreFeedbackIdx)
+    chatPreFeedbackIdx = preIdx
+    chatFeedbackMessage.value = preMsg
+    chatFeedbackVisible.value = true
+
     // Build context: only use chat messages (no cross-tab contamination from practice)
     let contextMessages = chatMessages.value.slice(0, -1)
 
@@ -1476,6 +1692,9 @@ export const useAppStore = defineStore('app', () => {
       }
     }, 15000)
 
+    // Start in-output feedback timer
+    startChatFeedbackTimer()
+
     chatAbortController = apiAiChatStream(
       { message, messages: contextMessages, deepThinking: deepThinkingEnabled.value },
       (chunk) => {
@@ -1483,6 +1702,14 @@ export const useAppStore = defineStore('app', () => {
           chatStreamingReasoning.value += chunk.text
         } else {
           chatStreamingContent.value += chunk.text
+          // Hide pre-output feedback once content starts arriving
+          if (chatFeedbackVisible.value && chatStreamingContent.value.length > 0) {
+            chatFeedbackVisible.value = false
+          }
+          // Start typewriter on first content chunk
+          if (chatTypewriterIndex === 0 && chatStreamingContent.value.length > 0) {
+            startChatTypewriter()
+          }
           // RAF-batched display update — coalesce multiple chunks per frame
           if (!chatDisplayRafId) {
             chatDisplayRafId = requestAnimationFrame(() => {
@@ -1494,6 +1721,8 @@ export const useAppStore = defineStore('app', () => {
       },
       (data) => {
         chatStreamingHint.value = ''
+        chatFeedbackVisible.value = false
+        stopChatFeedbackTimer()
         // Flush any pending RAF display update
         if (chatDisplayRafId) { cancelAnimationFrame(chatDisplayRafId); chatDisplayRafId = 0 }
         chatDisplayContent.value = ''
@@ -1501,6 +1730,8 @@ export const useAppStore = defineStore('app', () => {
         clearTimeout(chatTimeout2)
         chatStreamingActive.value = false
         chatLoading.value = false
+        // Finish typewriter immediately on complete
+        finishChatTypewriter()
         if (data.content) {
           // 剥离 AI 思考文本，将其移入 reasoning 字段
           const { content, thinking } = stripThinkingFromContent(data.content)
@@ -1529,6 +1760,9 @@ export const useAppStore = defineStore('app', () => {
       },
       (error) => {
         chatStreamingHint.value = ''
+        chatFeedbackVisible.value = false
+        stopChatFeedbackTimer()
+        stopChatTypewriter()
         if (chatDisplayRafId) { cancelAnimationFrame(chatDisplayRafId); chatDisplayRafId = 0 }
         chatDisplayContent.value = ''
         if (chatTimeoutId) { clearTimeout(chatTimeoutId); chatTimeoutId = null }
@@ -1542,6 +1776,9 @@ export const useAppStore = defineStore('app', () => {
       },
       () => {
         chatStreamingHint.value = ''
+        chatFeedbackVisible.value = false
+        stopChatFeedbackTimer()
+        stopChatTypewriter()
         if (chatDisplayRafId) { cancelAnimationFrame(chatDisplayRafId); chatDisplayRafId = 0 }
         chatDisplayContent.value = ''
         if (chatTimeoutId) { clearTimeout(chatTimeoutId); chatTimeoutId = null }
@@ -1559,6 +1796,9 @@ export const useAppStore = defineStore('app', () => {
       chatAbortController = null
     }
     if (chatTimeoutId) { clearTimeout(chatTimeoutId); chatTimeoutId = null }
+    stopChatTypewriter()
+    stopChatFeedbackTimer()
+    chatFeedbackVisible.value = false
     chatStreamingActive.value = false
     chatLoading.value = false
   }
@@ -1571,6 +1811,11 @@ export const useAppStore = defineStore('app', () => {
     chatStreamingActive.value = false
     chatStreamingHint.value = ''
     chatDisplayContent.value = ''
+    chatTypewriterContent.value = ''
+    chatFeedbackMessage.value = ''
+    chatFeedbackVisible.value = false
+    stopChatTypewriter()
+    stopChatFeedbackTimer()
   }
 
   /** Retry a failed AI message — removes the error message and re-sends */
@@ -1619,6 +1864,14 @@ export const useAppStore = defineStore('app', () => {
     practiceStreamingActive.value = true
     practiceStreamStartTime.value = startTime
     practSessionLoading.value = true
+    // Reset question-by-question streaming
+    practiceStreamingQuestions.value = []
+
+    // Pre-output feedback: show encouraging message immediately
+    const { message: preMsg, index: preIdx } = pickFeedback(PRACTICE_PRE_FEEDBACK, practicePreFeedbackIdx)
+    practicePreFeedbackIdx = preIdx
+    practiceFeedbackMessage.value = preMsg
+    practiceFeedbackVisible.value = true
 
     // Practice mode: use the user's message directly (no cross-tab contamination from chat)
     let enrichedPrompt = message
@@ -1635,6 +1888,9 @@ export const useAppStore = defineStore('app', () => {
         practiceStreamingHint.value = '⏳ 题目生成中，好题值得等待...'
       }
     }, 15000)
+
+    // Start in-output feedback timer
+    startPracticeFeedbackTimer()
 
     // Smart extraction from user message: infer type/subject/difficulty/count
     const inferredType = /多选/.test(message) ? 'multiple'
@@ -1686,6 +1942,15 @@ export const useAppStore = defineStore('app', () => {
           practiceStreamingReasoning.value += chunk.text
         } else {
           practiceStreamingContent.value += chunk.text
+          // Hide pre-output feedback once content starts arriving
+          if (practiceFeedbackVisible.value && practiceStreamingContent.value.length > 0) {
+            practiceFeedbackVisible.value = false
+          }
+          // Try to parse complete questions for question-by-question display
+          const parsed = tryParseStreamingQuestions(practiceStreamingContent.value)
+          if (parsed.length > practiceStreamingQuestions.value.length) {
+            practiceStreamingQuestions.value = parsed
+          }
           // RAF-batched display update
           if (!practiceDisplayRafId) {
             practiceDisplayRafId = requestAnimationFrame(() => {
@@ -1697,6 +1962,8 @@ export const useAppStore = defineStore('app', () => {
       },
       (data) => {
         practiceStreamingHint.value = ''
+        practiceFeedbackVisible.value = false
+        stopPracticeFeedbackTimer()
         if (practiceDisplayRafId) { cancelAnimationFrame(practiceDisplayRafId); practiceDisplayRafId = 0 }
         practiceDisplayContent.value = ''
         if (practiceTimeoutId) { clearTimeout(practiceTimeoutId); practiceTimeoutId = null }
@@ -1754,6 +2021,8 @@ export const useAppStore = defineStore('app', () => {
       },
       (error) => {
         practiceStreamingHint.value = ''
+        practiceFeedbackVisible.value = false
+        stopPracticeFeedbackTimer()
         if (practiceDisplayRafId) { cancelAnimationFrame(practiceDisplayRafId); practiceDisplayRafId = 0 }
         practiceDisplayContent.value = ''
         if (practiceTimeoutId) { clearTimeout(practiceTimeoutId); practiceTimeoutId = null }
@@ -1767,6 +2036,8 @@ export const useAppStore = defineStore('app', () => {
       },
       () => {
         practiceStreamingHint.value = ''
+        practiceFeedbackVisible.value = false
+        stopPracticeFeedbackTimer()
         if (practiceDisplayRafId) { cancelAnimationFrame(practiceDisplayRafId); practiceDisplayRafId = 0 }
         practiceDisplayContent.value = ''
         if (practiceTimeoutId) { clearTimeout(practiceTimeoutId); practiceTimeoutId = null }
@@ -1784,6 +2055,8 @@ export const useAppStore = defineStore('app', () => {
       practiceAbortController = null
     }
     if (practiceTimeoutId) { clearTimeout(practiceTimeoutId); practiceTimeoutId = null }
+    stopPracticeFeedbackTimer()
+    practiceFeedbackVisible.value = false
     practiceStreamingActive.value = false
     practSessionLoading.value = false
   }
@@ -1796,6 +2069,10 @@ export const useAppStore = defineStore('app', () => {
     practiceStreamingActive.value = false
     practiceStreamingHint.value = ''
     practiceDisplayContent.value = ''
+    practiceStreamingQuestions.value = []
+    practiceFeedbackMessage.value = ''
+    practiceFeedbackVisible.value = false
+    stopPracticeFeedbackTimer()
   }
 
   // ========== Practice Session Persistence Actions ==========
@@ -2179,6 +2456,9 @@ export const useAppStore = defineStore('app', () => {
     chatStreamStartTime,
     chatStreamingHint,
     chatDisplayContent,
+    chatTypewriterContent,
+    chatFeedbackMessage,
+    chatFeedbackVisible,
     handleChatSend,
     handleChatStop,
     clearChatMessages,
@@ -2223,6 +2503,9 @@ export const useAppStore = defineStore('app', () => {
     practiceStreamStartTime,
     practiceStreamingHint,
     practiceDisplayContent,
+    practiceStreamingQuestions,
+    practiceFeedbackMessage,
+    practiceFeedbackVisible,
     handlePracticeSend,
     handlePracticeStop,
     clearPracticeMessages,

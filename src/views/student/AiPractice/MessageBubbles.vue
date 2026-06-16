@@ -12,8 +12,15 @@
       idx === messages.length - 1 && !!streamingReasoning,
       idx === messages.length - 1 && !!streamingContent,
       idx === messages.length - 1 && !!streamingHint,
+      idx === messages.length - 1 && !!typewriterContent,
+      idx === messages.length - 1 && !!feedbackVisible,
+      idx === messages.length - 1 && !!feedbackMessage,
       submitted[idx],
       copiedIdx === idx,
+      JSON.stringify(answers[idx] || {}),
+      JSON.stringify(textAnswers[idx] || {}),
+      JSON.stringify(results[idx] || {}),
+      JSON.stringify(explanationsOpen[idx] || {}),
     ]"
     :class="['chat-bubble', msg.role === 'user' ? 'bubble-user' : 'bubble-ai']"
   >
@@ -25,6 +32,15 @@
           v-if="msg.role === 'assistant' && isLast(idx) && streamingActive && !streamingContent && !streamingReasoning && !streamingHint"
           class="typing-dots"
         ><span></span><span></span><span></span></div>
+
+        <!-- Pre-output / In-output Feedback message -->
+        <div
+          v-if="msg.role === 'assistant' && isLast(idx) && feedbackVisible && feedbackMessage"
+          class="feedback-message"
+          :class="{ 'feedback-pre': !streamingContent, 'feedback-in': !!streamingContent }"
+        >
+          <span class="feedback-text">{{ feedbackMessage }}</span>
+        </div>
 
         <!-- Reasoning (deep thinking) block — during streaming: open -->
         <div
@@ -48,7 +64,7 @@
           </details>
         </div>
 
-        <!-- Streaming content: RAF-batched, flicker-free rendering -->
+        <!-- Streaming content: typewriter effect for chat, generating hint for practice -->
         <div
           v-if="msg.role === 'assistant' && isLast(idx) && streamingActive && (streamingContent || streamingHint)"
           :ref="(el: any) => setStreamingEl(idx, el as HTMLElement | null)"
@@ -204,6 +220,10 @@ const props = defineProps<{
   streamingReasoning: string
   streamingContent?: string
   streamingHint?: string
+  typewriterContent?: string
+  feedbackMessage?: string
+  feedbackVisible?: boolean
+  streamingQuestions?: Array<Record<string, unknown>>
   loading: boolean
   tab?: 'chat' | 'practice'
 }>()
@@ -223,7 +243,40 @@ function renderStreamingContent(text: string): string {
   if (!text) return ''
   const isPractice = props.tab === 'practice'
   if (isPractice) {
+    // Practice mode: show question-by-question cards during streaming
+    const sq = props.streamingQuestions
+    if (sq && sq.length > 0) {
+      let html = '<div class="streaming-questions">'
+      html += `<div class="sq-header">📝 已生成 ${sq.length} 道题，继续生成中...</div>`
+      for (let i = 0; i < sq.length; i++) {
+        const q = sq[i]
+        const typeStr = (q.type as string) || 'single'
+        const title = (q.title as string) || ''
+        const options = (q.options as string[]) || []
+        const isNew = (q as any)._isNew
+        html += `<div class="sq-card${isNew ? ' sq-new' : ''}">`
+        html += `<div class="sq-card-head"><span class="sq-num">${i + 1}.</span><span class="sq-type">${typeLabel(typeStr as any)}</span></div>`
+        html += `<div class="sq-card-title">${escapeHtml(title)}</div>`
+        if (options.length > 0) {
+          html += '<div class="sq-options">'
+          for (let oi = 0; oi < options.length; oi++) {
+            const optText = String(options[oi]).replace(/^[A-D][.、\s]+/, '')
+            const letter = ['A','B','C','D','E','F'][oi] || oi
+            html += `<div class="sq-opt"><span class="sq-opt-letter">${letter}</span><span class="sq-opt-text">${escapeHtml(optText)}</span></div>`
+          }
+          html += '</div>'
+        }
+        html += '</div>'
+      }
+      html += '</div>'
+      return html
+    }
     return '<div class="generating-hint">📝 正在生成题目<span class="gen-dots">...</span></div>'
+  }
+  // Chat mode: use typewriter content for character-by-character display
+  const tw = props.typewriterContent
+  if (tw) {
+    return renderMarkdown(tw)
   }
   return renderMarkdown(text)
 }
@@ -273,6 +326,14 @@ watch(() => props.streamingContent, () => {
 watch(() => props.streamingHint, () => {
   if (props.streamingActive) scheduleStreamingUpdate()
 })
+// Watch typewriter content for chat mode character-by-character display
+watch(() => props.typewriterContent, () => {
+  if (props.streamingActive) scheduleStreamingUpdate()
+})
+// Watch streaming questions for practice mode question-by-question display
+watch(() => props.streamingQuestions, () => {
+  if (props.streamingActive) scheduleStreamingUpdate()
+}, { deep: true })
 
 // Handle streaming state transitions
 watch(() => props.streamingActive, (active, wasActive) => {
@@ -304,6 +365,21 @@ watch(() => store.activePracticeSession, (session) => {
   if (session && session.status !== 'submitted') {
     nextTick(() => loadAnswersFromSession(session))
   }
+}, { immediate: true })
+
+// 当消息变化时，为新解析出的题目初始化答案状态（确保 v-model 绑定不报错）
+watch(() => props.messages.length, () => {
+  nextTick(() => {
+    for (let i = 0; i < props.messages.length; i++) {
+      const msg = props.messages[i]
+      if (msg.role !== 'assistant' || !msg.content) continue
+      const qs = parsedQuestions(i)
+      if (qs.length === 0) continue
+      for (let qi = 0; qi < qs.length; qi++) {
+        ensure(i, qi)
+      }
+    }
+  })
 }, { immediate: true })
 
 // ===== Newly completed message tracking (for fade-in effect) =====
@@ -1207,6 +1283,136 @@ function escapeHtml(s: string) {
   40% { transform: scale(1); opacity: 1; }
 }
 
+/* Feedback message — pre-output and in-output */
+.feedback-message {
+  padding: 8px 14px;
+  border-radius: 10px;
+  font-size: 13px;
+  line-height: 1.5;
+  margin-bottom: 8px;
+  animation: feedback-fade-in 0.4s ease-out both;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.feedback-pre {
+  background: linear-gradient(135deg, #eef2ff 0%, #f0fdf4 100%);
+  color: #4f46e5;
+  border: 1px solid #e0e7ff;
+}
+.feedback-in {
+  background: #fefce8;
+  color: #a16207;
+  border: 1px solid #fef08a;
+  font-size: 12px;
+  padding: 6px 12px;
+}
+.feedback-text {
+  display: inline-block;
+}
+@keyframes feedback-fade-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* Streaming progress — question-by-question indicator */
+.message-content :deep(.streaming-progress) {
+  color: #6366f1;
+  font-size: 13px;
+  font-weight: 500;
+  padding: 6px 0;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  animation: progress-pulse 2s ease-in-out infinite;
+}
+@keyframes progress-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.7; }
+}
+
+/* Streaming question cards — appear one by one during practice mode */
+.message-content :deep(.streaming-questions) {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.message-content :deep(.sq-header) {
+  color: #6366f1;
+  font-size: 13px;
+  font-weight: 500;
+  padding: 4px 0 6px;
+  animation: progress-pulse 2s ease-in-out infinite;
+}
+.message-content :deep(.sq-card) {
+  background: #f9fafb;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 10px 12px;
+  transition: all 0.3s ease-out;
+}
+.message-content :deep(.sq-card.sq-new) {
+  animation: sq-card-appear 0.4s ease-out both;
+}
+@keyframes sq-card-appear {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.message-content :deep(.sq-card-head) {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.message-content :deep(.sq-num) {
+  font-size: 13px;
+  font-weight: 700;
+  color: #111827;
+}
+.message-content :deep(.sq-type) {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: #eef2ff;
+  color: #6366f1;
+  font-weight: 500;
+}
+.message-content :deep(.sq-card-title) {
+  font-size: 13px;
+  line-height: 1.5;
+  color: #1f2937;
+  margin-bottom: 6px;
+}
+.message-content :deep(.sq-options) {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.message-content :deep(.sq-opt) {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: #374151;
+  line-height: 1.4;
+}
+.message-content :deep(.sq-opt-letter) {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #f3f4f6;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  font-weight: 600;
+  color: #6b7280;
+  flex-shrink: 0;
+}
+.message-content :deep(.sq-opt-text) {
+  overflow-wrap: anywhere;
+}
+
 /* Reasoning */
 /* ---- DeepSeek-style reasoning block (no inner scrollbar) ---- */
 .reasoning-block { margin-bottom: 8px; }
@@ -1677,6 +1883,31 @@ function escapeHtml(s: string) {
   .bubble-avatar {
     width: 26px; height: 26px;
     font-size: 12px;
+  }
+
+  /* Feedback messages on mobile */
+  .feedback-message {
+    padding: 6px 10px;
+    font-size: 12px;
+    border-radius: 8px;
+  }
+  .feedback-in {
+    font-size: 11px;
+    padding: 5px 10px;
+  }
+
+  /* Streaming question cards on mobile */
+  .message-content :deep(.sq-card) {
+    padding: 8px 10px;
+  }
+  .message-content :deep(.sq-card-title) {
+    font-size: 12px;
+  }
+  .message-content :deep(.sq-opt) {
+    font-size: 11px;
+  }
+  .message-content :deep(.sq-opt-letter) {
+    width: 16px; height: 16px; font-size: 9px;
   }
 
   /* Force message-content to stay within screen bounds */

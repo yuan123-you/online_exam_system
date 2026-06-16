@@ -96,6 +96,7 @@ public class ChatHistoryService {
       List<Map<String, Object>> messages = new ArrayList<>();
       for (Map<String, Object> row : rows) {
         Map<String, Object> msg = new LinkedHashMap<>();
+        msg.put("id", str(row.get("id")));
         msg.put("role", str(row.get("role")));
         msg.put("content", str(row.get("content")));
         String reasoning = str(row.get("reasoning"));

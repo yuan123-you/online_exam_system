@@ -53,7 +53,7 @@
                 v-for="(rec, idx) in personalizedRecommendations"
                 :key="idx"
                 class="rec-card"
-                :class="'rec-' + rec.priority"
+                :class="['rec-' + rec.priority, { 'rec-feedback-given': feedbackGivenMap[idx] }]"
                 @click="handleRecommendationClick(rec)"
               >
                 <div class="rec-card-header">
@@ -67,10 +67,10 @@
                     {{ rec.action === 'wrongbook' ? '去重练' : rec.action === 'chat' ? '开始对话' : '开始练习' }}
                   </button>
                   <div class="rec-feedback">
-                    <button class="fb-btn fb-helpful" @click.stop="giveFeedback(rec, 'helpful')" title="有帮助">
+                    <button class="fb-btn fb-helpful" :class="{ 'fb-active-helpful': feedbackGivenMap[idx] === 'helpful' }" @click.stop="giveFeedback(rec, 'helpful', idx)" :disabled="!!feedbackGivenMap[idx]" title="有帮助">
                       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3H14z"/><path d="M7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3"/></svg>
                     </button>
-                    <button class="fb-btn fb-nothelpful" @click.stop="giveFeedback(rec, 'not_helpful')" title="没帮助">
+                    <button class="fb-btn fb-nothelpful" :class="{ 'fb-active-nothelpful': feedbackGivenMap[idx] === 'not_helpful' }" @click.stop="giveFeedback(rec, 'not_helpful', idx)" :disabled="!!feedbackGivenMap[idx]" title="没帮助">
                       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 15v4a3 3 0 0 0 3 3l4-9V2H5.72a2 2 0 0 0-2 1.7l-1.38 9a2 2 0 0 0 2 2.3H10z"/><path d="M17 2h2.67A2.31 2.31 0 0 1 22 4v7a2.31 2.31 0 0 1-2.33 2H17"/></svg>
                     </button>
                   </div>
@@ -87,6 +87,10 @@
           :streaming-reasoning="currentStreamingReasoning"
           :streaming-content="currentStreamingContent"
           :streaming-hint="currentStreamingHint"
+          :typewriter-content="currentTypewriterContent"
+          :feedback-message="currentFeedbackMessage"
+          :feedback-visible="currentFeedbackVisible"
+          :streaming-questions="currentStreamingQuestions"
           :loading="currentLoading"
           :tab="activeTab"
         />
@@ -192,6 +196,10 @@ const currentStreamingActive = computed(() => activeTab.value === 'chat' ? store
 const currentStreamingReasoning = computed(() => activeTab.value === 'chat' ? store.chatStreamingReasoning : store.practiceStreamingReasoning)
 const currentStreamingContent = computed(() => activeTab.value === 'chat' ? store.chatDisplayContent : store.practiceDisplayContent)
 const currentStreamingHint = computed(() => activeTab.value === 'chat' ? store.chatStreamingHint : store.practiceStreamingHint)
+const currentTypewriterContent = computed(() => activeTab.value === 'chat' ? store.chatTypewriterContent : '')
+const currentFeedbackMessage = computed(() => activeTab.value === 'chat' ? store.chatFeedbackMessage : store.practiceFeedbackMessage)
+const currentFeedbackVisible = computed(() => activeTab.value === 'chat' ? store.chatFeedbackVisible : store.practiceFeedbackVisible)
+const currentStreamingQuestions = computed(() => activeTab.value === 'practice' ? store.practiceStreamingQuestions : [])
 
 // Personalized suggestions from user preferences (with defaults as fallback)
 const defaultPracticeQuickChips = [
@@ -248,6 +256,9 @@ const recentThemes = computed(() => {
 const personalizedRecommendations = computed(() => {
   return store.recommendations || []
 })
+
+// 已反馈的推荐项索引（用于即时视觉反馈）
+const feedbackGivenMap = ref<Record<number, 'helpful' | 'not_helpful'>>({})
 
 function switchTab(tab: 'chat' | 'practice') {
   activeTab.value = tab
@@ -336,11 +347,22 @@ function handleRecommendationClick(rec: RecommendationItem) {
   }
 }
 
-function giveFeedback(rec: RecommendationItem, feedbackType: string) {
-  store.submitFeedback(rec.type, feedbackType)
+function giveFeedback(rec: RecommendationItem, feedbackType: string, idx: number) {
+  // 即时视觉反馈
+  feedbackGivenMap.value[idx] = feedbackType as 'helpful' | 'not_helpful'
+  store.submitFeedback(rec.type, feedbackType, undefined, {
+    type: rec.type,
+    title: rec.title,
+    description: rec.description,
+    action: rec.action,
+    prompt: rec.prompt,
+    knowledgePoint: rec.knowledgePoint,
+    subject: rec.subject,
+  })
 }
 
 function refreshRecommendations() {
+  feedbackGivenMap.value = {}
   store.loadRecommendations(true)
 }
 
@@ -368,6 +390,9 @@ watch(() => currentMessages.value.length, () => {
 watch(() => activeTab.value === 'chat' ? store.chatStreamingContent : store.practiceStreamingContent,
   () => onStreamingUpdate())
 watch(() => activeTab.value === 'chat' ? store.chatStreamingReasoning : store.practiceStreamingReasoning,
+  () => onStreamingUpdate())
+// Also trigger scroll on typewriter content updates (character-by-character display)
+watch(() => store.chatTypewriterContent,
   () => onStreamingUpdate())
 
 // 行为自动采集：页面停留时间
@@ -688,6 +713,11 @@ onUnmounted(() => {
 .fb-btn:hover { border-color: #d1d5db; }
 .fb-helpful:hover { color: #10b981; border-color: #10b981; background: #f0fdf4; }
 .fb-nothelpful:hover { color: #ef4444; border-color: #ef4444; background: #fef2f2; }
+.fb-btn:disabled { cursor: default; opacity: 0.9; }
+.fb-active-helpful { color: #10b981 !important; border-color: #10b981 !important; background: #f0fdf4 !important; }
+.fb-active-nothelpful { color: #ef4444 !important; border-color: #ef4444 !important; background: #fef2f2 !important; }
+.rec-feedback-given { opacity: 0.6; }
+.rec-feedback-given:hover { transform: none; box-shadow: none; }
 
 /* ===== Bottom area ===== */
 .bottom-area {

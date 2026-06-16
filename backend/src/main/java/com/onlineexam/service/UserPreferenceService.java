@@ -887,69 +887,97 @@ public class UserPreferenceService {
     List<Map<String, Object>> knowledgeGaps = (List<Map<String, Object>>) profile.getOrDefault("knowledgeGaps", List.of());
     Map<String, Object> learningPrefs = (Map<String, Object>) profile.getOrDefault("learningPreferences", Map.of());
 
+    String userId = String.valueOf(profile.getOrDefault("userId", ""));
     String difficulty = String.valueOf(learningPrefs.getOrDefault("difficultyPreference", "medium"));
     String learningStyle = String.valueOf(learningPrefs.getOrDefault("learningStyle", "balanced"));
 
+    // 查询近期反馈，用于过滤和调整推荐
+    Set<String> suppressedTypes = new java.util.HashSet<>(); // 近期被标记为 not_helpful 的推荐类型
+    Set<String> boostedTypes = new java.util.HashSet<>();    // 近期被标记为 helpful 的推荐类型
+    try {
+      List<Map<String, Object>> recentFeedback = jdbc.queryForList(
+        "SELECT recommendation_type, feedback_type FROM recommendation_feedback " +
+        "WHERE user_id = ? AND created_at > DATE_SUB(NOW(), INTERVAL 3 DAY)",
+        userId);
+      for (Map<String, Object> fb : recentFeedback) {
+        String recType = String.valueOf(fb.getOrDefault("recommendation_type", ""));
+        String fbType = String.valueOf(fb.getOrDefault("feedback_type", ""));
+        if ("not_helpful".equals(fbType) && !recType.isBlank()) {
+          suppressedTypes.add(recType);
+        } else if ("helpful".equals(fbType) && !recType.isBlank()) {
+          boostedTypes.add(recType);
+        }
+      }
+    } catch (Exception e) { /* ignore */ }
+
     // 1. 薄弱知识点专项练习推荐（优先级最高）
-    for (Map<String, Object> gap : knowledgeGaps.stream()
-        .filter(g -> "high".equals(g.get("severity")) || "medium".equals(g.get("severity")))
-        .limit(3).collect(Collectors.toList())) {
-      String kp = str(gap, "knowledgePoint");
-      Map<String, Object> rec = new LinkedHashMap<>();
-      rec.put("type", "knowledge_gap");
-      rec.put("priority", "high");
-      rec.put("title", "薄弱知识点强化：" + kp);
-      rec.put("description", "检测到你在「" + kp + "」上存在薄弱点，建议进行专项练习");
-      rec.put("action", "practice");
-      rec.put("prompt", buildGapPracticePrompt(kp, difficulty));
-      rec.put("knowledgePoint", kp);
-      rec.put("severity", gap.get("severity"));
-      recommendations.add(rec);
+    if (!suppressedTypes.contains("knowledge_gap")) {
+      for (Map<String, Object> gap : knowledgeGaps.stream()
+          .filter(g -> "high".equals(g.get("severity")) || "medium".equals(g.get("severity")))
+          .limit(3).collect(Collectors.toList())) {
+        String kp = str(gap, "knowledgePoint");
+        Map<String, Object> rec = new LinkedHashMap<>();
+        rec.put("type", "knowledge_gap");
+        rec.put("priority", boostedTypes.contains("knowledge_gap") ? "high" : "high");
+        rec.put("title", "薄弱知识点强化：" + kp);
+        rec.put("description", "检测到你在「" + kp + "」上存在薄弱点，建议进行专项练习");
+        rec.put("action", "practice");
+        rec.put("prompt", buildGapPracticePrompt(kp, difficulty));
+        rec.put("knowledgePoint", kp);
+        rec.put("severity", gap.get("severity"));
+        recommendations.add(rec);
+      }
     }
 
     // 2. 科目提升推荐（基于亲和度趋势）
-    for (Map<String, Object> affinity : subjectAffinity.stream()
-        .filter(a -> "declining".equals(a.get("trend")) || "stable".equals(a.get("trend")))
-        .limit(2).collect(Collectors.toList())) {
-      String subject = str(affinity, "subject");
-      Map<String, Object> rec = new LinkedHashMap<>();
-      rec.put("type", "subject_review");
-      rec.put("priority", "medium");
-      rec.put("title", subject + " 巩固提升");
-      rec.put("description", "你在「" + subject + "」的表现趋于平稳/下降，建议复习巩固");
-      rec.put("action", "practice");
-      rec.put("prompt", buildSubjectReviewPrompt(subject, difficulty));
-      rec.put("subject", subject);
-      rec.put("trend", affinity.get("trend"));
-      recommendations.add(rec);
+    if (!suppressedTypes.contains("subject_review")) {
+      for (Map<String, Object> affinity : subjectAffinity.stream()
+          .filter(a -> "declining".equals(a.get("trend")) || "stable".equals(a.get("trend")))
+          .limit(2).collect(Collectors.toList())) {
+        String subject = str(affinity, "subject");
+        Map<String, Object> rec = new LinkedHashMap<>();
+        rec.put("type", "subject_review");
+        rec.put("priority", "medium");
+        rec.put("title", subject + " 巩固提升");
+        rec.put("description", "你在「" + subject + "」的表现趋于平稳/下降，建议复习巩固");
+        rec.put("action", "practice");
+        rec.put("prompt", buildSubjectReviewPrompt(subject, difficulty));
+        rec.put("subject", subject);
+        rec.put("trend", affinity.get("trend"));
+        recommendations.add(rec);
+      }
     }
 
     // 3. 学习建议推荐（基于学习风格）
-    Map<String, Object> studyRec = new LinkedHashMap<>();
-    studyRec.put("type", "study_plan");
-    studyRec.put("priority", "medium");
-    studyRec.put("title", "个性化学习建议");
-    studyRec.put("description", getStyleBasedAdvice(learningStyle, subjectAffinity));
-    studyRec.put("action", "chat");
-    studyRec.put("prompt", buildStudyPlanPrompt(subjectAffinity, knowledgeGaps, difficulty));
-    recommendations.add(studyRec);
+    if (!suppressedTypes.contains("study_plan")) {
+      Map<String, Object> studyRec = new LinkedHashMap<>();
+      studyRec.put("type", "study_plan");
+      studyRec.put("priority", "medium");
+      studyRec.put("title", "个性化学习建议");
+      studyRec.put("description", getStyleBasedAdvice(learningStyle, subjectAffinity));
+      studyRec.put("action", "chat");
+      studyRec.put("prompt", buildStudyPlanPrompt(subjectAffinity, knowledgeGaps, difficulty));
+      recommendations.add(studyRec);
+    }
 
     // 4. 对话建议芯片（基于最近主题和兴趣）
-    List<Map<String, Object>> chatSuggestions = generateChatSuggestions(subjectAffinity, knowledgeGaps);
-    for (Map<String, Object> suggestion : chatSuggestions) {
-      Map<String, Object> rec = new LinkedHashMap<>();
-      rec.put("type", "chat");
-      rec.put("priority", "low");
-      rec.put("title", suggestion.get("text"));
-      rec.put("description", "基于你的学习兴趣推荐");
-      rec.put("action", "chat");
-      rec.put("prompt", suggestion.get("text"));
-      rec.put("category", suggestion.get("category"));
-      recommendations.add(rec);
+    if (!suppressedTypes.contains("chat")) {
+      List<Map<String, Object>> chatSuggestions = generateChatSuggestions(subjectAffinity, knowledgeGaps);
+      for (Map<String, Object> suggestion : chatSuggestions) {
+        Map<String, Object> rec = new LinkedHashMap<>();
+        rec.put("type", "chat");
+        rec.put("priority", "low");
+        rec.put("title", suggestion.get("text"));
+        rec.put("description", "基于你的学习兴趣推荐");
+        rec.put("action", "chat");
+        rec.put("prompt", suggestion.get("text"));
+        rec.put("category", suggestion.get("category"));
+        recommendations.add(rec);
+      }
     }
 
     // 5. 错题重练推荐
-    if (!knowledgeGaps.isEmpty()) {
+    if (!suppressedTypes.contains("wrongbook_retry") && !knowledgeGaps.isEmpty()) {
       Map<String, Object> rec = new LinkedHashMap<>();
       rec.put("type", "wrongbook_retry");
       rec.put("priority", "high");
@@ -960,20 +988,22 @@ public class UserPreferenceService {
     }
 
     // 6. 多样性推荐：探索新科目（确保推荐多样性）
-    Set<String> coveredSubjects = subjectAffinity.stream()
-      .map(a -> str(a, "subject")).collect(Collectors.toSet());
-    for (String subject : SUBJECT_KEYWORDS.keySet()) {
-      if (!coveredSubjects.contains(subject) && recommendations.size() < 12) {
-        Map<String, Object> rec = new LinkedHashMap<>();
-        rec.put("type", "explore");
-        rec.put("priority", "low");
-        rec.put("title", "探索新领域：" + subject);
-        rec.put("description", "尝试学习「" + subject + "」，拓展知识面");
-        rec.put("action", "practice");
-        rec.put("prompt", getSubjectPracticePrompt(subject));
-        rec.put("subject", subject);
-        recommendations.add(rec);
-        break; // 只推荐一个新科目
+    if (!suppressedTypes.contains("explore")) {
+      Set<String> coveredSubjects = subjectAffinity.stream()
+        .map(a -> str(a, "subject")).collect(Collectors.toSet());
+      for (String subject : SUBJECT_KEYWORDS.keySet()) {
+        if (!coveredSubjects.contains(subject) && recommendations.size() < 12) {
+          Map<String, Object> rec = new LinkedHashMap<>();
+          rec.put("type", "explore");
+          rec.put("priority", "low");
+          rec.put("title", "探索新领域：" + subject);
+          rec.put("description", "尝试学习「" + subject + "」，拓展知识面");
+          rec.put("action", "practice");
+          rec.put("prompt", getSubjectPracticePrompt(subject));
+          rec.put("subject", subject);
+          recommendations.add(rec);
+          break; // 只推荐一个新科目
+        }
       }
     }
 
@@ -1080,10 +1110,10 @@ public class UserPreferenceService {
   }
 
   /**
-   * 根据反馈调整推荐策略
+   * 根据反馈调整推荐策略 — 影响后续推荐生成
    */
   private void adjustRecommendationStrategy(String userId, String feedbackType, String recommendationType) {
-    // 记录行为日志用于后续分析
+    // 1. 记录行为日志用于后续分析
     String id = "beh-" + System.currentTimeMillis() + "-" + Integer.toHexString((int)(Math.random() * 0xffffff));
     try {
       jdbc.update(
@@ -1094,6 +1124,83 @@ public class UserPreferenceService {
       );
     } catch (Exception e) {
       log.warn("[UserPreferenceService] 行为日志写入失败: {}", e.getMessage());
+    }
+
+    // 2. 根据反馈类型调整用户画像中的偏好权重
+    try {
+      // 查询用户近期反馈统计
+      List<Map<String, Object>> recentFeedback = jdbc.queryForList(
+        "SELECT feedback_type, recommendation_type, COUNT(*) as cnt FROM recommendation_feedback " +
+        "WHERE user_id = ? AND created_at > DATE_SUB(NOW(), INTERVAL 7 DAY) " +
+        "GROUP BY feedback_type, recommendation_type",
+        userId);
+
+      int helpfulCount = 0;
+      int notHelpfulCount = 0;
+      Map<String, Integer> helpfulByType = new LinkedHashMap<>();
+      Map<String, Integer> notHelpfulByType = new LinkedHashMap<>();
+
+      for (Map<String, Object> fb : recentFeedback) {
+        String ft = String.valueOf(fb.getOrDefault("feedback_type", ""));
+        String rt = String.valueOf(fb.getOrDefault("recommendation_type", ""));
+        int cnt = asInt(fb.get("cnt"));
+        if ("helpful".equals(ft)) {
+          helpfulCount += cnt;
+          helpfulByType.merge(rt, cnt, Integer::sum);
+        } else if ("not_helpful".equals(ft)) {
+          notHelpfulCount += cnt;
+          notHelpfulByType.merge(rt, cnt, Integer::sum);
+        }
+      }
+
+      // 更新用户画像中的偏好权重
+      if (helpfulCount > 0 || notHelpfulCount > 0) {
+        // 计算偏好调整方向
+        Map<String, Object> prefs = new LinkedHashMap<>();
+
+        // 如果用户对 knowledge_gap 类型反馈有帮助，增加难度
+        if (helpfulByType.getOrDefault("knowledge_gap", 0) > notHelpfulByType.getOrDefault("knowledge_gap", 0)) {
+          prefs.put("difficultyPreference", "hard");
+        }
+        // 如果用户对 knowledge_gap 反馈没帮助，降低难度
+        else if (notHelpfulByType.getOrDefault("knowledge_gap", 0) > helpfulByType.getOrDefault("knowledge_gap", 0)) {
+          prefs.put("difficultyPreference", "easy");
+        }
+
+        // 如果用户对 chat 类型反馈有帮助，偏好阅读式学习
+        if (helpfulByType.getOrDefault("chat", 0) > notHelpfulByType.getOrDefault("chat", 0)) {
+          prefs.put("learningStyle", "reading");
+        }
+        // 如果用户对 practice 类型反馈有帮助，偏好实践式学习
+        if (helpfulByType.getOrDefault("knowledge_gap", 0) + helpfulByType.getOrDefault("wrongbook_retry", 0)
+            > notHelpfulByType.getOrDefault("knowledge_gap", 0) + notHelpfulByType.getOrDefault("wrongbook_retry", 0)) {
+          prefs.put("learningStyle", "kinesthetic");
+        }
+
+        // 持久化偏好调整
+        if (!prefs.isEmpty()) {
+          try {
+            Integer count = jdbc.queryForObject(
+              "SELECT COUNT(*) FROM user_profile WHERE user_id = ?", Integer.class, userId);
+            if (count != null && count > 0) {
+              if (prefs.containsKey("difficultyPreference")) {
+                jdbc.update("UPDATE user_profile SET difficulty_preference = ?, updated_at = ? WHERE user_id = ?",
+                  prefs.get("difficultyPreference"),
+                  LocalDateTime.ofInstant(Instant.now(), ZoneId.systemDefault()), userId);
+              }
+              if (prefs.containsKey("learningStyle")) {
+                jdbc.update("UPDATE user_profile SET learning_style = ?, updated_at = ? WHERE user_id = ?",
+                  prefs.get("learningStyle"),
+                  LocalDateTime.ofInstant(Instant.now(), ZoneId.systemDefault()), userId);
+              }
+            }
+          } catch (Exception e) {
+            log.warn("[UserPreferenceService] 偏好更新失败: {}", e.getMessage());
+          }
+        }
+      }
+    } catch (Exception e) {
+      log.warn("[UserPreferenceService] 反馈策略调整失败: {}", e.getMessage());
     }
   }
 
