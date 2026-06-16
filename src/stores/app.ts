@@ -348,6 +348,103 @@ export const useAppStore = defineStore('app', () => {
   // Current session tab ('chat' | 'practice')
   const activeTab = ref<'chat' | 'practice'>('chat')
 
+  // ========== LocalStorage Persistence ==========
+  // 用户隔离的 localStorage 持久化，页面刷新后恢复 AI 对话和练题数据
+
+  const LS_PREFIX = 'oe_ai_' // online-exam AI state prefix
+
+  /** 获取带用户隔离的 localStorage key */
+  function lsKey(userId: string, key: string): string {
+    return `${LS_PREFIX}${userId}_${key}`
+  }
+
+  /** 保存数据到 localStorage（带用户隔离） */
+  function lsSave(userId: string, key: string, data: unknown): void {
+    try {
+      localStorage.setItem(lsKey(userId, key), JSON.stringify(data))
+    } catch { /* quota exceeded or private mode — silently fail */ }
+  }
+
+  /** 从 localStorage 读取数据（带用户隔离） */
+  function lsLoad<T>(userId: string, key: string): T | null {
+    try {
+      const raw = localStorage.getItem(lsKey(userId, key))
+      return raw ? JSON.parse(raw) as T : null
+    } catch { return null }
+  }
+
+  /** 清除某用户的所有 AI 持久化数据 */
+  function lsClearUser(userId: string): void {
+    const keysToRemove: string[] = []
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i)
+      if (k && k.startsWith(`${LS_PREFIX}${userId}_`)) keysToRemove.push(k)
+    }
+    keysToRemove.forEach(k => localStorage.removeItem(k))
+  }
+
+  /** 防抖保存 */
+  let persistTimer: ReturnType<typeof setTimeout> | null = null
+  function schedulePersist() {
+    if (persistTimer) clearTimeout(persistTimer)
+    persistTimer = setTimeout(() => persistAIState(), 500)
+  }
+
+  /** 将当前 AI 状态持久化到 localStorage */
+  function persistAIState() {
+    const userId = currentUser.value?.id
+    if (!userId) return
+
+    // 只持久化已完成的消息（过滤掉流式中间状态和内部字段）
+    const cleanMessages = (msgs: ChatMessage[]) =>
+      msgs.filter(m => m.content && !m.content.startsWith('❌')).map(m => ({
+        role: m.role,
+        content: m.content,
+        reasoning: m.reasoning || undefined,
+        duration: m.duration || undefined,
+      }))
+
+    lsSave(userId, 'chatMessages', cleanMessages(chatMessages.value))
+    lsSave(userId, 'practiceMessages', cleanMessages(practiceMessages.value))
+    lsSave(userId, 'practiceQuestions', practiceQuestions.value)
+    lsSave(userId, 'activeTab', activeTab.value)
+    lsSave(userId, 'activeConversationId', activeConversationId.value)
+    lsSave(userId, 'deepThinking', deepThinkingEnabled.value)
+  }
+
+  /** 从 localStorage 恢复 AI 状态 */
+  function restoreAIState(userId: string) {
+    const savedChat = lsLoad<ChatMessage[]>(userId, 'chatMessages')
+    if (savedChat && savedChat.length > 0) {
+      chatMessages.value = savedChat
+    }
+
+    const savedPractice = lsLoad<ChatMessage[]>(userId, 'practiceMessages')
+    if (savedPractice && savedPractice.length > 0) {
+      practiceMessages.value = savedPractice
+    }
+
+    const savedQuestions = lsLoad<AiQuestion[]>(userId, 'practiceQuestions')
+    if (savedQuestions && savedQuestions.length > 0) {
+      practiceQuestions.value = savedQuestions
+    }
+
+    const savedTab = lsLoad<'chat' | 'practice'>(userId, 'activeTab')
+    if (savedTab) activeTab.value = savedTab
+
+    const savedConvId = lsLoad<string>(userId, 'activeConversationId')
+    if (savedConvId) activeConversationId.value = savedConvId
+
+    const savedDeepThinking = lsLoad<boolean>(userId, 'deepThinking')
+    if (savedDeepThinking != null) deepThinkingEnabled.value = savedDeepThinking
+  }
+
+  // Watch 关键状态变化，自动触发持久化
+  watch([chatMessages, practiceMessages, practiceQuestions, activeTab, activeConversationId, deepThinkingEnabled],
+    () => schedulePersist(),
+    { deep: true }
+  )
+
   // Practice session persistence state
   const activePracticeSession = ref<PracticeSession | null>(null)
   const practiceSessionLoading = ref(false)
@@ -644,10 +741,12 @@ export const useAppStore = defineStore('app', () => {
           bootstrap.value = null
         } else {
           bootstrap.value = data
+          restoreAIState(data.currentUser.id) // 恢复本地持久化的 AI 对话和练题数据
           handleLoadConversations() // load conversation history in background
           handleLoadPreferences()   // load user preferences for personalization
           loadRecommendations()     // load personalized recommendations
           loadNotificationData()    // load notification data
+          restoreActiveExam()       // restore exam session if one was in progress
         }
       } catch (err: any) {
         // 仅在 401（未授权）时清除 token，服务端 500 等错误不应登出用户
@@ -788,6 +887,7 @@ export const useAppStore = defineStore('app', () => {
   }
 
   function logout() {
+    const userId = currentUser.value?.id
     closeAllModals()
     setCurrentAuthToken('')
     localStorage.removeItem('auth_token')
@@ -796,6 +896,8 @@ export const useAppStore = defineStore('app', () => {
     // Clear AI chat state so next user doesn't see previous user's conversations
     chatMessages.value = []
     practiceMessages.value = []
+    // 清除该用户的本地持久化数据
+    if (userId) lsClearUser(userId)
     chatStreamingContent.value = ''
     chatStreamingActive.value = false
     chatStreamingReasoning.value = ''
@@ -844,6 +946,7 @@ export const useAppStore = defineStore('app', () => {
     batchImportRole.value = null
     activeExam.value = null
     autoGenVisible.value = false
+    sessionStorage.removeItem('active_exam_id')
   }
 
   function openEditor(kind: typeof editorState.value.kind, model: any) {
@@ -927,13 +1030,34 @@ export const useAppStore = defineStore('app', () => {
     try {
       const detail = await loadExamDetail(examId)
       activeExam.value = detail
+      // Persist active exam ID to sessionStorage so it survives page refresh
+      sessionStorage.setItem('active_exam_id', examId)
     } catch (err: any) {
       showToast(err?.message || '无法进入考试', 'error')
     }
   }
 
+  /** Restore active exam session after page refresh */
+  async function restoreActiveExam() {
+    const examId = sessionStorage.getItem('active_exam_id')
+    if (!examId || activeExam.value) return
+    try {
+      const detail = await loadExamDetail(examId)
+      // Only restore if the session is still active (has a deadline in the future)
+      if (detail.session?.deadlineAt && new Date(detail.session.deadlineAt).getTime() > Date.now()) {
+        activeExam.value = detail
+      } else {
+        sessionStorage.removeItem('active_exam_id')
+      }
+    } catch {
+      // Session may have expired or been submitted — clean up
+      sessionStorage.removeItem('active_exam_id')
+    }
+  }
+
   function handleExamSubmitted() {
     activeExam.value = null
+    sessionStorage.removeItem('active_exam_id')
     showToast('交卷成功！', 'success')
     loadData().catch(() => { /* 静默处理刷新失败 */ })
   }
@@ -2432,6 +2556,7 @@ export const useAppStore = defineStore('app', () => {
     reviewSubmission,
     handleGrade,
     startExam,
+    restoreActiveExam,
     handleExamSubmitted,
     retryWrongEntry,
     handleWrongRetry,

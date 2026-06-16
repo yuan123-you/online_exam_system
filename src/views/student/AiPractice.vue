@@ -157,7 +157,7 @@
               @click="stopStreaming"
               title="停止生成"
             >
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
                 <rect x="4" y="4" width="16" height="16" rx="2"/>
               </svg>
             </button>
@@ -834,7 +834,6 @@ onUnmounted(() => {
 }
 .stop-action:hover {
   background: #dc2626;
-  transform: scale(1.06);
   box-shadow: 0 2px 8px rgba(239,68,68,0.35);
 }
 @keyframes stop-pulse {
