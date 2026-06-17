@@ -75,7 +75,17 @@ public class WrongBookController {
         updated.put("wrongCount", asInt(entry.get("wrongCount")) + 1);
         updated.put("lastWrongAt", Instant.now().toString());
       }
-      storeService.saveRecord("wrongBookEntries", updated);
+      try {
+        storeService.saveRecord("wrongBookEntries", updated);
+      } catch (Exception saveErr) {
+        // saveRecord 可能因外键约束失败（AI 练习的 questionId 不在 question 表），
+        // 尝试直接 JDBC 更新已存在的记录来绕过外键检查
+        try {
+          wrongBookService.updateRetryDirect(updated);
+        } catch (Exception jdbcErr) {
+          throw new RuntimeException("保存重做结果失败: " + jdbcErr.getMessage(), jdbcErr);
+        }
+      }
       systemLogService.log(user, "retry wrong book", entryId);
       return ResponseEntity.ok(mapOf("entry", wrongBookService.buildWrongBookEntry(store, updated)));
     } catch (Exception e) {

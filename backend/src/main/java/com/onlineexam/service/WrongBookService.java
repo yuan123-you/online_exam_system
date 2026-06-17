@@ -36,25 +36,30 @@ public class WrongBookService {
   }
 
   /**
-   * 启动时移除 wrong_book_entry.question_id 上的外键约束 fk_wrong_question。
+   * 启动时移除 wrong_book_entry.question_id 上的所有外键约束。
    * AI 练习产生的错题条目 questionId 不存在于 question 表，保留外键会导致
    * 重做（retry）时 INSERT ... ON DUPLICATE KEY UPDATE 失败，返回 500。
    */
   @PostConstruct
   void dropQuestionForeignKeyIfNeeded() {
     try {
-      // 查询是否存在名为 fk_wrong_question 的外键约束
+      // 查询 wrong_book_entry 上所有指向 question 表的外键约束
       List<Map<String, Object>> constraints = jdbc.queryForList(
         "SELECT CONSTRAINT_NAME FROM information_schema.TABLE_CONSTRAINTS " +
         "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'wrong_book_entry' " +
-        "AND CONSTRAINT_NAME = 'fk_wrong_question' AND CONSTRAINT_TYPE = 'FOREIGN KEY'"
+        "AND CONSTRAINT_TYPE = 'FOREIGN KEY'"
       );
-      if (!constraints.isEmpty()) {
-        jdbc.execute("ALTER TABLE wrong_book_entry DROP FOREIGN KEY fk_wrong_question");
-        log.info("Dropped foreign key fk_wrong_question from wrong_book_entry to allow AI practice records.");
+      for (Map<String, Object> row : constraints) {
+        String constraintName = String.valueOf(row.get("CONSTRAINT_NAME"));
+        try {
+          jdbc.execute("ALTER TABLE wrong_book_entry DROP FOREIGN KEY " + constraintName);
+          log.info("Dropped foreign key {} from wrong_book_entry to allow AI practice records.", constraintName);
+        } catch (Exception e) {
+          log.warn("Failed to drop foreign key {}: {}", constraintName, e.getMessage());
+        }
       }
     } catch (Exception e) {
-      log.warn("Failed to drop foreign key fk_wrong_question: {}", e.getMessage());
+      log.warn("Failed to check/drop foreign keys on wrong_book_entry: {}", e.getMessage());
     }
   }
 
@@ -172,6 +177,30 @@ public class WrongBookService {
     return next;
   }
 
+  /**
+   * 直接通过 JDBC 更新错题本重做结果（绕过外键约束的 fallback）。
+   * 当 saveRecord 因外键约束失败时（AI 练习的 questionId 不在 question 表），
+   * 使用 UPDATE 语句只更新已有记录，避免 INSERT 触发外键检查。
+   */
+  public void updateRetryDirect(Map<String, Object> entry) {
+    String id = str(entry, "id");
+    jdbc.update(
+      "UPDATE wrong_book_entry SET retry_count=?, last_retry_at=?, last_retry_answer_json=?, " +
+      "last_retry_correct=?, removable=?, status=?, latest_answer_json=?, wrong_count=?, last_wrong_at=? " +
+      "WHERE id=?",
+      asInt(entry.get("retryCount")),
+      toTimestamp(entry.get("lastRetryAt")),
+      toJson(entry.get("lastRetryAnswer")),
+      asBool(entry.get("lastRetryCorrect")) ? 1 : 0,
+      asBool(entry.get("removable")) ? 1 : 0,
+      nullableStr(entry, "status"),
+      toJson(entry.get("latestAnswer")),
+      asInt(entry.get("wrongCount")),
+      toTimestamp(entry.get("lastWrongAt")),
+      id
+    );
+  }
+
   private Map<String, Object> find(List<Map<String, Object>> rows, String id) {
     if (id == null) return null;
     return rows.stream().filter(row -> Objects.equals(str(row, "id"), id)).findFirst().orElse(null);
@@ -199,6 +228,42 @@ public class WrongBookService {
 
   private String str(Object value) {
     return value == null ? "" : String.valueOf(value);
+  }
+
+  private boolean asBool(Object value) {
+    if (value instanceof Boolean b) return b;
+    if (value instanceof Number n) return n.intValue() != 0;
+    if (value != null) {
+      try { return Integer.parseInt(String.valueOf(value)) != 0; } catch (NumberFormatException ignored) {}
+    }
+    return false;
+  }
+
+  private String nullableStr(Map<String, Object> map, String key) {
+    String value = str(map, key);
+    return value.isBlank() ? null : value;
+  }
+
+  private String toJson(Object value) {
+    try {
+      Object next = value == null ? List.of() : value;
+      return new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(next);
+    } catch (Exception e) {
+      return "[]";
+    }
+  }
+
+  private java.sql.Timestamp toTimestamp(Object value) {
+    if (value == null || String.valueOf(value).isBlank()) return null;
+    try {
+      return java.sql.Timestamp.from(java.time.Instant.parse(String.valueOf(value)));
+    } catch (Exception e) {
+      try {
+        return java.sql.Timestamp.valueOf(java.time.LocalDateTime.parse(String.valueOf(value).replace("Z", "")));
+      } catch (Exception ex) {
+        return null;
+      }
+    }
   }
 
   private String createId(String prefix) {

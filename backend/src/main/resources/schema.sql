@@ -173,7 +173,6 @@ CREATE TABLE IF NOT EXISTS wrong_book_entry (
   UNIQUE KEY uk_wrong_student_question (student_id, question_id),
   INDEX idx_wrong_student (student_id),
   CONSTRAINT fk_wrong_student FOREIGN KEY (student_id) REFERENCES user_account(id) ON DELETE CASCADE,
-  CONSTRAINT fk_wrong_question FOREIGN KEY (question_id) REFERENCES question(id) ON DELETE RESTRICT,
   CONSTRAINT chk_wrong_status CHECK (status IN ('active', 'archived', 'practice', 'removed')),
   CONSTRAINT chk_wrong_retry_count CHECK (retry_count >= 0),
   CONSTRAINT chk_wrong_wrong_count CHECK (wrong_count >= 0)

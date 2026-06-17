@@ -2339,8 +2339,12 @@ export const useAppStore = defineStore('app', () => {
           }
         }
       }
-    } catch (err) {
-      console.warn('[PracticeSession] Failed to restore session:', err)
+    } catch (err: any) {
+      // 恢复失败不应阻塞用户操作，静默处理
+      // 常见原因：练习会话表尚未初始化、网络错误、会话已过期等
+      console.debug('[PracticeSession] Failed to restore session (non-critical):', err?.message || err)
+      // 清除可能残留的无效会话状态
+      activePracticeSession.value = null
     } finally {
       practiceSessionLoading.value = false
     }
