@@ -93,6 +93,13 @@ watch([searchQuery, deptFilter], () => {
   store.loadUsersPage(1, searchQuery.value || undefined, 'teacher', undefined, deptFilter.value || undefined)
 })
 
+// 全局刷新时重新加载当前页（保留搜索/筛选状态）
+watch(() => store.refreshTrigger, (n) => {
+  if (n > 0) {
+    store.loadUsersPage(store.usersCurrentPage, searchQuery.value || undefined, 'teacher', undefined, deptFilter.value || undefined)
+  }
+})
+
 function handlePageChange(page: number) {
   store.loadUsersPage(page, searchQuery.value || undefined, 'teacher', undefined, deptFilter.value || undefined)
 }
@@ -153,7 +160,7 @@ onMounted(() => {
 }
 
 .search-input:focus {
-  background: #fff !important;
+  background: var(--input-focus-bg) !important;
   border-color: var(--primary) !important;
   box-shadow: var(--shadow-glow) !important;
 }
@@ -271,5 +278,13 @@ onMounted(() => {
     width: 100% !important;
     max-width: none;
   }
+}
+
+/* ---- Dark mode overrides ---- */
+[data-theme="dark"] .reset-pwd-btn { color: #fcd34d; }
+[data-theme="dark"] .reset-pwd-btn:hover { background: rgba(245, 158, 11, 0.15); }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .reset-pwd-btn { color: #fcd34d; }
+  :root:not([data-theme="light"]) .reset-pwd-btn:hover { background: rgba(245, 158, 11, 0.15); }
 }
 </style>

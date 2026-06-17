@@ -98,43 +98,43 @@
           <p class="empty-desc">等待考生进入考试后将显示实时状态</p>
         </div>
       </div>
+    </template>
 
-      <!-- 错题分析 -->
-      <template v-if="store.questionAnalysisResult">
-        <h4 class="analysis-heading">题目正确率分析</h4>
-        <ChartCard title="题目正确率" description="每道题的正确率统计" :option="store.questionAnalysisChartOption" />
-        <ChartCard title="知识点掌握分析" description="各知识点正确率" :option="store.kpAnalysisChartOption" />
-        <div class="table-wrap mobile-card-table" style="margin-top:1rem">
-          <table>
-            <thead>
-              <tr>
-                <th>题号</th>
-                <th>题型</th>
-                <th>知识点</th>
-                <th>作答人数</th>
-                <th>正确人数</th>
-                <th>正确率</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-for="(q, i) in store.questionAnalysisResult.questions" :key="q.questionId">
-                <td data-label="题号">{{ i + 1 }}</td>
-                <td data-label="题型"><span class="badge badge--blue">{{ typeLabel(q.type as any) }}</span></td>
-                <td data-label="知识点">{{ q.knowledgePoint }}</td>
-                <td data-label="作答人数">{{ q.totalAttempts }}</td>
-                <td data-label="正确人数">{{ q.correctCount }}</td>
-                <td data-label="正确率">
-                  <span :class="q.correctRate < 60 ? 'rate-low' : 'rate-ok'">{{ q.correctRate }}%</span>
-                </td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </template>
+    <!-- 错题分析（独立于监控数据，只要点击按钮加载了分析结果就展示） -->
+    <template v-if="store.questionAnalysisResult">
+      <h4 class="analysis-heading">题目正确率分析</h4>
+      <ChartCard title="题目正确率" description="每道题的正确率统计" :option="store.questionAnalysisChartOption" />
+      <ChartCard title="知识点掌握分析" description="各知识点正确率" :option="store.kpAnalysisChartOption" />
+      <div class="table-wrap mobile-card-table" style="margin-top:1rem">
+        <table>
+          <thead>
+            <tr>
+              <th>题号</th>
+              <th>题型</th>
+              <th>知识点</th>
+              <th>作答人数</th>
+              <th>正确人数</th>
+              <th>正确率</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="(q, i) in store.questionAnalysisResult.questions" :key="q.questionId">
+              <td data-label="题号">{{ i + 1 }}</td>
+              <td data-label="题型"><span class="badge badge--blue">{{ typeLabel(q.type as any) }}</span></td>
+              <td data-label="知识点">{{ q.knowledgePoint }}</td>
+              <td data-label="作答人数">{{ q.totalAttempts }}</td>
+              <td data-label="正确人数">{{ q.correctCount }}</td>
+              <td data-label="正确率">
+                <span :class="q.correctRate < 60 ? 'rate-low' : 'rate-ok'">{{ q.correctRate }}%</span>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
     </template>
 
     <!-- 无数据空状态 -->
-    <div v-else class="empty-state">
+    <div v-if="!store.monitorResult && !store.questionAnalysisResult" class="empty-state">
       <div class="empty-icon">📊</div>
       <p class="empty-title">请选择一场考试</p>
       <p class="empty-desc">选择考试后可查看实时监控数据</p>
@@ -149,7 +149,7 @@ import ChartCard from '@/components/common/ChartCard.vue'
 import { typeLabel } from '@/utils/format'
 
 const store = useAppStore()
-const autoRefresh = ref(false)
+const autoRefresh = ref(localStorage.getItem('examMonitorAutoRefresh') === 'true')
 let refreshTimer: ReturnType<typeof setInterval> | null = null
 
 function startAutoRefresh() {
@@ -169,6 +169,7 @@ function stopAutoRefresh() {
 }
 
 watch(autoRefresh, (val) => {
+  localStorage.setItem('examMonitorAutoRefresh', String(val))
   if (val) startAutoRefresh()
   else stopAutoRefresh()
 })
@@ -184,6 +185,8 @@ onMounted(() => {
     store.monitorExamId = store.myExams[0].id
     store.loadMonitorData(store.monitorExamId)
   }
+  // 恢复自动刷新状态
+  if (autoRefresh.value) startAutoRefresh()
 })
 
 onUnmounted(() => {
@@ -204,7 +207,11 @@ onUnmounted(() => {
 }
 
 .auto-refresh-toggle input {
-  display: none;
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+  pointer-events: none;
 }
 
 .toggle-slider {
@@ -259,6 +266,7 @@ onUnmounted(() => {
   background: var(--card-bg, #f9fafb);
   border: 1px solid var(--border, #e5e7eb);
   text-align: center;
+  overflow-wrap: break-word;
 }
 
 .stat-label {
@@ -448,6 +456,62 @@ onUnmounted(() => {
   .table-wrap {
     overflow-x: auto;
     -webkit-overflow-scrolling: touch;
+  }
+}
+
+/* ---- Dark mode overrides ---- */
+[data-theme="dark"] .stat-value--muted,
+[data-theme="dark"] .badge--gray {
+  color: #9ca3af;
+}
+[data-theme="dark"] .badge--blue {
+  background: rgba(96, 165, 250, 0.18);
+  color: #93c5fd;
+}
+[data-theme="dark"] .badge--green,
+[data-theme="dark"] .badge--ok {
+  background: rgba(34, 197, 94, 0.18);
+  color: #86efac;
+}
+[data-theme="dark"] .badge--danger {
+  background: rgba(239, 68, 68, 0.18);
+  color: #fca5a5;
+}
+[data-theme="dark"] .stat-value--active {
+  color: #4ade80;
+}
+[data-theme="dark"] .stat-value--submitted {
+  color: #60a5fa;
+}
+[data-theme="dark"] .row--suspicious {
+  background: rgba(239, 68, 68, 0.12) !important;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .stat-value--muted,
+  :root:not([data-theme="light"]) .badge--gray {
+    color: #9ca3af;
+  }
+  :root:not([data-theme="light"]) .badge--blue {
+    background: rgba(96, 165, 250, 0.18);
+    color: #93c5fd;
+  }
+  :root:not([data-theme="light"]) .badge--green,
+  :root:not([data-theme="light"]) .badge--ok {
+    background: rgba(34, 197, 94, 0.18);
+    color: #86efac;
+  }
+  :root:not([data-theme="light"]) .badge--danger {
+    background: rgba(239, 68, 68, 0.18);
+    color: #fca5a5;
+  }
+  :root:not([data-theme="light"]) .stat-value--active {
+    color: #4ade80;
+  }
+  :root:not([data-theme="light"]) .stat-value--submitted {
+    color: #60a5fa;
+  }
+  :root:not([data-theme="light"]) .row--suspicious {
+    background: rgba(239, 68, 68, 0.12) !important;
   }
 }
 </style>

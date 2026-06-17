@@ -56,48 +56,25 @@ public class AiService {
 
   private static final Set<String> SUBJECTIVE_TYPES = Set.of("short", "coding");
 
-  /** 出题系统提示词（动态学科识别版 - AI自主识别学科，无需预定义映射） */
+  /** 出题系统提示词（精简版 - 保留核心约束，减少token加速处理） */
   private static final String QUESTION_SYSTEM_PROMPT =
     "你是出题专家。严格按用户要求的数量和题型出题，一道不少一道不多。\n"
     + "输出纯JSON数组，不要markdown包裹，不要多余文字：\n"
     + "[{\"subject\":\"学科\",\"title\":\"题干\",\"type\":\"题型\",\"options\":[...],\"answer\":[...],\"score\":5,\"explanation\":\"解析\"}]\n\n"
     + "字段规则：\n"
-    + "- subject: 【必填】你必须从用户需求中识别出所属学科/科目，填入标准学科名称（如\"数学\"、\"物理\"、\"哲学\"、\"体育学\"、\"美术学\"、\"科目一\"、\"科目四\"、\"科学\"等）。即使用户表述模糊，也必须根据上下文推断最合理的学科分类。\n"
+    + "- subject: 【必填】从用户需求识别学科/科目（如\"数学\"、\"物理\"、\"哲学\"、\"科目一\"等），填入标准学科名称。\n"
     + "- type: single(单选) | multiple(多选) | judge(判断) | fill(填空) | short(简答) | coding(编程)\n"
-    + "- options: 单选/多选必须4个选项[\"A.选项1\",\"B.选项2\",\"C.选项3\",\"D.选项4\"]；判断2个选项[\"A.正确\",\"B.错误\"]；填空/简答/编程为[]\n"
+    + "- options: 单选/多选必须4个[\"A.选项1\",\"B.选项2\",\"C.选项3\",\"D.选项4\"]；判断2个[\"A.正确\",\"B.错误\"]；填空/简答/编程为[]\n"
     + "- answer: 单选[\"A\"]，多选[\"A\",\"C\"]，判断[\"A\"]，填空[\"答案文本\"]\n"
     + "- explanation: 必须包含【答案】和【解析】两部分\n"
     + "- score: 固定为5\n\n"
-    + "重要：单选/多选/判断题的options绝不能为空数组，必须包含完整选项！严禁输出思考过程。\n\n"
-    + "【学科约束 - 最高优先级】\n"
-    + "1. 你必须首先识别用户需求所属的学科/科目，并在每道题的subject字段中准确填写。\n"
-    + "2. 题目内容（题干、选项、答案、解析）必须严格属于该学科范畴，严禁跨学科混淆！\n"
-    + "3. 例如：用户要求\"数学题\"→subject=\"数学\"，题干必须是数学问题（方程求解、函数分析、几何证明等），绝不能生成物理题、地理题等。\n"
-    + "4. 例如：用户要求\"哲学题\"→subject=\"哲学\"，必须是哲学专业问题，不能混入政治或历史内容。\n"
-    + "5. 例如：用户要求\"科目一\"→subject=\"科目一\"，必须是驾照科目一考试内容。\n"
-    + "6. 即使题目涉及数字计算，也不等于属于数学学科。物理题中的计算仍属于物理。\n"
-    + "7. 你能识别任何学科领域，包括但不限于：数学、物理、化学、生物、地理、历史、哲学、体育学、美术学、音乐、科学、法学、经济学、医学、心理学、教育学、科目一、科目四等。\n\n"
-    + "【语言约束 - 最高优先级】\n"
-    + "1. 当科目为外语类（英语、大学英语、日语、法语等）时，题干（title）和选项（options）必须使用该目标语言撰写。\n"
-    + "2. 答案（answer）和解析（explanation）必须使用中文撰写，以便国内用户理解；但其中的英文单词、专业术语、技术名词应保留原始英文形式，不得翻译。\n"
-    + "3. 例如：大学英语题→题干和选项用英文，解析用中文（如\"虚拟语气要求所有主语都用were……\"），术语如subjunctive mood、counterfactual等保留英文。\n"
-    + "4. 例如：日语题→题干和选项用日语，解析用中文，术语保留日语原文。\n"
-    + "5. 非外语类科目（数学、物理等）全部使用中文撰写。\n\n"
-    + "【大学英语难度标准】\n"
-    + "当科目为\"大学英语\"或\"英语\"时，必须遵循以下标准：\n"
-    + "1. 难度对标CET-4/CET-6水平，禁止出初中级词汇辨析题（如\"thank\"vs\"appreciate\"这种基础题）。\n"
-    + "2. 题目类型应涵盖：学术词汇辨析（近义学术词汇的微妙差异）、长难句语法分析（复杂从句、倒装、虚拟语气等）、阅读理解（学术段落推理）、翻译技巧、修辞手法识别等。\n"
-    + "3. 选项设计必须有强干扰性，四个选项应在语义或语法上具有合理关联，避免明显错误选项。\n"
-    + "4. 解析需专业详尽，用中文引用语法规则或学术用法说明，英文术语保留原文。\n\n"
-    + "【题目质量自检 - 强制执行】\n"
-    + "1. 题干与选项必须逻辑一致：问主动语态则选项必须是主动语态句子，问被动语态则选项必须是被动语态句子。\n"
-    + "2. 四个选项必须互不相同，严禁出现重复选项。\n"
-    + "3. 只有一个正确答案（单选题），且正确答案必须有充分依据。\n"
-    + "4. 选项格式统一，避免格式不一致导致歧义。\n\n"
+    + "【核心约束】\n"
+    + "1. 题目内容必须严格属于用户指定学科范畴，严禁跨学科混淆。物理题中的计算仍属于物理，不是数学。\n"
+    + "2. 外语类科目（英语、日语、法语等）：题干和选项用目标语言撰写，答案和解析用中文（术语保留原文）。大学英语难度对标CET-4/CET-6。\n"
+    + "3. 四个选项必须互不相同，只有一个正确答案（单选题），正确答案必须有充分依据。\n"
+    + "4. 严禁输出思考过程，直接输出JSON数组。\n\n"
     + "示例（数学单选题）：\n"
-    + "[{\"subject\":\"数学\",\"title\":\"函数f(x)=x²-4x+3的零点为？\",\"type\":\"single\",\"options\":[\"A.x=1和x=3\",\"B.x=-1和x=-3\",\"C.x=1和x=-3\",\"D.x=-1和x=3\"],\"answer\":[\"A\"],\"score\":5,\"explanation\":\"【答案】A 【解析】令f(x)=0，即x²-4x+3=0，分解因式(x-1)(x-3)=0，解得x=1或x=3。\"}]\n\n"
-    + "示例（大学英语单选题 - 题干选项英文，解析中文）：\n"
-    + "[{\"subject\":\"大学英语\",\"title\":\"Which of the following sentences correctly employs the subjunctive mood to express a contrary-to-fact condition?\",\"type\":\"single\",\"options\":[\"A.If she were the CEO, she would restructure the entire department.\",\"B.If she was the CEO, she will restructure the entire department.\",\"C.If she is the CEO, she would restructure the entire department.\",\"D.If she had been the CEO, she would restructure the entire department.\"],\"answer\":[\"A\"],\"score\":5,\"explanation\":\"【答案】A 【解析】虚拟语气（subjunctive mood）在与事实相反的现在条件句中，要求所有主语均使用were而非was。选项A正确使用了were搭配条件句would restructure。选项B错误地使用了was，且will与条件句时态不一致。选项C将现在时is与条件句would混用。选项D使用了过去完成时had been，但主句应搭配would have restructured而非would restructure。\"}]";
+    + "[{\"subject\":\"数学\",\"title\":\"函数f(x)=x²-4x+3的零点为？\",\"type\":\"single\",\"options\":[\"A.x=1和x=3\",\"B.x=-1和x=-3\",\"C.x=1和x=-3\",\"D.x=-1和x=3\"],\"answer\":[\"A\"],\"score\":5,\"explanation\":\"【答案】A 【解析】令f(x)=0，即x²-4x+3=0，分解因式(x-1)(x-3)=0，解得x=1或x=3。\"}]";
 
   private final StoreService storeService;
   private final SystemLogService systemLogService;
@@ -112,11 +89,11 @@ public class AiService {
   @Value("${ai.api-key:}")
   private String apiKey;
 
-  @Value("${ai.model:glm-4-flash}")
+  @Value("${ai.model:glm-4-air}")
   private String model;
 
-  /** 备用模型列表：主模型 429 时自动降级 */
-  private static final List<String> FALLBACK_MODELS = List.of("glm-4-flash", "glm-4-air", "glm-4-airx");
+  /** 备用模型列表：主模型 429 时自动降级（flash更快，作为降级保底） */
+  private static final List<String> FALLBACK_MODELS = List.of("glm-4-flash", "glm-4-airx", "glm-4-air");
 
   /** 获取当前可用的模型名称（排除已 429 的主模型后尝试备用模型） */
   private volatile String activeModel = null;
@@ -139,7 +116,7 @@ public class AiService {
 
   /** 响应缓存：prompt hash -> 缓存响应 */
   private final ConcurrentHashMap<String, CachedResponse> responseCache = new ConcurrentHashMap<>();
-  private static final long CACHE_TTL_MS = 5 * 60 * 1000; // 5 分钟
+  private static final long CACHE_TTL_MS = 30 * 60 * 1000; // 30 分钟（题目不变，可长缓存）
 
   /** 活跃 SSE 连接计数 */
   private final AtomicInteger activeSseConnections = new AtomicInteger(0);
@@ -254,12 +231,16 @@ public class AiService {
     });
   }
 
-  /** 每5分钟清理过期缓存 */
+  /** 每5分钟清理过期缓存和意图缓存 */
   @Scheduled(fixedRate = 300_000)
   public void cleanupCache() {
     long now = System.currentTimeMillis();
     responseCache.entrySet().removeIf(e -> (now - e.getValue().timestamp()) > CACHE_TTL_MS);
-    log.debug("[AiService] 缓存清理完成，当前缓存条目: {}", responseCache.size());
+    // 意图缓存限制大小，超过300条时清空重建（避免内存增长）
+    if (intentCache.size() > 300) {
+      intentCache.clear();
+    }
+    log.debug("[AiService] 缓存清理完成，响应缓存: {}, 意图缓存: {}", responseCache.size(), intentCache.size());
   }
 
   /** 每10分钟清理过期会话 */
@@ -308,7 +289,7 @@ public class AiService {
   public ResponseEntity<?> generateQuestions(String userId, Map<String, Object> body) {
     Store store = storeService.readStore();
     Map<String, Object> user = find(store.users, userId);
-    if (!isRole(user, "teacher")) return error(HttpStatus.FORBIDDEN, "Forbidden.");
+    if (!isRole(user, "teacher") && !isRole(user, "admin")) return error(HttpStatus.FORBIDDEN, "Forbidden.");
 
     var apiKeyError = checkApiKeyConfigured();
     if (apiKeyError != null) return apiKeyError;
@@ -337,9 +318,9 @@ public class AiService {
       // 通过AI语义理解分析用户意图，替代正则匹配
       UserIntent intent = analyzeUserIntent(customPrompt);
       systemPrompt = QUESTION_SYSTEM_PROMPT;
-      userPrompt = buildSmartUserPrompt(customPrompt, body, 10, intent);
+      userPrompt = buildSmartUserPrompt(customPrompt, body, 20, intent);
       // 使用AI分析结果作为元数据
-      count = intent.count > 0 ? intent.count : Math.min(asInt(body.get("count")), 10);
+      count = intent.count > 0 ? intent.count : Math.min(asInt(body.get("count")), 20);
       if (count <= 0) count = 5;
       type = !intent.type.isBlank() ? intent.type : (str(body, "type").isBlank() ? "single" : str(body, "type"));
       subject = !intent.subject.isBlank() ? intent.subject : str(body, "subject");
@@ -349,7 +330,7 @@ public class AiService {
       subject = str(body, "subject");
       knowledgePoint = str(body, "knowledgePoint");
       difficulty = str(body, "difficulty").isBlank() ? "medium" : str(body, "difficulty");
-      count = Math.min(asInt(body.get("count")), 10);
+      count = Math.min(asInt(body.get("count")), 20);
       if (count <= 0) count = 5;
       type = str(body, "type").isBlank() ? "single" : str(body, "type");
 
@@ -415,7 +396,7 @@ public class AiService {
   public ResponseEntity<?> importQuestions(String userId, Map<String, Object> body) {
     Store store = storeService.readStore();
     Map<String, Object> user = find(store.users, userId);
-    if (!isRole(user, "teacher")) return error(HttpStatus.FORBIDDEN, "Forbidden.");
+    if (!isRole(user, "teacher") && !isRole(user, "admin")) return error(HttpStatus.FORBIDDEN, "Forbidden.");
 
     long existingCount = store.questions.stream().filter(q -> Objects.equals(str(q, "teacherId"), userId)).count();
     long remaining = 5000 - existingCount;
@@ -486,7 +467,7 @@ public class AiService {
   public ResponseEntity<?> gradeSubmission(String userId, Map<String, Object> body) {
     Store store = storeService.readStore();
     Map<String, Object> user = find(store.users, userId);
-    if (!isRole(user, "teacher")) return error(HttpStatus.FORBIDDEN, "Forbidden.");
+    if (!isRole(user, "teacher") && !isRole(user, "admin")) return error(HttpStatus.FORBIDDEN, "Forbidden.");
 
     var apiKeyError = checkApiKeyConfigured();
     if (apiKeyError != null) return apiKeyError;
@@ -500,7 +481,8 @@ public class AiService {
     if (submission == null) return error(HttpStatus.NOT_FOUND, "Submission not found.");
 
     Map<String, Object> exam = find(store.exams, str(submission, "examId"));
-    if (exam == null || !Objects.equals(str(exam, "teacherId"), userId)) return error(HttpStatus.FORBIDDEN, "Forbidden.");
+    if (exam == null) return error(HttpStatus.NOT_FOUND, "Exam not found.");
+    if (!isRole(user, "admin") && !Objects.equals(str(exam, "teacherId"), userId)) return error(HttpStatus.FORBIDDEN, "Forbidden.");
 
     if (!checkRateLimit(userId)) {
       return error(HttpStatus.TOO_MANY_REQUESTS, "AI 调用频率过高，请稍后再试");
@@ -973,13 +955,13 @@ public class AiService {
         conn.setRequestProperty("Authorization", "Bearer " + apiKey);
         conn.setRequestProperty("Accept", "text/event-stream");
         conn.setDoOutput(true);
-        conn.setConnectTimeout(15000);
-        conn.setReadTimeout(90000);
+        conn.setConnectTimeout(10000);  // 10s连接超时（原15s）
+        conn.setReadTimeout(60000);     // 60s读取超时（原90s，配合降低的max_tokens加速失败反馈）
 
         // Build request body - 智能参数调节：根据intent自动选择最优模型和参数
         String effectiveModel = model;
         double effectiveTemperature = temperature;
-        int effectiveMaxTokens = 16384;
+        int effectiveMaxTokens = 8192; // 降低默认值加速生成
         if (intent != null) {
           effectiveModel = intent.recommendModel(model);
           effectiveTemperature = intent.recommendTemperature();
@@ -1286,7 +1268,7 @@ public class AiService {
       return;
     }
     Map<String, Object> user = find(store.users, userId);
-    if (!isRole(user, "teacher")) {
+    if (!isRole(user, "teacher") && !isRole(user, "admin")) {
       try {
         emitter.send(SseEmitter.event().name("error").data("{\"error\":\"Forbidden\"}"));
         emitter.complete();
@@ -1320,13 +1302,13 @@ public class AiService {
     if (!customPrompt.isBlank()) {
       systemPrompt = QUESTION_SYSTEM_PROMPT;
       UserIntent intent = analyzeUserIntent(customPrompt);
-      userPrompt = buildSmartUserPrompt(customPrompt, body, 10, intent);
+      userPrompt = buildSmartUserPrompt(customPrompt, body, 20, intent);
       streamIntent = intent;
     } else {
       String subject = str(body, "subject");
       String knowledgePoint = str(body, "knowledgePoint");
       String difficulty = str(body, "difficulty").isBlank() ? "medium" : str(body, "difficulty");
-      int count = Math.min(asInt(body.get("count")), 10);
+      int count = Math.min(asInt(body.get("count")), 20);
       if (count <= 0) count = 5;
       String type = str(body, "type").isBlank() ? "single" : str(body, "type");
 
@@ -1481,28 +1463,27 @@ public class AiService {
     callAiApiStream(systemPrompt, userPrompt, deepThinking, 0.7, false, "chat", null, emitter, session);
   }
 
-  /** Build system prompt for general chat */
+  /** Build system prompt for general chat (精简版 - 减少token加速处理) */
   private String buildChatSystemPrompt() {
     String today = java.time.LocalDate.now().format(java.time.format.DateTimeFormatter.ofPattern("yyyy年M月d日"));
     return """
-      你是在线考试系统的AI学习助手，名叫"智学"。你的职责是帮助学生学习和解答问题。
-
-      当前日期：""" + today + """
+      你是在线考试系统的AI学习助手"智学"。当前日期：""" + today + """
 
       核心原则：
-      1. 直接给出最终回答，严禁输出你的思考过程、分析步骤、自我审查等内容（如"第1步分析"、"解构主题"、"起草内容"、"自我修正"等）
-      2. 回答要有深度和广度：对概念给出准确定义，对原理给出清晰推导，对应用给出实际例子
-      3. 善用 Markdown 格式：合理使用标题（##、###）、加粗（**）、列表、代码块（```）等让内容层次分明
-      4. 对数学公式使用 LaTeX 语法（用 $ 包裹行内公式，用 $$ 包裹独立公式），确保 LaTeX 语法正确完整
-      5. 提供学习建议：回答完问题后，可以推荐相关的延伸学习方向或练习题
-      6. 使用中文回答，语言风格友好专业，像一位耐心且博学的导师
+      1. 直接给出最终回答，严禁输出思考过程、分析步骤等中间内容
+      2. 回答要有深度广度，善用Markdown格式（标题、加粗、列表、代码块）
+      3. 数学公式用LaTeX（$行内$，$$独立$$），使用中文回答，风格友好专业
 
-      【严禁事项 - 最高优先级】
-      1. 你是"对话"模式的AI助手，不是"出题"模式。严禁输出任何结构化的题目JSON数据（如包含title/type/options/answer/explanation字段的JSON数组）。
-      2. 如果用户要求"出题"、"生成练习题"、"帮我出X道题"等，请用自然语言回复，引导用户切换到"练题"模式。例如："我可以在对话中为你讲解知识点，如果你需要练习题，请切换到「📝 练题」模式，那里可以为你生成可交互的练习题卡片！"
-      3. 你可以用自然语言举例说明题目类型、出题思路、解题技巧等，但绝不能输出JSON格式的题目数据。
-
-      注意：只输出给用户看的最终回答，不要输出任何中间过程。""";
+      【出题请求处理】
+      当用户要求出题时，严格按要求数量出题（要5道出5道，绝不敷衍），用Markdown格式输出（不要JSON）：
+      ### 第1题
+      **[题型] 题干**
+      A. 选项一  B. 选项二  C. 选项三  D. 选项四
+      **答案：** X
+      **解析：** 详细解题思路。
+      ---
+      题目质量：选项有干扰性、四选项互不相同、只有一个正确答案、解析详尽、学科内容严格属于指定范畴。
+      严禁输出JSON格式题目，严禁拒绝出题或只出1道敷衍。""";
   }
 
   /** Build user prompt for chat, including conversation history from session.
@@ -1658,7 +1639,8 @@ public class AiService {
       Map.of("role", "user", "content", userPrompt)
     ));
     requestBody.put("temperature", 0.5);
-    requestBody.put("max_tokens", 16384);
+    // 降低max_tokens加速生成：8192足够大多数题目，避免模型生成冗余内容
+    requestBody.put("max_tokens", 8192);
 
     HttpEntity<Map<String, Object>> entity = new HttpEntity<>(requestBody, headers);
 
@@ -2378,11 +2360,12 @@ public class AiService {
       return 0.5; // 默认
     }
 
-    /** 推断最优max_tokens */
+    /** 推断最优max_tokens - 根据题型和数量动态调整，避免过度分配导致生成缓慢 */
     int recommendMaxTokens() {
-      if ("short".equals(type) || "coding".equals(type)) return 16384;
-      if (count > 5 || "high".equals(complexity)) return 16384;
-      return 8192;
+      if ("short".equals(type) || "coding".equals(type)) return 12288; // 简答/编程需要更多空间
+      if (count > 10 || "high".equals(complexity)) return 10240;       // 大量题目或高复杂度
+      if (count > 5) return 8192;                                       // 中等数量
+      return 6144;                                                      // 少量题目，快速生成
     }
   }
 
@@ -2401,29 +2384,51 @@ public class AiService {
     + "- complexity: 任务复杂度。涉及外语出题、编程、多学科综合、学术级难度→high；普通单科出题→medium；简单判断/基础题→low。";
 
   /**
-   * 智能意图分析 - 优先使用AI大模型进行语义理解，正则匹配作为降级方案。
-   * AI分析能更准确地识别学科、语言、复杂度等维度，实现自主决策。
+   * 智能意图分析 - 直接使用正则匹配（瞬时完成），避免额外API调用导致的延迟。
+   * 正则匹配已能准确识别学科、语言、复杂度等维度，AI分析仅在正则完全失败时作为可选增强。
+   * 缓存分析结果，相同/相似输入不重复计算。
    */
+  private final ConcurrentHashMap<String, UserIntent> intentCache = new ConcurrentHashMap<>();
+
   UserIntent analyzeUserIntent(String userText) {
     if (userText == null || userText.isBlank()) return UserIntent.empty();
 
-    // 优先尝试AI语义分析（更准确，能识别语言和复杂度）
-    if (apiKey != null && !apiKey.isBlank() && circuitBreaker.allowRequest("intent")) {
+    // 缓存命中检查（基于文本哈希，避免重复计算）
+    String cacheKey = Integer.toHexString(userText.hashCode());
+    UserIntent cached = intentCache.get(cacheKey);
+    if (cached != null) return cached;
+
+    // 直接使用正则匹配（瞬时完成，无网络延迟）
+    UserIntent intent = fallbackRegexIntent(userText);
+
+    // 仅在正则完全无法识别学科且意图为none时，才尝试AI分析作为增强
+    // 且要求熔断器允许、API可用，否则直接返回正则结果
+    if (intent.subject.isBlank() && "none".equals(intent.intent)
+        && apiKey != null && !apiKey.isBlank() && circuitBreaker.allowRequest("intent")) {
       try {
         String aiResponse = callAiApiForIntentAnalysis(userText);
-        UserIntent intent = parseIntentResponse(aiResponse);
+        UserIntent aiIntent = parseIntentResponse(aiResponse);
         circuitBreaker.recordSuccess("intent");
-        log.info("[AiService] AI意图分析成功: subject={}, language={}, complexity={}, intent={}",
-          intent.subject, intent.language, intent.complexity, intent.intent);
-        return intent;
+        // AI结果更优时采用
+        if (!aiIntent.subject.isBlank() || !aiIntent.type.isBlank()) {
+          intent = aiIntent;
+        }
+        log.info("[AiService] 意图分析(正则失败,AI增强): subject={}, complexity={}",
+          intent.subject, intent.complexity);
       } catch (Exception e) {
         circuitBreaker.recordFailure("intent");
-        log.warn("[AiService] AI意图分析失败，降级到正则匹配: {}", e.getMessage());
+        log.debug("[AiService] AI意图增强失败，使用正则结果: {}", e.getMessage());
       }
+    } else {
+      log.debug("[AiService] 意图分析(正则): subject={}, type={}, count={}, complexity={}",
+        intent.subject, intent.type, intent.count, intent.complexity);
     }
 
-    // 降级方案：正则匹配
-    return fallbackRegexIntent(userText);
+    // 缓存结果（最多保留500条）
+    if (intentCache.size() < 500) {
+      intentCache.put(cacheKey, intent);
+    }
+    return intent;
   }
 
   /** 调用AI API进行轻量级意图分析（低token、低延迟） */

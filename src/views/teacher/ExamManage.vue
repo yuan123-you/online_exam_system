@@ -367,4 +367,48 @@ async function handleMonitor(examId: string) {
     -webkit-overflow-scrolling: touch;
   }
 }
+
+/* ---- Dark mode overrides ---- */
+[data-theme="dark"] .stat-chip--ended .stat-chip-value,
+[data-theme="dark"] .time-relative--ended,
+[data-theme="dark"] .badge--gray {
+  color: #9ca3af;
+}
+[data-theme="dark"] .badge--blue {
+  background: rgba(96, 165, 250, 0.18);
+  color: #93c5fd;
+}
+[data-theme="dark"] .badge--green {
+  background: rgba(34, 197, 94, 0.18);
+  color: #86efac;
+}
+[data-theme="dark"] .stat-chip--active .stat-chip-value,
+[data-theme="dark"] .time-relative--active {
+  color: #4ade80;
+}
+[data-theme="dark"] .time-relative--upcoming {
+  color: #a5b4fc;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .stat-chip--ended .stat-chip-value,
+  :root:not([data-theme="light"]) .time-relative--ended,
+  :root:not([data-theme="light"]) .badge--gray {
+    color: #9ca3af;
+  }
+  :root:not([data-theme="light"]) .badge--blue {
+    background: rgba(96, 165, 250, 0.18);
+    color: #93c5fd;
+  }
+  :root:not([data-theme="light"]) .badge--green {
+    background: rgba(34, 197, 94, 0.18);
+    color: #86efac;
+  }
+  :root:not([data-theme="light"]) .stat-chip--active .stat-chip-value,
+  :root:not([data-theme="light"]) .time-relative--active {
+    color: #4ade80;
+  }
+  :root:not([data-theme="light"]) .time-relative--upcoming {
+    color: #a5b4fc;
+  }
+}
 </style>

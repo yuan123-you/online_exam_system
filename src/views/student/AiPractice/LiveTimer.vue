@@ -79,10 +79,10 @@ onUnmounted(() => {
 <style scoped>
 .live-timer-display {
   font-size: 11px;
-  color: #9ca3af;
+  color: var(--ai-text-faint);
 }
 .live-timer-display.active {
-  color: #6366f1;
+  color: var(--ai-accent);
   font-weight: 500;
   animation: timer-pulse 2s ease-in-out infinite;
 }

@@ -129,6 +129,18 @@ watch(() => store.wrongBookSubjectFilter, async () => {
   }
 })
 
+// 全局刷新时重新加载当前页（保留科目筛选状态）
+watch(() => store.refreshTrigger, async (n) => {
+  if (n > 0) {
+    loading.value = true
+    try {
+      await store.loadWrongBookPage(store.wrongBookCurrentPage, store.wrongBookSubjectFilter || undefined)
+    } finally {
+      loading.value = false
+    }
+  }
+})
+
 async function handlePageChange(page: number) {
   loading.value = true
   try {
@@ -223,15 +235,44 @@ async function handleBatchRemove() {
 </script>
 
 <style scoped>
+.panel {
+  max-width: 100%;
+  overflow: hidden;
+}
+
+.section-title {
+  gap: 6px;
+  margin-bottom: 6px;
+  flex-wrap: wrap;
+}
+
+.section-subtitle {
+  margin-top: 2px;
+  font-size: 12px;
+}
+
 .section-actions {
   display: flex;
-  gap: 8px;
+  gap: 4px;
   align-items: center;
   flex-wrap: wrap;
 }
 
+.section-actions .monitor-select {
+  padding: 5px 8px;
+  font-size: 12px;
+  min-width: 90px;
+  max-width: 140px;
+}
+
+.section-actions button {
+  padding: 5px 10px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
 .checkbox-col {
-  width: 40px;
+  width: 32px;
   text-align: center;
 }
 
@@ -243,30 +284,38 @@ async function handleBatchRemove() {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 8px 12px;
-  margin-bottom: 8px;
+  padding: 5px 8px;
+  margin-bottom: 4px;
   background: var(--primary-soft, #e0f2ec);
   border-radius: 6px;
-  font-size: 0.875rem;
+  font-size: 0.8rem;
   color: var(--primary, #3d9980);
   font-weight: 500;
   overflow-wrap: break-word;
+  gap: 4px;
+}
+
+.selection-bar .ghost-btn {
+  padding: 3px 8px;
+  font-size: 12px;
 }
 
 .status-ok {
   color: var(--ok, #3d9980);
   font-weight: 500;
-  font-size: 0.85rem;
+  font-size: 0.8rem;
+  white-space: nowrap;
 }
 
 .status-pending {
   color: var(--warn, #d4a844);
   font-weight: 500;
-  font-size: 0.85rem;
+  font-size: 0.8rem;
+  white-space: nowrap;
 }
 
 .cell-title {
-  max-width: 260px;
+  max-width: 180px;
   overflow-wrap: break-word;
   word-break: break-word;
   overflow: hidden;
@@ -274,6 +323,8 @@ async function handleBatchRemove() {
 
 .tag {
   white-space: nowrap;
+  font-size: 11px;
+  padding: 2px 8px;
 }
 
 /* Ensure table cells don't overflow their containers */
@@ -284,17 +335,32 @@ async function handleBatchRemove() {
 .table-wrap table {
   table-layout: auto;
   width: 100%;
+  min-width: 0;
 }
 
-.table-wrap td,
-.table-wrap th {
+.table-wrap th,
+.table-wrap td {
   overflow-wrap: break-word;
   word-break: break-word;
-  max-width: 200px;
+  max-width: 140px;
+  padding: 5px 6px;
+  font-size: 12px;
 }
 
 .table-wrap td.cell-title {
-  max-width: 260px;
+  max-width: 180px;
+}
+
+.action-row {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.action-row button {
+  padding: 4px 10px;
+  font-size: 12px;
+  white-space: nowrap;
 }
 
 /* Desktop: hide mobile-only class */
@@ -304,6 +370,15 @@ async function handleBatchRemove() {
 
 /* Mobile card-table: hide less important columns */
 @media (max-width: 767px) {
+  .panel {
+    padding: 10px;
+  }
+
+  .section-title {
+    gap: 4px;
+    margin-bottom: 4px;
+  }
+
   .checkbox-col {
     width: auto;
   }
@@ -314,18 +389,59 @@ async function handleBatchRemove() {
 
   .selection-bar {
     flex-wrap: wrap;
-    gap: 6px;
-    font-size: 0.8rem;
+    gap: 4px;
+    font-size: 0.75rem;
+    padding: 4px 6px;
   }
 
   .cell-title {
     max-width: none;
-    font-size: 13px;
+    font-size: 12px;
   }
 
-  .table-wrap td,
-  .table-wrap th {
+  .table-wrap th,
+  .table-wrap td {
     max-width: none;
+    padding: 4px 6px;
+  }
+
+  .section-actions {
+    gap: 4px;
+  }
+
+  .section-actions .monitor-select {
+    min-width: 80px;
+    max-width: 120px;
+    padding: 4px 6px;
+    font-size: 12px;
+  }
+
+  .section-actions button {
+    padding: 4px 8px;
+    font-size: 11px;
+  }
+
+  .action-row button {
+    padding: 4px 8px;
+    font-size: 11px;
+  }
+}
+
+/* Tablet */
+@media (min-width: 768px) and (max-width: 1023px) {
+  .table-wrap th,
+  .table-wrap td {
+    padding: 5px 7px;
+    font-size: 12px;
+  }
+
+  .cell-title {
+    max-width: 150px;
+  }
+
+  .table-wrap th,
+  .table-wrap td {
+    max-width: 120px;
   }
 }
 </style>

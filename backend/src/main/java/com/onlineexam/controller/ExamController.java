@@ -70,7 +70,17 @@ public class ExamController {
     }
     if (!examService.canStudentAccess(user, exam)) return error(HttpStatus.FORBIDDEN, "Forbidden.");
     Map<String, Object> submission = examService.ensureStudentSession(store, exam, user);
-    if (submission.containsKey("error")) return error(HttpStatus.BAD_REQUEST, str(submission, "error"));
+    if (submission.containsKey("error")) {
+      String errorMessage = str(submission, "error");
+      // 已交卷/已结束的考试返回 200 + sessionState=finished，避免前端控制台报 400 错误
+      // 前端据此清理 active_exam_id，不再恢复考试会话
+      if ("Submission already finished.".equals(errorMessage)) {
+        Map<String, Object> snapshot = examService.buildExamSnapshot(store, exam, true, null, null);
+        snapshot.put("sessionState", "finished");
+        return ResponseEntity.ok(snapshot);
+      }
+      return error(HttpStatus.BAD_REQUEST, errorMessage);
+    }
     storeService.saveRecord("submissions", submission);
     List<String> questionOrder = asList(submission.get("questionOrder")).stream().map(String::valueOf).toList();
     Map<String, Object> optionOrder = submission.get("optionOrder") instanceof Map ? asMap(submission.get("optionOrder")) : Map.of();

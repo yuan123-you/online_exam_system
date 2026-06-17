@@ -86,15 +86,17 @@ public class WrongBookService {
       Map<String, Object> detail = asMap(raw);
       int full = asInt(detail.get("fullScore"));
       if (full <= 0 || asInt(detail.get("score")) >= full) continue;
+      String questionId = str(detail, "questionId");
+      if (questionId.isBlank()) continue;
       Map<String, Object> existing = store.wrongBookEntries.stream()
-        .filter(e -> Objects.equals(str(e, "studentId"), str(submission, "studentId")) && Objects.equals(str(e, "questionId"), str(detail, "questionId")))
+        .filter(e -> Objects.equals(str(e, "studentId"), str(submission, "studentId")) && Objects.equals(str(e, "questionId"), questionId))
         .findFirst().orElse(null);
-      Map<String, Object> question = find(store.questions, str(detail, "questionId"));
+      Map<String, Object> question = find(store.questions, questionId);
       Map<String, Object> entry = existing == null ? new LinkedHashMap<>() : new LinkedHashMap<>(existing);
       entry.putIfAbsent("id", createId("wrong"));
       entry.put("studentId", str(submission, "studentId"));
       entry.put("studentName", str(submission, "studentName"));
-      entry.put("questionId", str(detail, "questionId"));
+      entry.put("questionId", questionId);
       entry.put("subject", question == null ? str(detail, "subject") : str(question, "subject"));
       entry.put("knowledgePoint", question == null ? str(detail, "knowledgePoint") : str(question, "knowledgePoint"));
       entry.put("type", question == null ? str(detail, "type") : str(question, "type"));
@@ -110,7 +112,12 @@ public class WrongBookService {
       entry.put("lastRetryCorrect", false);
       entry.put("removable", false);
       entry.put("status", "active");
-      storeService.saveRecord("wrongBookEntries", entry);
+      try {
+        storeService.saveRecord("wrongBookEntries", entry);
+      } catch (Exception e) {
+        // 单条错题本保存失败（如外键约束、唯一键冲突等）不应阻塞其他错题的同步
+        System.err.println("[wrong-book] saveRecord failed for student=" + str(submission, "studentId") + " question=" + questionId + ": " + e.getMessage());
+      }
     }
   }
 

@@ -229,21 +229,21 @@ function handleJump() {
   justify-content: space-between;
   align-items: center;
   flex-wrap: wrap;
-  gap: 10px;
-  padding: 14px 0;
+  gap: 6px;
+  padding: 10px 0;
 }
 
 .pagination-left {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 8px;
   flex-wrap: wrap;
 }
 
 .pagination-right {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 8px;
   flex-wrap: wrap;
 }
 
@@ -419,7 +419,7 @@ function handleJump() {
 /* 响应式：平板 */
 @media (max-width: 1023px) and (min-width: 768px) {
   .pagination-bar {
-    gap: 8px;
+    gap: 6px;
   }
 }
 
@@ -428,8 +428,8 @@ function handleJump() {
   .pagination-bar {
     flex-direction: column;
     align-items: center;
-    gap: 10px;
-    padding: 12px 0;
+    gap: 6px;
+    padding: 8px 0;
   }
 
   .pagination-left,

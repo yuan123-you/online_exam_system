@@ -86,6 +86,28 @@ const pagination = useClientPagination(practiceRecords, { defaultPageSize: 20, p
 </script>
 
 <style scoped>
+.panel {
+  max-width: 100%;
+  overflow: hidden;
+}
+
+.section-title {
+  gap: 6px;
+  margin-bottom: 6px;
+  flex-wrap: wrap;
+}
+
+.section-subtitle {
+  margin-top: 2px;
+  font-size: 12px;
+}
+
+.ghost-btn {
+  padding: 6px 12px;
+  font-size: 13px;
+  white-space: nowrap;
+}
+
 .text-success {
   color: #22c55e;
   font-weight: 600;
@@ -99,11 +121,66 @@ const pagination = useClientPagination(practiceRecords, { defaultPageSize: 20, p
 .cell-title {
   overflow-wrap: anywhere;
   word-break: break-word;
+  max-width: 200px;
+}
+
+.tag {
+  white-space: nowrap;
+  font-size: 11px;
+  padding: 2px 8px;
+}
+
+.table-wrap {
+  overflow: auto;
+}
+
+.table-wrap table {
+  table-layout: auto;
+  width: 100%;
+  min-width: 0;
+}
+
+.table-wrap th,
+.table-wrap td {
+  padding: 6px 8px;
+  font-size: 12px;
+  overflow-wrap: break-word;
+  word-break: break-word;
+  max-width: 160px;
+}
+
+.table-wrap td.cell-title {
+  max-width: 200px;
+}
+
+.muted {
+  font-size: 12px;
 }
 
 @media (max-width: 767px) {
+  .panel {
+    padding: 10px;
+  }
+
+  .section-title {
+    gap: 4px;
+    margin-bottom: 4px;
+  }
+
   .cell-title {
-    font-size: 13px;
+    max-width: none;
+    font-size: 12px;
+  }
+
+  .table-wrap th,
+  .table-wrap td {
+    max-width: none;
+    padding: 4px 6px;
+  }
+
+  .ghost-btn {
+    padding: 5px 10px;
+    font-size: 12px;
   }
 }
 </style>

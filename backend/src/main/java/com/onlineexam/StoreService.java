@@ -81,7 +81,7 @@ public class StoreService {
       store.users = new ArrayList<>();
     }
     try {
-      store.questions = jdbc.queryForList("select * from question order by id").stream().map(row -> compact(mapOf(
+      store.questions = jdbc.queryForList("select * from question where deleted=0").stream().map(row -> compact(mapOf(
         "id", row.get("id"), "teacherId", row.get("teacher_id"), "subject", row.get("subject"),
         "knowledgePoint", row.get("knowledge_point"), "difficulty", row.get("difficulty"), "type", row.get("type"),
         "title", row.get("title"), "options", readList(row.get("options_json")), "answer", readList(row.get("answer_json")),
@@ -92,7 +92,7 @@ public class StoreService {
       store.questions = new ArrayList<>();
     }
     try {
-      store.papers = jdbc.queryForList("select * from paper order by id").stream().map(row -> compact(mapOf(
+      store.papers = jdbc.queryForList("select * from paper where deleted=0").stream().map(row -> compact(mapOf(
         "id", row.get("id"), "teacherId", row.get("teacher_id"), "name", row.get("name"),
         "durationMinutes", asInt(row.get("duration_minutes")), "totalScore", asInt(row.get("total_score")),
         "passScore", asInt(row.get("pass_score")), "questionIds", readList(row.get("question_ids_json")),
@@ -103,11 +103,11 @@ public class StoreService {
       store.papers = new ArrayList<>();
     }
     try {
-      store.exams = jdbc.queryForList("select * from exam order by start_time desc,id").stream().map(row -> compact(mapOf(
+      store.exams = jdbc.queryForList("select * from exam where deleted=0 order by start_time desc,id").stream().map(row -> compact(mapOf(
         "id", row.get("id"), "teacherId", row.get("teacher_id"), "paperId", row.get("paper_id"), "name", row.get("name"),
         "targetClassIds", readList(row.get("target_class_ids_json")), "startTime", asIso(row.get("start_time")),
         "endTime", asIso(row.get("end_time")), "antiCheatLimit", asInt(row.get("anti_cheat_limit")),
-        "published", asBool(row.get("published")), "deleted", false
+        "published", asBool(row.get("published")), "deleted", asBool(row.get("deleted"))
       ))).toList();
     } catch (Exception e) {
       log.error("Failed to load exams from database", e);
@@ -131,7 +131,7 @@ public class StoreService {
       store.submissions = new ArrayList<>();
     }
     try {
-      store.wrongBookEntries = jdbc.queryForList("select * from wrong_book_entry order by last_wrong_at desc,id").stream().map(row -> compact(mapOf(
+      store.wrongBookEntries = jdbc.queryForList("select * from wrong_book_entry").stream().map(row -> compact(mapOf(
         "id", row.get("id"), "studentId", row.get("student_id"), "studentName", row.get("student_name"),
         "questionId", row.get("question_id"), "subject", row.get("subject"), "knowledgePoint", row.get("knowledge_point"),
         "type", row.get("type"), "title", row.get("title"), "latestAnswer", readList(row.get("latest_answer_json")),

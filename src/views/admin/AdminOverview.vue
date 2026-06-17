@@ -216,7 +216,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAppStore } from '@/stores/app'
 import ChartCard from '@/components/common/ChartCard.vue'
@@ -264,9 +264,12 @@ function navigateTo(key: string) {
 async function handleRefresh() {
   if (refreshing.value) return
   refreshing.value = true
-  store.showToast('正在刷新数据...', 'info')
   try {
     await store.loadData()
+    // 同步刷新通知数据，保持与全局刷新行为一致
+    await store.loadNotificationData()
+    // 通知分页视图重新加载（保留当前筛选状态）
+    store.triggerRefresh()
     store.showToast('数据已刷新', 'success')
   } catch {
     store.showToast('刷新失败，请重试', 'error')
@@ -295,6 +298,13 @@ function formatRelativeTime(time: string): string {
   if (days < 7) return `${days}天前`
   return formatDate(time)
 }
+
+// 数据加载保护：若 bootstrap 为空（如刷新后 API 异常），尝试重新加载
+onMounted(() => {
+  if (!store.bootstrap) {
+    store.loadData().catch(() => { /* 静默处理，路由守卫会引导到登录页 */ })
+  }
+})
 </script>
 
 <style scoped>
@@ -684,5 +694,39 @@ function formatRelativeTime(time: string): string {
   .stat-value {
     font-size: 22px;
   }
+}
+
+/* ---- Dark mode overrides ---- */
+[data-theme="dark"] .stat-icon--student { background: rgba(16, 185, 129, 0.15); }
+[data-theme="dark"] .stat-icon--teacher { background: rgba(124, 58, 237, 0.15); color: #c4b5fd; }
+[data-theme="dark"] .stat-icon--question { background: rgba(245, 158, 11, 0.15); color: #fcd34d; }
+[data-theme="dark"] .stat-icon--exam { background: rgba(37, 99, 235, 0.15); color: #93c5fd; }
+[data-theme="dark"] .stat-icon--dept { background: rgba(239, 68, 68, 0.15); color: #fca5a5; }
+[data-theme="dark"] .stat-icon--log { background: rgba(148, 163, 184, 0.15); }
+[data-theme="dark"] .qa-icon--student { background: rgba(16, 185, 129, 0.15); }
+[data-theme="dark"] .qa-icon--teacher { background: rgba(124, 58, 237, 0.15); color: #c4b5fd; }
+[data-theme="dark"] .qa-icon--dept { background: rgba(239, 68, 68, 0.15); color: #fca5a5; }
+[data-theme="dark"] .qa-icon--class { background: rgba(37, 99, 235, 0.15); color: #93c5fd; }
+[data-theme="dark"] .qa-icon--import { background: rgba(245, 158, 11, 0.15); color: #fcd34d; }
+[data-theme="dark"] .log-icon--create { background: rgba(16, 185, 129, 0.15); }
+[data-theme="dark"] .log-icon--delete { background: rgba(239, 68, 68, 0.15); color: #fca5a5; }
+[data-theme="dark"] .log-icon--update { background: rgba(37, 99, 235, 0.15); color: #93c5fd; }
+[data-theme="dark"] .log-icon--info { background: rgba(148, 163, 184, 0.15); }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .stat-icon--student { background: rgba(16, 185, 129, 0.15); }
+  :root:not([data-theme="light"]) .stat-icon--teacher { background: rgba(124, 58, 237, 0.15); color: #c4b5fd; }
+  :root:not([data-theme="light"]) .stat-icon--question { background: rgba(245, 158, 11, 0.15); color: #fcd34d; }
+  :root:not([data-theme="light"]) .stat-icon--exam { background: rgba(37, 99, 235, 0.15); color: #93c5fd; }
+  :root:not([data-theme="light"]) .stat-icon--dept { background: rgba(239, 68, 68, 0.15); color: #fca5a5; }
+  :root:not([data-theme="light"]) .stat-icon--log { background: rgba(148, 163, 184, 0.15); }
+  :root:not([data-theme="light"]) .qa-icon--student { background: rgba(16, 185, 129, 0.15); }
+  :root:not([data-theme="light"]) .qa-icon--teacher { background: rgba(124, 58, 237, 0.15); color: #c4b5fd; }
+  :root:not([data-theme="light"]) .qa-icon--dept { background: rgba(239, 68, 68, 0.15); color: #fca5a5; }
+  :root:not([data-theme="light"]) .qa-icon--class { background: rgba(37, 99, 235, 0.15); color: #93c5fd; }
+  :root:not([data-theme="light"]) .qa-icon--import { background: rgba(245, 158, 11, 0.15); color: #fcd34d; }
+  :root:not([data-theme="light"]) .log-icon--create { background: rgba(16, 185, 129, 0.15); }
+  :root:not([data-theme="light"]) .log-icon--delete { background: rgba(239, 68, 68, 0.15); color: #fca5a5; }
+  :root:not([data-theme="light"]) .log-icon--update { background: rgba(37, 99, 235, 0.15); color: #93c5fd; }
+  :root:not([data-theme="light"]) .log-icon--info { background: rgba(148, 163, 184, 0.15); }
 }
 </style>

@@ -111,7 +111,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAppStore } from '@/stores/app'
 import ChartCard from '@/components/common/ChartCard.vue'
@@ -132,6 +132,18 @@ interface RecentItem {
   title: string
   meta: string
   time: number
+}
+
+/** 从试卷 ID 中安全提取时间戳，失败时返回 0 */
+function safePaperTime(id: string | undefined): number {
+  if (!id || typeof id !== 'string' || !id.includes('-')) return 0
+  try {
+    const tail = id.split('-').pop() || '0'
+    const parsed = parseInt(tail, 16)
+    return Number.isFinite(parsed) ? parsed * 1000 : 0
+  } catch {
+    return 0
+  }
 }
 
 const recentItems = computed<RecentItem[]>(() => {
@@ -155,7 +167,7 @@ const recentItems = computed<RecentItem[]>(() => {
       badgeClass: 'badge-paper',
       title: p.name || '未命名试卷',
       meta: `${p.questionIds?.length || 0} 题`,
-      time: new Date(p.id.includes('-') ? parseInt(p.id.split('-').pop() || '0', 16) * 1000 || 0 : 0).getTime(),
+      time: safePaperTime(p.id),
     })
   })
 
@@ -174,12 +186,20 @@ const recentItems = computed<RecentItem[]>(() => {
 
   return items.sort((a, b) => b.time - a.time).slice(0, 5)
 })
+
+// 数据加载保护：若 bootstrap 为空（如刷新后 API 异常），尝试重新加载
+onMounted(() => {
+  if (!store.bootstrap) {
+    store.loadData().catch(() => { /* 静默处理，路由守卫会引导到登录页 */ })
+  }
+})
 </script>
 
 <style scoped>
 .teacher-overview {
   display: grid;
   gap: 16px;
+  overflow-wrap: break-word;
 }
 
 /* ---- Stats Grid ---- */
@@ -513,5 +533,11 @@ const recentItems = computed<RecentItem[]>(() => {
   .activity-item {
     padding: 8px 10px;
   }
+}
+
+/* ---- Dark mode overrides ---- */
+[data-theme="dark"] .action-btn--auto { color: #c4b5fd; }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .action-btn--auto { color: #c4b5fd; }
 }
 </style>

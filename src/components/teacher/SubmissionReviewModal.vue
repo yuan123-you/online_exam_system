@@ -239,4 +239,28 @@ async function submitGrade() {
   font-size: 12px;
   padding: 2px 8px;
 }
+
+/* ---- Dark mode overrides ---- */
+[data-theme="dark"] .ai-badge-pass {
+  background: rgba(16, 185, 129, 0.12);
+  border-color: rgba(134, 239, 172, 0.4);
+  color: #4ade80;
+}
+[data-theme="dark"] .ai-badge-fail {
+  background: rgba(239, 68, 68, 0.12);
+  border-color: rgba(252, 165, 165, 0.4);
+  color: #fca5a5;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .ai-badge-pass {
+    background: rgba(16, 185, 129, 0.12);
+    border-color: rgba(134, 239, 172, 0.4);
+    color: #4ade80;
+  }
+  :root:not([data-theme="light"]) .ai-badge-fail {
+    background: rgba(239, 68, 68, 0.12);
+    border-color: rgba(252, 165, 165, 0.4);
+    color: #fca5a5;
+  }
+}
 </style>

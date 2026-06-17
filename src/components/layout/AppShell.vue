@@ -3,7 +3,7 @@
     :class="['app-shell', { 'sidebar-open': sidebarOpen, 'sidebar-collapsed': sidebarCollapsed }]"
     @touchstart.passive="onTouchStart"
     @touchmove.passive="onTouchMove"
-    @touchend="onTouchEnd"
+    @touchend.passive="onTouchEnd"
   >
     <!-- Sidebar backdrop overlay (mobile / tablet) -->
     <div class="sidebar-overlay" @click="sidebarOpen = false"></div>
@@ -101,13 +101,12 @@
         </div>
       </header>
 
-      <!-- AI assistant page: floating hamburger button (mobile only) -->
-      <button v-if="isAiPractice" class="ai-hamburger-btn" type="button" @click="sidebarOpen = !sidebarOpen" title="菜单">
-        <svg viewBox="0 0 24 24" width="16" height="16"><line x1="3" y1="6" x2="21" y2="6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><line x1="3" y1="12" x2="21" y2="12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><line x1="3" y1="18" x2="21" y2="18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
-      </button>
-
       <section :class="['content-panel', { 'content-panel--full': isAiPractice }]">
-        <router-view />
+        <router-view v-slot="{ Component }">
+          <keep-alive :include="['AiQuestionGen']">
+            <component :is="Component" />
+          </keep-alive>
+        </router-view>
       </section>
     </main>
 
@@ -279,10 +278,10 @@ const refreshing = ref(false)
 async function handleReload() {
   if (refreshing.value) return
   refreshing.value = true
-  store.showToast('正在刷新数据...', 'info')
   try {
+    // 1. Reload bootstrap (core) data first
     await store.loadData()
-    // Collect additional data loading tasks based on current route
+    // 2. Reload route-specific store-level data
     const extraTasks: Promise<void>[] = []
     const key = activeMenuKey.value
     if (key === 'grades') {
@@ -294,15 +293,14 @@ async function handleReload() {
     if (key === 'analysis') {
       extraTasks.push(store.loadQuestionAnalysisData(store.questionAnalysisExamId))
     }
-    if (key === 'questions' || key === 'ai-questions') {
-      extraTasks.push(store.loadQuestionsPage(store.currentPage))
-    }
     if (key === 'wrong-book' || key === 'practice-records') {
       extraTasks.push(store.loadQuotaData())
     }
     extraTasks.push(store.loadNotificationData())
-    // Wait for ALL data loading to complete before showing success
+    // Wait for ALL data loading to complete before notifying views
     await Promise.all(extraTasks)
+    // 3. Notify paginated views to re-fetch with their current filters/search state
+    store.triggerRefresh()
     store.showToast('数据已刷新', 'success')
   } catch {
     store.showToast('刷新失败，请重试', 'error')
@@ -352,36 +350,7 @@ function getMenuIcon(key: string): string {
 </script>
 
 <style scoped>
-/* Floating hamburger button for AI assistant page (mobile only) */
-.ai-hamburger-btn {
-  display: none;
-  position: fixed;
-  top: 14px;
-  left: 14px;
-  z-index: 15;
-  width: 34px;
-  height: 34px;
-  border-radius: 10px;
-  border: 1px solid rgba(0,0,0,0.06);
-  background: rgba(255,255,255,0.72);
-  -webkit-backdrop-filter: blur(6px);
-  backdrop-filter: blur(6px);
-  color: #9ca3af;
-  cursor: pointer;
-  align-items: center;
-  justify-content: center;
-  box-shadow: 0 1px 4px rgba(0,0,0,0.06);
-  transition: all 0.15s ease;
-  -webkit-tap-highlight-color: transparent;
-  opacity: 0.85;
-}
-.ai-hamburger-btn:active {
-  transform: scale(0.92);
-  background: rgba(255,255,255,0.9);
-  opacity: 1;
-}
-
-/* Collapse icon rotation animation */
+/* Notification bell button */
 .collapse-icon {
   transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
   display: block;
@@ -397,12 +366,6 @@ function getMenuIcon(key: string): string {
 @keyframes spin {
   from { transform: rotate(0deg); }
   to { transform: rotate(360deg); }
-}
-
-@media (max-width: 1023px) {
-  .ai-hamburger-btn {
-    display: flex;
-  }
 }
 
 /* Notification bell button */
@@ -441,5 +404,23 @@ function getMenuIcon(key: string): string {
   background: #ef4444;
   border-radius: 9px;
   pointer-events: none;
+}
+
+/* ---- Dark mode overrides ---- */
+[data-theme="dark"] .notif-bell-btn {
+  color: #e5e7eb;
+  border-color: rgba(255, 255, 255, 0.12);
+}
+[data-theme="dark"] .notif-bell-btn:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .notif-bell-btn {
+    color: #e5e7eb;
+    border-color: rgba(255, 255, 255, 0.12);
+  }
+  :root:not([data-theme="light"]) .notif-bell-btn:hover {
+    background: rgba(255, 255, 255, 0.08);
+  }
 }
 </style>

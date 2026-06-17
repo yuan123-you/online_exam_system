@@ -379,7 +379,7 @@ Type=simple
 User=$(whoami)
 WorkingDirectory=/opt/online-exam
 EnvironmentFile=/opt/online-exam/env.conf
-ExecStart=${JAVA_BIN} -Xmx512m -Xms256m -jar /opt/online-exam/backend/target/${JAR_NAME}
+ExecStart=${JAVA_BIN} -Xmx512m -Xms256m -Dfile.encoding=UTF-8 -Dsun.jnu.encoding=UTF-8 -jar /opt/online-exam/backend/target/${JAR_NAME}
 Restart=always
 RestartSec=10
 StandardOutput=append:/opt/online-exam/backend.log

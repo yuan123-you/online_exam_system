@@ -132,7 +132,13 @@ public class SubmissionController {
     submission.put("gradedBy", str(user, "name"));
     submission.put("updatedAt", Instant.now().toString());
     storeService.saveRecord("submissions", submission);
-    submissionService.syncWrongBook(store, submission);
+    try {
+      submissionService.syncWrongBook(store, submission);
+    } catch (Exception e) {
+      // 错题本同步失败不应阻塞阅卷结果保存，记录日志后继续返回阅卷结果
+      System.err.println("[manual-grade] syncWrongBook failed for submission " + str(submission, "id") + ": " + e.getMessage());
+      e.printStackTrace();
+    }
     systemLogService.log(user, "manual grade", str(submission, "id"));
     return ResponseEntity.ok(mapOf("submission", submissionService.buildSubmissionReview(store, submission)));
   }

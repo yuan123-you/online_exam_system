@@ -227,4 +227,18 @@ function getClassStudentCount(classId: string): number {
     max-width: none;
   }
 }
+
+/* ---- Dark mode overrides ---- */
+[data-theme="dark"] .org-item:hover {
+  background: rgba(255, 255, 255, 0.05);
+}
+[data-theme="dark"] .dept-icon { background: rgba(239, 68, 68, 0.15); color: #fca5a5; }
+[data-theme="dark"] .class-icon { background: rgba(37, 99, 235, 0.15); color: #93c5fd; }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .org-item:hover {
+    background: rgba(255, 255, 255, 0.05);
+  }
+  :root:not([data-theme="light"]) .dept-icon { background: rgba(239, 68, 68, 0.15); color: #fca5a5; }
+  :root:not([data-theme="light"]) .class-icon { background: rgba(37, 99, 235, 0.15); color: #93c5fd; }
+}
 </style>

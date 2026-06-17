@@ -172,9 +172,6 @@ export function useSmoothScroll(options: SmoothScrollOptions = {}) {
     const cappedDelta = Math.sign(rawDelta) * Math.min(Math.abs(rawDelta), maxDelta)
     const finalDelta = cappedDelta * multiplier
 
-    // 阻止浏览器默认滚动行为，由我们控制
-    e.preventDefault()
-
     // 取消惯性
     if (state.inertiaRafId) {
       cancelAnimationFrame(state.inertiaRafId)
@@ -211,7 +208,7 @@ export function useSmoothScroll(options: SmoothScrollOptions = {}) {
   function attach() {
     containers = Array.from(document.querySelectorAll<HTMLElement>(selector))
     containers.forEach((el) => {
-      el.addEventListener('wheel', normalizeWheel, { passive: false })
+      el.addEventListener('wheel', normalizeWheel, { passive: true })
     })
   }
 

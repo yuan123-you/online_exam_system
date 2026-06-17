@@ -596,4 +596,94 @@ onMounted(() => nextTick(() => {
     width: 16px; height: 16px;
   }
 }
+
+/* ===== Dark mode overrides ===== */
+[data-theme="dark"] .login-shell {
+  background:
+    radial-gradient(ellipse at 30% 20%, rgba(61, 153, 128, 0.12), transparent 50%),
+    radial-gradient(ellipse at 70% 80%, rgba(94, 196, 164, 0.08), transparent 50%),
+    linear-gradient(165deg, #0f1a17, #0a1412);
+}
+[data-theme="dark"] .intro-feature-card {
+  background: rgba(255, 255, 255, 0.05);
+  border-color: rgba(255, 255, 255, 0.08);
+}
+[data-theme="dark"] .intro-feature-card:hover {
+  background: rgba(255, 255, 255, 0.09);
+}
+[data-theme="dark"] .login-panel {
+  background: #0d1815;
+}
+[data-theme="dark"] .login-card {
+  background: #162622;
+  box-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.2),
+    0 4px 16px rgba(0, 0, 0, 0.25),
+    0 12px 40px rgba(0, 0, 0, 0.2);
+}
+[data-theme="dark"] .login-input {
+  background: #1a2e28;
+  border-color: #2a4a3e;
+  color: var(--ink);
+}
+[data-theme="dark"] .login-input:hover {
+  border-color: #3a5a4e;
+  background: #1e342c;
+}
+[data-theme="dark"] .login-input:focus {
+  background: #1a2e28;
+}
+[data-theme="dark"] .login-input::placeholder {
+  color: var(--muted-light);
+}
+@media (max-width: 768px) {
+  [data-theme="dark"] .login-shell {
+    background: #0d1815;
+  }
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .login-shell {
+    background:
+      radial-gradient(ellipse at 30% 20%, rgba(61, 153, 128, 0.12), transparent 50%),
+      radial-gradient(ellipse at 70% 80%, rgba(94, 196, 164, 0.08), transparent 50%),
+      linear-gradient(165deg, #0f1a17, #0a1412);
+  }
+  :root:not([data-theme="light"]) .intro-feature-card {
+    background: rgba(255, 255, 255, 0.05);
+    border-color: rgba(255, 255, 255, 0.08);
+  }
+  :root:not([data-theme="light"]) .intro-feature-card:hover {
+    background: rgba(255, 255, 255, 0.09);
+  }
+  :root:not([data-theme="light"]) .login-panel {
+    background: #0d1815;
+  }
+  :root:not([data-theme="light"]) .login-card {
+    background: #162622;
+    box-shadow:
+      0 1px 2px rgba(0, 0, 0, 0.2),
+      0 4px 16px rgba(0, 0, 0, 0.25),
+      0 12px 40px rgba(0, 0, 0, 0.2);
+  }
+  :root:not([data-theme="light"]) .login-input {
+    background: #1a2e28;
+    border-color: #2a4a3e;
+    color: var(--ink);
+  }
+  :root:not([data-theme="light"]) .login-input:hover {
+    border-color: #3a5a4e;
+    background: #1e342c;
+  }
+  :root:not([data-theme="light"]) .login-input:focus {
+    background: #1a2e28;
+  }
+  :root:not([data-theme="light"]) .login-input::placeholder {
+    color: var(--muted-light);
+  }
+  @media (max-width: 768px) {
+    :root:not([data-theme="light"]) .login-shell {
+      background: #0d1815;
+    }
+  }
+}
 </style>

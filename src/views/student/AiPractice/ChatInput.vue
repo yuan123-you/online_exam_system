@@ -19,7 +19,7 @@
       :disabled="!modelValue.trim() || disabled"
       @click="$emit('send')"
     >
-      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
         <line x1="22" y1="2" x2="11" y2="13"></line>
         <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
       </svg>
@@ -77,8 +77,8 @@ function autoResize() {
 .input-tools { display: flex; gap: 2px; flex-shrink: 0; }
 
 .tool-btn {
-  width: 34px; height: 34px; border: none; border-radius: 8px;
-  background: transparent; font-size: 16px; cursor: pointer;
+  width: 30px; height: 30px; border: none; border-radius: 8px;
+  background: transparent; font-size: 14px; cursor: pointer;
   display: flex; align-items: center; justify-content: center;
   transition: background 0.12s;
 }
@@ -103,7 +103,7 @@ function autoResize() {
 }
 
 .send-btn {
-  width: 38px; height: 38px; border: none; border-radius: 10px;
+  width: 30px; height: 30px; border: none; border-radius: 8px;
   background: var(--primary); color: #fff;
   cursor: pointer; display: flex; align-items: center; justify-content: center;
   flex-shrink: 0; transition: all 0.12s;

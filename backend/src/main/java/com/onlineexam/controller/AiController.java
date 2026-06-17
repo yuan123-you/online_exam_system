@@ -2,10 +2,18 @@ package com.onlineexam.controller;
 
 import com.onlineexam.service.AiService;
 import com.onlineexam.service.AnalysisService;
+import com.onlineexam.StoreService;
+import com.onlineexam.StoreService.Store;
+import java.time.Instant;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -24,10 +32,12 @@ public class AiController {
 
   private final AiService aiService;
   private final AnalysisService analysisService;
+  private final StoreService storeService;
 
-  public AiController(AiService aiService, AnalysisService analysisService) {
+  public AiController(AiService aiService, AnalysisService analysisService, StoreService storeService) {
     this.aiService = aiService;
     this.analysisService = analysisService;
+    this.storeService = storeService;
   }
 
   /**
@@ -123,7 +133,31 @@ public class AiController {
    */
   @PostMapping("/ai/backup-question-bank")
   public ResponseEntity<?> aiBackupQuestionBank(@RequestHeader(value = "X-User-Id", required = false) String userId) {
-    return ResponseEntity.status(HttpStatus.NOT_IMPLEMENTED).body(Map.of("message", "题库备份功能暂未实现"));
+    if (userId == null || userId.isBlank()) {
+      return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(Map.of("message", "未登录"));
+    }
+    Store store = storeService.readStore();
+    List<Map<String, Object>> questions = store.questions.stream()
+        .filter(q -> userId.equals(String.valueOf(q.get("teacherId"))))
+        .filter(q -> !Boolean.TRUE.equals(q.get("deleted")))
+        .toList();
+    if (questions.isEmpty()) {
+      return ResponseEntity.badRequest().body(Map.of("message", "没有可备份的题目"));
+    }
+    String backupId = UUID.randomUUID().toString();
+    Map<String, Object> record = new LinkedHashMap<>();
+    record.put("id", backupId);
+    record.put("teacherId", userId);
+    record.put("questions", new ArrayList<>(questions));
+    record.put("questionCount", questions.size());
+    record.put("createdAt", Instant.now().toString());
+    storeService.saveRecord("backups", record);
+    Map<String, Object> info = new LinkedHashMap<>();
+    info.put("id", backupId);
+    info.put("teacherId", userId);
+    info.put("questionCount", questions.size());
+    info.put("createdAt", record.get("createdAt"));
+    return ResponseEntity.ok(info);
   }
 
   /**
@@ -131,7 +165,22 @@ public class AiController {
    */
   @GetMapping("/ai/backups")
   public ResponseEntity<?> aiListBackups(@RequestHeader(value = "X-User-Id", required = false) String userId) {
-    return ResponseEntity.status(HttpStatus.NOT_IMPLEMENTED).body(Map.of("message", "题库备份功能暂未实现"));
+    if (userId == null || userId.isBlank()) {
+      return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(Map.of("message", "未登录"));
+    }
+    Store store = storeService.readStore();
+    List<Map<String, Object>> backups = store.backups.stream()
+        .filter(b -> userId.equals(String.valueOf(b.get("teacherId"))))
+        .map(b -> {
+          Map<String, Object> meta = new LinkedHashMap<>();
+          meta.put("id", b.get("id"));
+          meta.put("teacherId", b.get("teacherId"));
+          meta.put("questionCount", b.get("questionCount"));
+          meta.put("createdAt", b.get("createdAt"));
+          return meta;
+        })
+        .toList();
+    return ResponseEntity.ok(Map.of("backups", backups));
   }
 
   /**
@@ -140,7 +189,67 @@ public class AiController {
   @PostMapping("/ai/restore-backup")
   public ResponseEntity<?> aiRestoreBackup(@RequestHeader(value = "X-User-Id", required = false) String userId,
                                             @RequestBody Map<String, Object> body) {
-    return ResponseEntity.status(HttpStatus.NOT_IMPLEMENTED).body(Map.of("message", "题库备份功能暂未实现"));
+    if (userId == null || userId.isBlank()) {
+      return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(Map.of("message", "未登录"));
+    }
+    String backupId = body.get("backupId") != null ? String.valueOf(body.get("backupId")) : null;
+    if (backupId == null || backupId.isBlank()) {
+      return ResponseEntity.badRequest().body(Map.of("message", "缺少 backupId"));
+    }
+    Store store = storeService.readStore();
+    Map<String, Object> backup = store.backups.stream()
+        .filter(b -> backupId.equals(String.valueOf(b.get("id"))))
+        .findFirst()
+        .orElse(null);
+    if (backup == null) {
+      return ResponseEntity.status(HttpStatus.NOT_FOUND).body(Map.of("message", "备份不存在"));
+    }
+    if (!userId.equals(String.valueOf(backup.get("teacherId")))) {
+      return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of("message", "无权操作此备份"));
+    }
+    // 软删除当前所有题目
+    store.questions.stream()
+        .filter(q -> userId.equals(String.valueOf(q.get("teacherId"))))
+        .filter(q -> !Boolean.TRUE.equals(q.get("deleted")))
+        .forEach(q -> {
+          q.put("deleted", true);
+          storeService.saveRecord("questions", q);
+        });
+    // 恢复备份中的题目
+    @SuppressWarnings("unchecked")
+    List<Map<String, Object>> backupQuestions = (List<Map<String, Object>>) backup.get("questions");
+    if (backupQuestions != null) {
+      for (Map<String, Object> q : backupQuestions) {
+        q.put("deleted", false);
+        storeService.saveRecord("questions", q);
+      }
+    }
+    int restoredCount = backupQuestions != null ? backupQuestions.size() : 0;
+    return ResponseEntity.ok(Map.of("message", "恢复成功", "restoredCount", restoredCount));
+  }
+
+  /**
+   * 删除题库备份（教师端）
+   */
+  @DeleteMapping("/ai/backups/{backupId}")
+  public ResponseEntity<?> aiDeleteBackup(@RequestHeader(value = "X-User-Id", required = false) String userId,
+                                          @PathVariable String backupId) {
+    if (userId == null || userId.isBlank()) {
+      return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(Map.of("message", "未登录"));
+    }
+    Store store = storeService.readStore();
+    Map<String, Object> backup = store.backups.stream()
+        .filter(b -> backupId.equals(String.valueOf(b.get("id"))))
+        .findFirst()
+        .orElse(null);
+    if (backup == null) {
+      return ResponseEntity.status(HttpStatus.NOT_FOUND).body(Map.of("message", "备份不存在"));
+    }
+    if (!userId.equals(String.valueOf(backup.get("teacherId")))) {
+      return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of("message", "无权操作此备份"));
+    }
+    storeService.deleteRecord("backups", backupId);
+    return ResponseEntity.ok(Map.of("message", "备份已删除"));
   }
 
   /**

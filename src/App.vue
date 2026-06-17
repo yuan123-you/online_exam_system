@@ -76,11 +76,25 @@
   />
 
   <!-- Toast Notifications -->
-  <div class="toast-container">
+  <div class="toast-container" role="region" aria-label="通知" aria-live="polite">
     <transition-group name="toast">
-      <div v-for="t in toasts" :key="t.id" :class="['toast', 'toast-' + t.type]">
-        <span class="toast-icon">{{ t.type === 'success' ? '&#10003;' : t.type === 'error' ? '&#10005;' : t.type === 'warning' ? '&#9888;' : '&#8505;' }}</span>
+      <div
+        v-for="t in toasts"
+        :key="t.id"
+        :class="['toast', 'toast-' + t.type]"
+        role="alert"
+      >
+        <span class="toast-icon" aria-hidden="true">
+          <svg v-if="t.type === 'success'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
+          <svg v-else-if="t.type === 'error'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+          <svg v-else-if="t.type === 'warning'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+          <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+        </span>
         <span class="toast-msg">{{ t.message }}</span>
+        <button class="toast-close" type="button" aria-label="关闭" @click="dismissToast(t.id)">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+        </button>
+        <span class="toast-progress" :style="{ animationDuration: toastDuration(t.id) + 'ms' }" />
       </div>
     </transition-group>
   </div>
@@ -100,7 +114,15 @@ import AutoGenPaperModal from '@/components/teacher/AutoGenPaperModal.vue'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 
 const store = useAppStore()
-const { toasts } = useToast()
+const { toasts, dismiss, getDuration } = useToast()
+
+function dismissToast(id: number) {
+  dismiss(id)
+}
+
+function toastDuration(id: number) {
+  return getDuration(id)
+}
 
 function handleExamClose() {
   store.activeExam = null

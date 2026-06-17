@@ -69,7 +69,9 @@ const router = createRouter({
           name: 'overview',
           component: () => {
             const store = useAppStore()
-            return Promise.resolve(store.isAdmin ? AdminOverview : TeacherOverview)
+            // AdminOverview / TeacherOverview 本身是 () => import(...) 懒加载函数，
+            // 必须调用它们以返回组件 Promise，否则 Promise.resolve(函数) 会把函数当作组件渲染为 [object Promise]
+            return store.isAdmin ? AdminOverview() : TeacherOverview()
           },
           meta: { roles: ['admin', 'teacher'] },
         },
@@ -114,7 +116,7 @@ const router = createRouter({
           path: 'ai-questions',
           name: 'ai-questions',
           component: AiQuestionGen,
-          meta: { roles: ['teacher'] },
+          meta: { roles: ['teacher', 'admin'] },
         },
         {
           path: 'papers',

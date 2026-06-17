@@ -40,7 +40,7 @@ const depClasspath = fs.readFileSync(cpFile, "utf-8").trim();
 const sep = process.platform === "win32" ? ";" : ":";
 const classpath = `${classesDir}${sep}${depClasspath}`;
 
-const child = spawn("java", ["-cp", classpath, "com.onlineexam.OnlineExamApplication"], {
+const child = spawn("java", ["-Dfile.encoding=UTF-8", "-Dsun.jnu.encoding=UTF-8", "-cp", classpath, "com.onlineexam.OnlineExamApplication"], {
   cwd: root,
   stdio: "inherit",
   env: loadEnv(),

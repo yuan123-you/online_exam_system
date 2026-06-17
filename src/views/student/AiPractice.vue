@@ -7,15 +7,9 @@
     <div v-if="!sidebarExpanded" class="sidebar-float-controls">
       <!-- History toggle button -->
       <button class="float-btn float-btn--history" @click="sidebarExpanded = true" title="展开历史记录">
-        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <circle cx="12" cy="12" r="10"/>
           <polyline points="12 6 12 12 16 14"/>
-        </svg>
-      </button>
-      <!-- Hamburger nav button (mobile only) -->
-      <button class="float-btn float-btn--hamburger" @click="sidebarExpanded = true" title="打开侧边栏">
-        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
-          <line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/>
         </svg>
       </button>
     </div>
@@ -93,6 +87,7 @@
           :streaming-questions="currentStreamingQuestions"
           :loading="currentLoading"
           :tab="activeTab"
+          @regenerate="handleRegenerate"
         />
       </div>
 
@@ -105,65 +100,86 @@
         </button>
       </transition>
 
-      <!-- Bottom input area -->
-      <div class="bottom-area">
-        <!-- Tab switcher -->
-        <div class="tab-switcher-row">
-          <div class="tab-switcher">
-            <button :class="{ active: activeTab === 'chat' }" @click="switchTab('chat')">💬 对话</button>
-            <button :class="{ active: activeTab === 'practice' }" @click="switchTab('practice')">📝 练题</button>
-          </div>
-        </div>
+      <!-- Floating input trigger button (visible when input panel is collapsed) -->
+      <transition name="float-input-fade">
+        <button
+          v-if="!inputPanelExpanded && showInputTrigger"
+          class="float-input-trigger"
+          @click="handleTriggerClick"
+          title="打开输入框"
+        >
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+          </svg>
+        </button>
+      </transition>
 
-        <!-- Follow-up suggestion chips based on user preferences (shown during active conversation) -->
-        <div v-if="currentMessages.length > 0 && recentThemes.length > 0 && !currentLoading" class="quick-chips">
-          <button
-            v-for="theme in recentThemes"
-            :key="theme"
-            @click="send(activeTab === 'practice' ? `帮我出关于「${theme}」的练习题，附详细解析` : `请深入讲解「${theme}」`)"
-          >
-            {{ theme }}
-          </button>
-        </div>
-
-        <!-- Input with inline send/stop button -->
-        <div class="input-row">
-          <div class="input-wrapper">
-            <textarea
-              ref="inputRef"
-              v-model="inputText"
-              class="msg-input"
-              rows="1"
-              :placeholder="activeTab === 'chat' ? '输入消息，Enter 发送，Shift+Enter 换行' : '输入出题需求，Enter 发送'"
-              :disabled="currentLoading"
-              @keydown="onKeydown"
-              @input="autoResize"
-            ></textarea>
-            <!-- Unified send/stop button inside the input -->
-            <button
-              v-if="!currentStreamingActive"
-              class="action-btn send-action"
-              :disabled="!inputText.trim() || currentLoading"
-              @click="doSend"
-              title="发送 (Enter)"
-            >
-              <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
-                <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/>
-              </svg>
-            </button>
-            <button
-              v-else
-              class="action-btn stop-action"
-              @click="stopStreaming"
-              title="停止生成"
-            >
-              <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
-                <rect x="4" y="4" width="16" height="16" rx="2"/>
+      <!-- Floating input panel (dropdown from side) -->
+      <transition name="input-panel-slide">
+        <div v-if="inputPanelExpanded" class="float-input-panel">
+          <!-- Panel header with tab switcher and collapse button -->
+          <div class="panel-header">
+            <div class="tab-switcher">
+              <button :class="{ active: activeTab === 'chat' }" @click="switchTab('chat')">💬 对话</button>
+              <button :class="{ active: activeTab === 'practice' }" @click="switchTab('practice')">📝 练题</button>
+            </div>
+            <button class="panel-collapse-btn" @click="handleCollapseClick" title="收起输入框">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="6 15 12 9 18 15"/>
               </svg>
             </button>
           </div>
+
+          <!-- Follow-up suggestion chips based on user preferences (shown during active conversation) -->
+          <div v-if="currentMessages.length > 0 && recentThemes.length > 0 && !currentLoading" class="quick-chips">
+            <button
+              v-for="theme in recentThemes"
+              :key="theme"
+              @click="send(activeTab === 'practice' ? `帮我出关于「${theme}」的练习题，附详细解析` : `请深入讲解「${theme}」`)"
+            >
+              {{ theme }}
+            </button>
+          </div>
+
+          <!-- Input with inline send/stop button -->
+          <div class="input-row">
+            <div class="input-wrapper">
+              <textarea
+                ref="inputRef"
+                v-model="inputText"
+                class="msg-input"
+                rows="1"
+                :placeholder="activeTab === 'chat' ? '输入消息发送对话' : '输入出题需求发送'"
+                :disabled="currentLoading"
+                @keydown="onKeydown"
+                @input="autoResize"
+              ></textarea>
+              <!-- Unified send/stop button inside the input -->
+              <button
+                v-if="!currentStreamingActive"
+                class="action-btn send-action"
+                :disabled="!inputText.trim() || currentLoading"
+                @click="doSend"
+                title="发送 (Enter)"
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/>
+                </svg>
+              </button>
+              <button
+                v-else
+                class="action-btn stop-action"
+                @click="stopStreaming"
+                title="停止生成"
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                  <rect x="4" y="4" width="16" height="16" rx="2"/>
+                </svg>
+              </button>
+            </div>
+          </div>
         </div>
-      </div>
+      </transition>
     </div>
   </div>
 </template>
@@ -188,6 +204,84 @@ const sidebarExpanded = ref(window.innerWidth > 768)
 const inputText = ref('')
 const msgList = ref<HTMLElement | null>(null)
 const inputRef = ref<HTMLTextAreaElement | null>(null)
+const inputPanelExpanded = ref(false)
+const showInputTrigger = ref(true)
+// Prevents auto-hide during programmatic scroll-to-bottom
+let programmaticScrolling = false
+// Pauses auto-show/hide after manual collapse; re-enabled on next user scroll
+let autoShowPaused = false
+
+// Near-bottom detection: panel shows/hides based on distance from bottom (percentage)
+const nearBottomRatio = 0.15 // 15% of viewport height from bottom
+// Hysteresis: the hide threshold is larger than the show threshold by an amount
+// greater than the panel height. This breaks the feedback loop where toggling
+// the panel changes msg-area height → changes scroll metrics → toggles panel again.
+const panelHeightEstimate = 160
+let panelTransitioning = false
+
+function checkNearBottom() {
+  const el = msgList.value
+  if (!el) return
+  // Always show panel on welcome screen (no messages)
+  if (currentMessages.value.length === 0) {
+    showInputTrigger.value = false
+    if (!inputPanelExpanded.value) inputPanelExpanded.value = true
+    return
+  }
+  const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight
+  // Hysteresis: use a larger threshold to hide the panel than to show it.
+  // When panel is expanded, require scrolling further away to hide it.
+  // When panel is collapsed, require scrolling closer to show it.
+  const showThreshold = el.clientHeight * nearBottomRatio
+  const hideThreshold = showThreshold + panelHeightEstimate
+  const threshold = inputPanelExpanded.value ? hideThreshold : showThreshold
+  const isNearBottom = distanceFromBottom <= threshold
+  // Show floating trigger when panel is hidden (far from bottom)
+  showInputTrigger.value = !isNearBottom
+  // Don't auto-hide during programmatic scroll-to-bottom
+  if (programmaticScrolling) return
+  // Pause auto-show/hide after manual collapse until user scrolls
+  if (autoShowPaused) return
+  // Prevent toggle during CSS transition to avoid layout thrashing
+  if (panelTransitioning) return
+  // Don't auto-hide if user is typing or has unsent text
+  if (document.activeElement === inputRef.value || inputText.value.trim()) {
+    return
+  }
+  // Auto-show/hide panel based on distance from bottom (with hysteresis)
+  if (isNearBottom !== inputPanelExpanded.value) {
+    panelTransitioning = true
+    inputPanelExpanded.value = isNearBottom
+    // Re-enable after CSS transition completes (panel slide: 0.25s enter / 0.2s leave)
+    setTimeout(() => {
+      panelTransitioning = false
+    }, 350)
+  }
+}
+
+// Manual collapse: hide panel and pause auto-show/hide until next genuine user scroll.
+// Sets panelTransitioning to guard against layout-induced scroll events that fire
+// when the panel collapse changes msg-area height (which would otherwise immediately
+// re-trigger auto-show).
+function handleCollapseClick() {
+  inputPanelExpanded.value = false
+  autoShowPaused = true
+  panelTransitioning = true
+  setTimeout(() => {
+    panelTransitioning = false
+  }, 400)
+}
+
+// Trigger button: expand panel WITHOUT forcing scroll to bottom.
+// Scrolling to bottom + auto-follow is deferred to the send action.
+function handleTriggerClick() {
+  inputPanelExpanded.value = true
+  autoShowPaused = false
+  // Focus the input so the user can start typing immediately
+  nextTick(() => {
+    inputRef.value?.focus()
+  })
+}
 
 // Current session state
 const currentMessages = computed(() => activeTab.value === 'chat' ? store.chatMessages : store.practiceMessages)
@@ -262,7 +356,14 @@ const feedbackGivenMap = ref<Record<number, 'helpful' | 'not_helpful'>>({})
 
 function switchTab(tab: 'chat' | 'practice') {
   activeTab.value = tab
-  nextTick(() => scrollToBottom())
+  nextTick(() => {
+    programmaticScrolling = true
+    scrollToBottom()
+    setTimeout(() => {
+      programmaticScrolling = false
+      checkNearBottom()
+    }, 350)
+  })
 }
 
 function send(text: string) {
@@ -281,11 +382,36 @@ function doSend() {
   if (!text) return
   inputText.value = ''
   send(text)
+  // Force scroll to bottom and re-enable auto-follow on send confirm
+  nextTick(() => {
+    programmaticScrolling = true
+    scrollToBottom()
+    setTimeout(() => {
+      programmaticScrolling = false
+      checkNearBottom()
+    }, 350)
+  })
 }
 
 function stopStreaming() {
   if (activeTab.value === 'chat') store.handleChatStop()
   else store.handlePracticeStop()
+}
+
+/** Handle regenerate event from MessageBubbles — re-sends the user message */
+function handleRegenerate(msgIndex: number) {
+  // Don't regenerate while streaming
+  if (currentStreamingActive.value) return
+  store.handleRetryMessage(msgIndex, activeTab.value)
+  // Scroll to bottom after regenerate
+  nextTick(() => {
+    programmaticScrolling = true
+    scrollToBottom()
+    setTimeout(() => {
+      programmaticScrolling = false
+      checkNearBottom()
+    }, 350)
+  })
 }
 
 function onKeydown(e: KeyboardEvent) {
@@ -385,7 +511,14 @@ const {
 })
 
 watch(() => currentMessages.value.length, () => {
-  nextTick(() => onNewMessage())
+  nextTick(() => {
+    programmaticScrolling = true
+    onNewMessage()
+    setTimeout(() => {
+      programmaticScrolling = false
+      checkNearBottom()
+    }, 350)
+  })
 })
 watch(() => activeTab.value === 'chat' ? store.chatStreamingContent : store.practiceStreamingContent,
   () => onStreamingUpdate())
@@ -399,21 +532,59 @@ watch(() => store.chatTypewriterContent,
 let pageEnterTime = 0
 
 // Attach/detach scroll listener (composable handles scroll event, we only handle lifecycle)
+let scrollListenerAttached = false
+
+// Scroll handler: clears manual-collapse pause on genuine user scroll, then runs near-bottom check.
+// Layout-induced scrolls (from panel collapse/expand changing msg-area height) are ignored
+// while panelTransitioning is true.
+function onUserScroll() {
+  // Only clear the manual-collapse pause on genuine user scrolls,
+  // not on layout-induced scrolls during panel transitions
+  if (autoShowPaused && !programmaticScrolling && !panelTransitioning) {
+    autoShowPaused = false
+  }
+  checkNearBottom()
+}
+
+function attachScrollListener() {
+  if (scrollListenerAttached || !msgList.value) return
+  msgList.value.addEventListener('scroll', onUserScroll, { passive: true })
+  scrollListenerAttached = true
+  checkNearBottom()
+}
+
+function detachScrollListener() {
+  if (!scrollListenerAttached || !msgList.value) return
+  msgList.value.removeEventListener('scroll', onUserScroll)
+  scrollListenerAttached = false
+}
+
+// Watch msgList ref to attach listener when element becomes available
+watch(msgList, (el) => {
+  if (el) {
+    attachScrollListener()
+  }
+})
+
 onMounted(() => {
   pageEnterTime = Date.now()
   // 记录页面访问行为
   store.trackBehavior('page_view', 'page', undefined, { page: 'ai-practice' })
   // 恢复练习会话（页面刷新时恢复用户进度）
   store.restorePracticeSession()
+  // Attach scroll listener for near-bottom detection
+  attachScrollListener()
 })
 onUnmounted(() => {
   if (pageEnterTime > 0) {
     const durationMs = Date.now() - pageEnterTime
     store.trackBehavior('page_leave', 'page', undefined, { page: 'ai-practice' }, durationMs)
   }
-  // Stop any ongoing AI streaming requests to prevent AbortError
-  store.handleChatStop()
-  store.handlePracticeStop()
+  // Do NOT stop AI streaming on unmount — chat and practice should continue
+  // running in the background when the user navigates to other pages.
+  // The streaming state lives in the Pinia store and persists across page switches.
+  // Detach scroll listener
+  detachScrollListener()
 })
 </script>
 
@@ -423,7 +594,7 @@ onUnmounted(() => {
   display: flex;
   flex-direction: row;
   height: 100%;
-  background: #fff;
+  background: var(--ai-bg);
   border: none;
   border-radius: 0;
   overflow: hidden;
@@ -435,7 +606,7 @@ onUnmounted(() => {
 .chat-layout::-webkit-scrollbar { display: none; }
 .msg-area::-webkit-scrollbar { width: 6px; }
 .msg-area::-webkit-scrollbar-track { background: transparent; }
-.msg-area::-webkit-scrollbar-thumb { background: #d1d5db; border-radius: 3px; }
+.msg-area::-webkit-scrollbar-thumb { background: var(--ai-border); border-radius: 3px; }
 
 /* ===== Messages ===== */
 .msg-area {
@@ -445,22 +616,28 @@ onUnmounted(() => {
   overscroll-behavior: contain;
   -webkit-overflow-scrolling: touch;
   scrollbar-width: thin;
-  scrollbar-color: #d1d5db transparent;
+  scrollbar-color: var(--ai-border) transparent;
   padding: 18px 12px;
   display: flex;
   flex-direction: column;
   gap: 10px;
   position: relative;
+  /* Enable touch scrolling on mobile/tablet */
+  touch-action: pan-y;
+  min-height: 0;
 }
 
 /* ===== Main ===== */
 .chat-main {
   flex: 1;
   min-width: 0;
+  min-height: 0;
   display: flex;
   flex-direction: column;
-  background: #fff;
+  background: var(--ai-bg);
   position: relative;
+  /* Enable touch scrolling on mobile/tablet */
+  touch-action: pan-y;
 }
 
 /* ===== 返回底部按钮 ===== */
@@ -484,6 +661,11 @@ onUnmounted(() => {
   box-shadow: 0 4px 16px rgba(99, 102, 241, 0.35), 0 1px 3px rgba(0, 0, 0, 0.1);
   transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
   z-index: 10;
+}
+.scroll-to-bottom-btn svg {
+  width: 24px;
+  height: 24px;
+  flex-shrink: 0;
 }
 .scroll-to-bottom-btn:hover {
   background: rgba(79, 70, 229, 0.95);
@@ -511,26 +693,19 @@ onUnmounted(() => {
   transform: translateY(12px) scale(0.85);
 }
 
-/* ===== Tab switcher (moved to bottom area) ===== */
-.tab-switcher-row {
-  display: flex;
-  justify-content: center;
-  padding: 6px 16px 0;
-}
-
-/* Tab switcher */
+/* Tab switcher (inside panel header) */
 .tab-switcher {
   display: flex;
   border-radius: 10px;
   overflow: hidden;
-  border: 1px solid #e5e7eb;
-  background: #f9fafb;
+  border: 1px solid var(--ai-border);
+  background: var(--ai-surface-soft);
 }
 .tab-switcher button {
   padding: 6px 16px;
   border: none;
   background: transparent;
-  color: #6b7280;
+  color: var(--ai-text-muted);
   font-size: 12px;
   font-weight: 500;
   cursor: pointer;
@@ -538,15 +713,15 @@ onUnmounted(() => {
   position: relative;
 }
 .tab-switcher button.active {
-  background: #1e1b4b;
+  background: var(--ai-accent-dark);
   color: #fff;
   font-weight: 600;
   box-shadow: 0 1px 4px rgba(0,0,0,0.2);
   border-radius: 8px;
 }
 .tab-switcher button:not(.active):hover {
-  background: #f3f4f6;
-  color: #374151;
+  background: var(--ai-surface-hover);
+  color: var(--ai-text-secondary);
 }
 
 /* Welcome */
@@ -557,7 +732,7 @@ onUnmounted(() => {
 }
 
 .welcome-icon { font-size: 36px; margin-bottom: 10px; }
-.welcome h3 { font-size: 17px; color: #111827; margin: 0 0 12px; font-weight: 600; }
+.welcome h3 { font-size: 17px; color: var(--ai-text); margin: 0 0 12px; font-weight: 600; }
 
 .welcome-chips {
   display: flex;
@@ -570,15 +745,15 @@ onUnmounted(() => {
 
 .wc-chip {
   padding: 5px 12px;
-  border: 1px solid #e5e7eb;
+  border: 1px solid var(--ai-border);
   border-radius: 16px;
-  background: #fff;
-  color: #374151;
+  background: var(--ai-surface);
+  color: var(--ai-text-secondary);
   font-size: 12px;
   cursor: pointer;
   transition: all 0.12s;
 }
-.wc-chip:hover { border-color: #9ca3af; background: #f9fafb; }
+.wc-chip:hover { border-color: var(--ai-text-faint); background: var(--ai-surface-soft); }
 
 /* ===== Recommendations Panel ===== */
 .recommendations-panel {
@@ -596,20 +771,25 @@ onUnmounted(() => {
 .rec-title {
   font-size: 14px;
   font-weight: 600;
-  color: #374151;
+  color: var(--ai-text-secondary);
 }
 .rec-refresh {
   background: none;
-  border: 1px solid #e5e7eb;
+  border: 1px solid var(--ai-border);
   border-radius: 8px;
   padding: 4px 8px;
   cursor: pointer;
-  color: #6b7280;
+  color: var(--ai-text-muted);
   display: flex;
   align-items: center;
   transition: all 0.15s;
 }
-.rec-refresh:hover { background: #f3f4f6; color: #374151; }
+.rec-refresh svg {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+}
+.rec-refresh:hover { background: var(--ai-surface-hover); color: var(--ai-text-secondary); }
 .rec-refresh:disabled { opacity: 0.5; cursor: not-allowed; }
 .spinning { animation: spin 1s linear infinite; }
 @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
@@ -620,15 +800,15 @@ onUnmounted(() => {
   gap: 8px;
 }
 .rec-card {
-  border: 1px solid #e5e7eb;
+  border: 1px solid var(--ai-border);
   border-radius: 12px;
   padding: 12px;
   cursor: pointer;
   transition: all 0.15s;
-  background: #fff;
+  background: var(--ai-surface);
   position: relative;
 }
-.rec-card:hover { border-color: #a5b4fc; box-shadow: 0 2px 8px rgba(99,102,241,0.1); transform: translateY(-1px); }
+.rec-card:hover { border-color: var(--ai-accent-border); box-shadow: 0 2px 8px rgba(99,102,241,0.1); transform: translateY(-1px); }
 .rec-card.rec-high { border-left: 3px solid #ef4444; }
 .rec-card.rec-medium { border-left: 3px solid #f59e0b; }
 .rec-card.rec-low { border-left: 3px solid #10b981; }
@@ -667,13 +847,13 @@ onUnmounted(() => {
 .rec-card-title {
   font-size: 13px;
   font-weight: 600;
-  color: #111827;
+  color: var(--ai-text);
   margin-bottom: 4px;
   line-height: 1.4;
 }
 .rec-card-desc {
   font-size: 11px;
-  color: #6b7280;
+  color: var(--ai-text-muted);
   line-height: 1.5;
   margin-bottom: 8px;
 }
@@ -686,14 +866,14 @@ onUnmounted(() => {
   font-size: 11px;
   font-weight: 500;
   padding: 4px 12px;
-  border: 1px solid #6366f1;
+  border: 1px solid var(--ai-accent);
   border-radius: 8px;
-  background: #fff;
-  color: #6366f1;
+  background: var(--ai-surface);
+  color: var(--ai-accent);
   cursor: pointer;
   transition: all 0.12s;
 }
-.rec-action-btn:hover { background: #6366f1; color: #fff; }
+.rec-action-btn:hover { background: var(--ai-accent); color: #fff; }
 
 .rec-feedback {
   display: flex;
@@ -701,14 +881,19 @@ onUnmounted(() => {
 }
 .fb-btn {
   background: none;
-  border: 1px solid #e5e7eb;
+  border: 1px solid var(--ai-border);
   border-radius: 6px;
   padding: 3px 6px;
   cursor: pointer;
-  color: #9ca3af;
+  color: var(--ai-text-faint);
   display: flex;
   align-items: center;
   transition: all 0.12s;
+}
+.fb-btn svg {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
 }
 .fb-btn:hover { border-color: #d1d5db; }
 .fb-helpful:hover { color: #10b981; border-color: #10b981; background: #f0fdf4; }
@@ -719,11 +904,121 @@ onUnmounted(() => {
 .rec-feedback-given { opacity: 0.6; }
 .rec-feedback-given:hover { transform: none; box-shadow: none; }
 
-/* ===== Bottom area ===== */
-.bottom-area {
+/* ===== Floating input trigger button ===== */
+.float-input-trigger {
+  position: absolute;
+  bottom: 20px;
+  right: 20px;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: linear-gradient(135deg, var(--ai-accent) 0%, var(--ai-accent-hover) 100%);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  color: #fff;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 4px 20px rgba(99, 102, 241, 0.4), 0 1px 3px rgba(0, 0, 0, 0.1);
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  z-index: 15;
+}
+.float-input-trigger svg {
+  width: 20px;
+  height: 20px;
   flex-shrink: 0;
-  border-top: 1px solid #f3f4f6;
-  background: #fff;
+}
+.float-input-trigger:hover {
+  background: linear-gradient(135deg, var(--ai-accent-hover) 0%, var(--ai-accent-dark) 100%);
+  transform: scale(1.08);
+  box-shadow: 0 6px 28px rgba(99, 102, 241, 0.5), 0 2px 6px rgba(0, 0, 0, 0.12);
+}
+.float-input-trigger:active {
+  transform: scale(0.96);
+  box-shadow: 0 2px 8px rgba(99, 102, 241, 0.3);
+}
+
+/* Float input trigger transition */
+.float-input-fade-enter-active {
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.float-input-fade-leave-active {
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.float-input-fade-enter-from {
+  opacity: 0;
+  transform: translateY(16px) scale(0.8);
+}
+.float-input-fade-leave-to {
+  opacity: 0;
+  transform: translateY(16px) scale(0.8);
+}
+
+/* ===== Floating input panel ===== */
+.float-input-panel {
+  background: var(--ai-surface);
+  border-top: 1px solid var(--ai-border);
+  border-radius: 16px 16px 0 0;
+  box-shadow: 0 -4px 24px rgba(0, 0, 0, 0.1), 0 -1px 4px rgba(0, 0, 0, 0.04);
+  padding-bottom: env(safe-area-inset-bottom, 0);
+  flex-shrink: 0;
+}
+
+/* Panel header */
+.panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 16px 0;
+}
+
+.panel-collapse-btn {
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--ai-border);
+  border-radius: 6px;
+  background: var(--ai-surface-soft);
+  color: var(--ai-text-muted);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.panel-collapse-btn svg {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+}
+.panel-collapse-btn:hover {
+  background: var(--ai-surface-hover);
+  color: var(--ai-text-secondary);
+  border-color: var(--ai-text-faint);
+  box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+  transform: scale(1.05);
+}
+.panel-collapse-btn:active {
+  transform: scale(0.97);
+}
+
+/* Input panel slide transition — smooth slide down/up */
+.input-panel-slide-enter-active {
+  transition: opacity 0.3s cubic-bezier(0.4, 0, 0.2, 1), transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.input-panel-slide-leave-active {
+  transition: opacity 0.28s cubic-bezier(0.4, 0, 0.2, 1), transform 0.28s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.input-panel-slide-enter-from {
+  opacity: 0;
+  transform: translateY(100%);
+}
+.input-panel-slide-leave-to {
+  opacity: 0;
+  transform: translateY(100%);
 }
 
 .quick-chips {
@@ -734,16 +1029,16 @@ onUnmounted(() => {
 }
 .quick-chips button {
   padding: 4px 12px;
-  border: 1px solid #e5e7eb;
+  border: 1px solid var(--ai-border);
   border-radius: 14px;
-  background: #f9fafb;
-  color: #6b7280;
+  background: var(--ai-surface-soft);
+  color: var(--ai-text-muted);
   font-size: 11px;
   cursor: pointer;
   white-space: nowrap;
   transition: all 0.1s;
 }
-.quick-chips button:hover { background: #f3f4f6; border-color: #d1d5db; }
+.quick-chips button:hover { background: var(--ai-surface-hover); border-color: var(--ai-text-faint); }
 
 /* Input row */
 .input-row {
@@ -759,22 +1054,23 @@ onUnmounted(() => {
 
 .msg-input {
   width: 100%;
-  padding: 12px 44px 12px 14px;  /* right padding for button */
-  border: 2px solid #e5e7eb;
+  box-sizing: border-box;
+  padding: 10px 40px 10px 12px;  /* right padding reserved for send button */
+  border: 2px solid var(--ai-border);
   border-radius: 14px;
   font-size: 14px;
   font-family: inherit;
   line-height: 1.6;
   resize: none;
   outline: none;
-  background: #f9fafb;
-  color: #111827;
+  background: var(--ai-surface-soft);
+  color: var(--ai-text);
   min-height: 44px;
   max-height: 200px;
   overflow-y: hidden;
   transition: border-color 0.15s, box-shadow 0.15s, background 0.15s;
   scrollbar-width: thin;
-  scrollbar-color: #d4d4d8 transparent;
+  scrollbar-color: var(--ai-border) transparent;
 }
 .msg-input::-webkit-scrollbar {
   width: 4px;
@@ -783,15 +1079,15 @@ onUnmounted(() => {
   background: transparent;
 }
 .msg-input::-webkit-scrollbar-thumb {
-  background: #d4d4d8;
+  background: var(--ai-border);
   border-radius: 2px;
 }
 .msg-input::-webkit-scrollbar-button {
   display: none;
 }
 .msg-input:focus {
-  border-color: #6366f1;
-  background: #fff;
+  border-color: var(--ai-accent);
+  background: var(--ai-surface);
   box-shadow: 0 0 0 4px rgba(99,102,241,0.1);
 }
 .msg-input:disabled { opacity: 0.5; }
@@ -802,10 +1098,10 @@ onUnmounted(() => {
   right: 6px;
   bottom: 50%;
   transform: translateY(50%);
-  width: 36px;
-  height: 36px;
+  width: 30px;
+  height: 30px;
   border: none;
-  border-radius: 10px;
+  border-radius: 8px;
   cursor: pointer;
   display: flex;
   align-items: center;
@@ -813,12 +1109,17 @@ onUnmounted(() => {
   transition: all 0.15s;
   z-index: 2;
 }
+.action-btn svg {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+}
 .send-action {
-  background: #6366f1;
+  background: var(--ai-accent);
   color: #fff;
 }
 .send-action:hover:not(:disabled) {
-  background: #4f46e5;
+  background: var(--ai-accent-hover);
   transform: scale(1.06);
   box-shadow: 0 2px 8px rgba(99,102,241,0.35);
 }
@@ -849,8 +1150,8 @@ onUnmounted(() => {
 /* ===== Floating sidebar control buttons ===== */
 .sidebar-float-controls {
   position: absolute;
-  left: 8px;
-  top: 8px;
+  left: 4px;
+  top: 4px;
   z-index: 30;
   display: flex;
   flex-direction: column;
@@ -858,45 +1159,55 @@ onUnmounted(() => {
 }
 
 .float-btn {
-  width: 36px;
-  height: 36px;
-  border: 1px solid #e5e7eb;
-  border-radius: 10px;
-  background: #fff;
-  color: #6b7280;
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--ai-accent-border);
+  border-radius: 4px;
+  background: var(--ai-accent-soft);
+  color: var(--ai-accent);
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
-  box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+  box-shadow: 0 1px 3px rgba(99,102,241,0.1);
   transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  -webkit-tap-highlight-color: transparent;
+}
+.float-btn svg {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
 }
 .float-btn:hover {
-  background: #f3f4f6;
-  color: #111827;
-  border-color: #9ca3af;
-  box-shadow: 0 2px 8px rgba(0,0,0,0.12);
+  background: var(--ai-accent-soft);
+  color: var(--ai-accent-hover);
+  border-color: var(--ai-accent);
+  box-shadow: 0 2px 6px rgba(99,102,241,0.18);
   transform: scale(1.05);
 }
 .float-btn:active {
-  transform: scale(0.95);
+  transform: scale(0.93);
+  background: var(--ai-accent-soft);
 }
 
 /* History toggle button — always visible */
 .float-btn--history {
-  color: #6366f1;
-  border-color: #e0e7ff;
-  background: #f5f3ff;
+  color: var(--ai-accent);
+  border-color: var(--ai-accent-border);
+  background: var(--ai-accent-soft);
 }
 .float-btn--history:hover {
-  background: #ede9fe;
-  color: #4f46e5;
-  border-color: #c7d2fe;
+  background: var(--ai-accent-soft);
+  color: var(--ai-accent-hover);
+  border-color: var(--ai-accent);
 }
 
-/* Hamburger nav button — hidden on desktop, shown on mobile */
-.float-btn--hamburger {
-  display: none;
+/* ===== Responsive — Mobile & Tablet (tab bar offset) ===== */
+@media (max-width: 1023px) {
+  .float-input-panel {
+    /* Content panel padding already accounts for tab bar + safe area */
+    padding-bottom: 0 !important;
+  }
 }
 
 /* ===== Responsive — Tablet & Mobile ===== */
@@ -914,30 +1225,19 @@ onUnmounted(() => {
 
   /* Floating controls on mobile */
   .sidebar-float-controls {
-    left: 10px;
-    top: 10px;
+    left: 4px;
+    top: 4px;
   }
   .float-btn {
-    width: 40px;
-    height: 40px;
-    border-radius: 12px;
-  }
-  .float-btn--hamburger {
-    display: flex;
-    background: #1e1b4b;
-    color: #fff;
-    border-color: #1e1b4b;
-  }
-  .float-btn--hamburger:hover {
-    background: #312e81;
-    color: #fff;
-    border-color: #312e81;
+    width: 28px;
+    height: 28px;
+    border-radius: 4px;
   }
 
   /* Space for floating buttons */
   .msg-area {
     padding: 12px 8px;
-    padding-top: 56px;
+    padding-top: 46px;
     gap: 8px;
   }
 
@@ -955,14 +1255,14 @@ onUnmounted(() => {
 
   .input-row { padding: 6px 8px; }
   .msg-input {
-    padding: 10px 38px 10px 12px;
+    padding: 10px 34px 10px 12px;
     font-size: 13px;
     border-radius: 12px;
   }
   .action-btn {
-    width: 32px; height: 32px;
+    width: 28px; height: 28px;
     right: 5px;
-    border-radius: 8px;
+    border-radius: 6px;
   }
 
   .rec-list {
@@ -970,11 +1270,31 @@ onUnmounted(() => {
   }
 
   .scroll-to-bottom-btn {
-    bottom: 70px;
+    bottom: 80px;
     right: 12px;
     width: 40px;
     height: 40px;
     border-radius: 50%;
+  }
+
+  .float-input-trigger {
+    bottom: 16px;
+    right: 12px;
+    width: 40px;
+    height: 40px;
+  }
+
+  .float-input-panel {
+    border-radius: 14px 14px 0 0;
+  }
+
+  .panel-header {
+    padding: 8px 12px 0;
+  }
+
+  .panel-collapse-btn {
+    width: 26px;
+    height: 26px;
   }
 }
 
@@ -982,7 +1302,7 @@ onUnmounted(() => {
 @media (max-width: 480px) {
   .msg-area {
     padding: 8px 4px;
-    padding-top: 52px;
+    padding-top: 44px;
     gap: 6px;
   }
 
@@ -996,38 +1316,50 @@ onUnmounted(() => {
 
   .input-row { padding: 4px 6px; }
   .msg-input {
-    padding: 8px 34px 8px 10px;
+    padding: 8px 30px 8px 10px;
     font-size: 13px;
     border-radius: 10px;
   }
   .action-btn {
-    width: 30px; height: 30px;
+    width: 26px; height: 26px;
     right: 4px;
-    border-radius: 7px;
+    border-radius: 6px;
   }
 
   .recommendations-panel { margin: 10px 4px 0; }
 
   .scroll-to-bottom-btn {
-    bottom: 60px;
+    bottom: 72px;
     right: 8px;
     width: 36px;
     height: 36px;
+  }
+
+  .float-input-trigger {
+    bottom: 12px;
+    right: 8px;
+    width: 36px;
+    height: 36px;
+  }
+
+  .float-input-panel {
+    border-radius: 12px 12px 0 0;
   }
 }
 
 /* ===== Responsive — Tablet (768-1023) ===== */
 @media (min-width: 769px) and (max-width: 1023px) {
   .msg-area {
-    padding-top: 56px;
+    padding-top: 46px;
   }
   .sidebar-float-controls {
-    left: 10px;
-    top: 10px;
+    left: 4px;
+    top: 4px;
   }
   .float-btn {
-    width: 38px;
-    height: 38px;
+    width: 28px;
+    height: 28px;
+    border-radius: 4px;
   }
 
   .recommendations-panel { max-width: 100%; }
@@ -1055,5 +1387,33 @@ onUnmounted(() => {
   .input-row {
     padding: 4px 8px;
   }
+
+  .float-input-panel {
+    border-radius: 14px 14px 0 0;
+  }
+}
+
+/* ===== Dark mode overrides ===== */
+[data-theme="dark"] .badge-knowledge_gap,
+[data-theme="dark"] .badge-wrongbook_retry { background: rgba(239, 68, 68, 0.15); color: #fca5a5; }
+[data-theme="dark"] .badge-subject_review { background: rgba(217, 119, 6, 0.15); color: #fbbf24; }
+[data-theme="dark"] .badge-study_plan { background: rgba(37, 99, 235, 0.15); color: #93c5fd; }
+[data-theme="dark"] .badge-chat,
+[data-theme="dark"] .badge-practice { background: rgba(34, 197, 94, 0.15); color: #86efac; }
+[data-theme="dark"] .fb-helpful:hover,
+[data-theme="dark"] .fb-active-helpful { background: rgba(16, 185, 129, 0.15) !important; }
+[data-theme="dark"] .fb-nothelpful:hover,
+[data-theme="dark"] .fb-active-nothelpful { background: rgba(239, 68, 68, 0.15) !important; }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .badge-knowledge_gap,
+  :root:not([data-theme="light"]) .badge-wrongbook_retry { background: rgba(239, 68, 68, 0.15); color: #fca5a5; }
+  :root:not([data-theme="light"]) .badge-subject_review { background: rgba(217, 119, 6, 0.15); color: #fbbf24; }
+  :root:not([data-theme="light"]) .badge-study_plan { background: rgba(37, 99, 235, 0.15); color: #93c5fd; }
+  :root:not([data-theme="light"]) .badge-chat,
+  :root:not([data-theme="light"]) .badge-practice { background: rgba(34, 197, 94, 0.15); color: #86efac; }
+  :root:not([data-theme="light"]) .fb-helpful:hover,
+  :root:not([data-theme="light"]) .fb-active-helpful { background: rgba(16, 185, 129, 0.15) !important; }
+  :root:not([data-theme="light"]) .fb-nothelpful:hover,
+  :root:not([data-theme="light"]) .fb-active-nothelpful { background: rgba(239, 68, 68, 0.15) !important; }
 }
 </style>

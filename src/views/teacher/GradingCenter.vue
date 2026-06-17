@@ -361,4 +361,20 @@ async function handleAiGrade(id: string) {
     -webkit-overflow-scrolling: touch;
   }
 }
+
+/* ---- Dark mode overrides ---- */
+[data-theme="dark"] .filter-tab--active .filter-count {
+  background: rgba(255, 255, 255, 0.2);
+}
+[data-theme="dark"] .badge--amber { color: #fbbf24; }
+[data-theme="dark"] .badge--green { color: #4ade80; }
+[data-theme="dark"] .ai-btn { color: #c4b5fd; }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .filter-tab--active .filter-count {
+    background: rgba(255, 255, 255, 0.2);
+  }
+  :root:not([data-theme="light"]) .badge--amber { color: #fbbf24; }
+  :root:not([data-theme="light"]) .badge--green { color: #4ade80; }
+  :root:not([data-theme="light"]) .ai-btn { color: #c4b5fd; }
+}
 </style>

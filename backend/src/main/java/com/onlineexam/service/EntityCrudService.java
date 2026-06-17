@@ -162,6 +162,8 @@ public class EntityCrudService {
 
   /**
    * 检查删除阻止条件
+   * 注意：questions/papers/exams 使用软删除（deleted=1），不会破坏引用关系，
+   * 因此不阻止这些实体的删除。仅对 departments/classes 等物理删除的实体进行检查。
    */
   public String deleteBlocker(Store store, String entity, String id) {
     if ("departments".equals(entity)) {
@@ -177,9 +179,6 @@ public class EntityCrudService {
         return "该班级下还有 " + studentCount + " 名学生，请先移除或转移学生后再删除。";
       }
     }
-    if ("questions".equals(entity) && store.papers.stream().anyMatch(p -> asList(p.get("questionIds")).contains(id))) return "该题目已被试卷引用，无法删除。";
-    if ("papers".equals(entity) && store.exams.stream().anyMatch(e -> Objects.equals(str(e, "paperId"), id))) return "该试卷已被考试引用，无法删除。";
-    if ("exams".equals(entity) && store.submissions.stream().anyMatch(s -> Objects.equals(str(s, "examId"), id))) return "该考试已有提交记录，无法删除。";
     return "";
   }
 

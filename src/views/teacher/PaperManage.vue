@@ -48,7 +48,7 @@
     </div>
 
     <!-- 表格区域 -->
-    <div class="table-wrap">
+    <div class="table-wrap mobile-card-table">
       <table>
         <thead>
           <tr>
@@ -386,81 +386,44 @@ tbody tr:hover {
     font-size: 1.1rem;
   }
 
-  /* Card layout on mobile */
-  .table-wrap {
-    border: none;
+  .mobile-card-table table thead {
+    display: none;
   }
 
-  table,
-  thead,
-  tbody,
-  th,
-  td,
-  tr {
+  .mobile-card-table table tbody tr {
     display: block;
-  }
-
-  thead {
-    position: absolute;
-    left: -9999px;
-    width: 1px;
-    height: 1px;
-    overflow: hidden;
-  }
-
-  tbody tr {
-    position: relative;
-    background: var(--bg, #fff);
+    margin-bottom: 0.75rem;
     border: 1px solid var(--border, #e5e7eb);
-    border-radius: 8px;
-    margin-bottom: 12px;
-    padding: 14px 16px;
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
-  }
-
-  tbody tr:hover {
+    border-radius: 10px;
+    padding: 0.75rem;
     background: var(--bg, #fff);
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
   }
 
-  tbody td {
+  .mobile-card-table table tbody td {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    padding: 8px 0;
-    border-bottom: 1px solid rgba(0, 0, 0, 0.04);
+    padding: 0.35rem 0;
+    border: none;
   }
 
-  tbody td:last-child {
-    border-bottom: none;
-    justify-content: flex-start;
-    padding-top: 12px;
-  }
-
-  tbody td::before {
+  .mobile-card-table table tbody td::before {
     content: attr(data-label);
-    font-size: 0.78rem;
     font-weight: 600;
+    font-size: 0.8rem;
     color: var(--muted, #6b7280);
-    text-transform: uppercase;
-    letter-spacing: 0.03em;
     flex-shrink: 0;
-    margin-right: 12px;
-  }
-
-  tbody td:last-child::before {
-    display: none;
-  }
-
-  .empty-row td {
-    display: block;
-  }
-
-  .empty-row td::before {
-    display: none;
+    margin-right: 0.75rem;
   }
 
   .action-row {
-    width: 100%;
+    flex-wrap: wrap;
+    gap: 0.35rem;
+  }
+
+  .table-wrap {
+    border: none;
   }
 }
 </style>

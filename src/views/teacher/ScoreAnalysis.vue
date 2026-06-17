@@ -185,6 +185,9 @@ function passStatusClass(s: any): string {
   --shadow-md: 0 4px 6px rgba(0, 0, 0, 0.07), 0 2px 4px rgba(0, 0, 0, 0.04);
 
   max-width: 1200px;
+  width: 100%;
+  box-sizing: border-box;
+  overflow-wrap: break-word;
   margin: 0 auto;
   padding: 24px;
 }
@@ -488,5 +491,23 @@ function passStatusClass(s: any): string {
     display: block !important;
     text-align: center;
   }
+}
+
+/* ---- Dark mode overrides ---- */
+[data-theme="dark"] .avg-icon { background: rgba(37, 99, 235, 0.15); }
+[data-theme="dark"] .max-icon,
+[data-theme="dark"] .pass-icon { background: rgba(34, 197, 94, 0.15); }
+[data-theme="dark"] .min-icon { background: rgba(245, 158, 11, 0.15); }
+[data-theme="dark"] .status-pass { background: rgba(34, 197, 94, 0.15); color: #4ade80; }
+[data-theme="dark"] .status-fail { background: rgba(239, 68, 68, 0.15); color: #fca5a5; }
+[data-theme="dark"] .status-pending { background: rgba(148, 163, 184, 0.15); color: #cbd5e1; }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .avg-icon { background: rgba(37, 99, 235, 0.15); }
+  :root:not([data-theme="light"]) .max-icon,
+  :root:not([data-theme="light"]) .pass-icon { background: rgba(34, 197, 94, 0.15); }
+  :root:not([data-theme="light"]) .min-icon { background: rgba(245, 158, 11, 0.15); }
+  :root:not([data-theme="light"]) .status-pass { background: rgba(34, 197, 94, 0.15); color: #4ade80; }
+  :root:not([data-theme="light"]) .status-fail { background: rgba(239, 68, 68, 0.15); color: #fca5a5; }
+  :root:not([data-theme="light"]) .status-pending { background: rgba(148, 163, 184, 0.15); color: #cbd5e1; }
 }
 </style>

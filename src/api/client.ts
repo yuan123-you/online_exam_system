@@ -807,6 +807,12 @@ export function restoreQuestionBackup(backupId: string) {
   });
 }
 
+export async function deleteQuestionBackup(backupId: string): Promise<{ success: boolean }> {
+  return request<{ success: boolean }>(`/api/ai/backups/${backupId}`, {
+    method: "DELETE",
+  });
+}
+
 export function aiGradeSubmission(submissionId: string) {
   return request<AiGradeResult>("/api/ai/grade-submission", {
     method: "POST",
@@ -986,7 +992,13 @@ export interface RecommendationItem {
 /** 获取个性化推荐列表 */
 export function getRecommendations(forceRefresh = false) {
   const url = forceRefresh ? '/api/recommendations?refresh=true' : '/api/recommendations'
-  return request<{ recommendations: RecommendationItem[]; cached: boolean }>(url);
+  // 刷新时设置超时，防止后端 AI 调用阻塞导致按钮永久禁用
+  // 60秒超时：后端有降级机制，但 AI 调用可能较慢，避免过早中止
+  const controller = new AbortController()
+  const timeoutId = setTimeout(() => controller.abort(), 60000)
+  return request<{ recommendations: RecommendationItem[]; cached: boolean }>(url, {
+    signal: controller.signal,
+  }).finally(() => clearTimeout(timeoutId));
 }
 
 /** 用户画像 */

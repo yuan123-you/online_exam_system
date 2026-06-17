@@ -1,1 +1,0 @@
-import{Q as e,q as t}from"./app-DjgcSUAw.js";function n(n,r=300){let i=e(n),a=e(n),o=null;t(i,e=>{o&&clearTimeout(o),o=setTimeout(()=>{a.value=e},r)});function s(e){o&&clearTimeout(o),i.value=e,a.value=e}return{debouncedValue:a,inputValue:i,setValue:s}}export{n as t};

@@ -9,7 +9,7 @@
         @click="emit('update:expanded', false)"
         title="收起侧栏"
       >
-        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
           <polyline points="15 6 9 12 15 18"/>
         </svg>
       </button>
@@ -49,7 +49,7 @@
             <button
               v-for="conv in group.items"
               :key="conv.id"
-              :class="['conv-item', { active: conv.id === store.activeConversationId }]"
+              :class="['conv-item', { active: conv.id === (store.activeTab === 'practice' ? store.activePracticeConversationId : store.activeChatConversationId) }]"
               @click="store.handleSwitchConversation(conv.id); emit('update:expanded', false)"
             >
               <span class="ci-icon">{{ conv.sessionType === 'practice' ? '📝' : '💬' }}</span>
@@ -211,8 +211,8 @@ async function onDelete(id: string) {
 .chat-sidebar {
   width: 260px;
   flex-shrink: 0;
-  background: #f9fafb;
-  border-right: 1px solid #e5e7eb;
+  background: var(--ai-surface-soft);
+  border-right: 1px solid var(--ai-border);
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -228,15 +228,15 @@ async function onDelete(id: string) {
 }
 
 .brand-icon { font-size: 22px; }
-.brand-text { font-size: 15px; font-weight: 700; color: #111827; flex: 1; }
+.brand-text { font-size: 15px; font-weight: 700; color: var(--ai-text); flex: 1; }
 
 .brand-collapse-btn {
-  width: 32px;
-  height: 32px;
-  border: 1px solid #d1d5db;
-  border-radius: 10px;
-  background: #fff;
-  color: #6b7280;
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--ai-border);
+  border-radius: 6px;
+  background: var(--ai-surface);
+  color: var(--ai-text-muted);
   cursor: pointer;
   display: flex;
   align-items: center;
@@ -245,10 +245,15 @@ async function onDelete(id: string) {
   box-shadow: 0 1px 3px rgba(0,0,0,0.06);
   transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
 }
+.brand-collapse-btn svg {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+}
 .brand-collapse-btn:hover {
-  background: #f3f4f6;
-  color: #111827;
-  border-color: #9ca3af;
+  background: var(--ai-surface-hover);
+  color: var(--ai-text);
+  border-color: var(--ai-text-faint);
   box-shadow: 0 2px 8px rgba(0,0,0,0.1);
   transform: scale(1.05);
 }
@@ -259,10 +264,10 @@ async function onDelete(id: string) {
 .new-chat-btn {
   margin: 0 12px 8px;
   padding: 10px 14px;
-  border: 1px solid #d1d5db;
+  border: 1px solid var(--ai-border);
   border-radius: 10px;
-  background: #fff;
-  color: #374151;
+  background: var(--ai-surface);
+  color: var(--ai-text-secondary);
   font-size: 13px;
   font-weight: 500;
   cursor: pointer;
@@ -272,8 +277,8 @@ async function onDelete(id: string) {
   transition: all 0.12s;
 }
 .new-chat-btn:hover {
-  border-color: #9ca3af;
-  background: #f9fafb;
+  border-color: var(--ai-text-faint);
+  background: var(--ai-surface-soft);
 }
 .nc-icon { font-size: 14px; }
 
@@ -288,20 +293,20 @@ async function onDelete(id: string) {
 .search-input {
   width: 100%;
   padding: 7px 28px 7px 10px;
-  border: 1.5px solid #e5e7eb;
+  border: 1.5px solid var(--ai-border);
   border-radius: 8px;
   font-size: 12px;
   font-family: inherit;
   outline: none;
-  background: #fff;
-  color: #374151;
+  background: var(--ai-surface);
+  color: var(--ai-text-secondary);
   transition: border-color 0.15s;
 }
 .search-input:focus {
-  border-color: #6366f1;
+  border-color: var(--ai-accent);
   box-shadow: 0 0 0 3px rgba(99,102,241,0.08);
 }
-.search-input::placeholder { color: #9ca3af; }
+.search-input::placeholder { color: var(--ai-text-faint); }
 
 .search-icon {
   position: absolute;
@@ -317,8 +322,8 @@ async function onDelete(id: string) {
   height: 20px;
   border: none;
   border-radius: 50%;
-  background: #e5e7eb;
-  color: #6b7280;
+  background: var(--ai-border);
+  color: var(--ai-text-muted);
   font-size: 12px;
   cursor: pointer;
   display: flex;
@@ -326,7 +331,7 @@ async function onDelete(id: string) {
   justify-content: center;
   line-height: 1;
 }
-.search-clear:hover { background: #d1d5db; }
+.search-clear:hover { background: var(--ai-text-faint); }
 
 /* History section */
 .history-section {
@@ -337,20 +342,20 @@ async function onDelete(id: string) {
   overscroll-behavior: contain;
   -webkit-overflow-scrolling: touch;
   scrollbar-width: thin;
-  scrollbar-color: #d1d5db transparent;
+  scrollbar-color: var(--ai-border) transparent;
 }
 
 .history-section::-webkit-scrollbar { width: 4px; }
 .history-section::-webkit-scrollbar-track { background: transparent; }
 .history-section::-webkit-scrollbar-thumb {
-  background: #d1d5db;
+  background: var(--ai-border);
   border-radius: 2px;
 }
 
 .history-label {
   font-size: 11px;
   font-weight: 600;
-  color: #9ca3af;
+  color: var(--ai-text-faint);
   text-transform: uppercase;
   letter-spacing: 0.5px;
   padding: 8px 8px 4px;
@@ -359,9 +364,9 @@ async function onDelete(id: string) {
 .history-group-label {
   font-size: 11px;
   font-weight: 600;
-  color: #6b7280;
+  color: var(--ai-text-muted);
   padding: 10px 8px 3px;
-  border-bottom: 1px solid #f3f4f6;
+  border-bottom: 1px solid var(--ai-border-soft);
   margin-bottom: 2px;
 }
 
@@ -374,7 +379,7 @@ async function onDelete(id: string) {
 .conv-empty, .conv-loading {
   padding: 20px 8px;
   text-align: center;
-  color: #9ca3af;
+  color: var(--ai-text-faint);
   font-size: 12px;
 }
 
@@ -387,15 +392,15 @@ async function onDelete(id: string) {
   border: none;
   border-radius: 8px;
   background: transparent;
-  color: #374151;
+  color: var(--ai-text-secondary);
   text-align: left;
   cursor: pointer;
   font-size: 13px;
   transition: background 0.1s;
   position: relative;
 }
-.conv-item:hover { background: #f3f4f6; }
-.conv-item.active { background: #e5e7eb; }
+.conv-item:hover { background: var(--ai-surface-hover); }
+.conv-item.active { background: var(--ai-border); }
 
 .ci-icon { font-size: 14px; flex-shrink: 0; }
 
@@ -411,7 +416,7 @@ async function onDelete(id: string) {
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: 13px;
-  color: #374151;
+  color: var(--ai-text-secondary);
 }
 
 .ci-snippet {
@@ -419,7 +424,7 @@ async function onDelete(id: string) {
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: 11px;
-  color: #9ca3af;
+  color: var(--ai-text-faint);
   margin-top: 1px;
   font-style: italic;
 }
@@ -439,12 +444,12 @@ async function onDelete(id: string) {
   font-weight: 500;
   flex-shrink: 0;
 }
-.badge-chat { background: #ede9fe; color: #7c3aed; }
+.badge-chat { background: var(--ai-accent-soft); color: var(--ai-accent); }
 .badge-practice { background: #dbeafe; color: #2563eb; }
 
 .ci-time {
   font-size: 11px;
-  color: #9ca3af;
+  color: var(--ai-text-faint);
   margin-top: 1px;
 }
 
@@ -458,7 +463,7 @@ async function onDelete(id: string) {
   border: none;
   border-radius: 4px;
   background: transparent;
-  color: #9ca3af;
+  color: var(--ai-text-faint);
   font-size: 14px;
   cursor: pointer;
   display: none;
@@ -480,9 +485,15 @@ async function onDelete(id: string) {
   }
 
   .brand-collapse-btn {
-    width: 32px;
-    height: 32px;
-    border-radius: 8px;
+    width: 28px;
+    height: 28px;
+    border-radius: 6px;
   }
+}
+
+/* ===== Dark mode overrides ===== */
+[data-theme="dark"] .badge-practice { background: rgba(37, 99, 235, 0.18); color: #93c5fd; }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .badge-practice { background: rgba(37, 99, 235, 0.18); color: #93c5fd; }
 }
 </style>

@@ -25,3 +25,7 @@ desktop.ini
 # Environment
 .env
 .env.local
+
+# Secrets & IDE
+.ssh_key
+.trae/

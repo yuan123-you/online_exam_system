@@ -51,15 +51,22 @@ public class WrongBookController {
     if (!isRole(user, "student")) return error(HttpStatus.FORBIDDEN, "Forbidden.");
     Map<String, Object> entry = store.wrongBookEntries.stream().filter(e -> Objects.equals(str(e, "id"), entryId) && Objects.equals(str(e, "studentId"), userId) && !e.containsKey("removedAt")).findFirst().orElse(null);
     if (entry == null) return error(HttpStatus.NOT_FOUND, "Wrong-book entry not found.");
+    // AI 练习产生的错题条目引用的 questionId 未持久化到 questions 表，
+    // 此时用条目自身保存的 expectedAnswer/type 构造伪题目以完成重做判定。
     Map<String, Object> question = find(store.questions, str(entry, "questionId"));
-    if (question == null) return error(HttpStatus.NOT_FOUND, "Question not found.");
+    if (question == null) {
+      question = new LinkedHashMap<>();
+      question.put("id", str(entry, "questionId"));
+      question.put("type", str(entry, "type"));
+      question.put("answer", entry.get("expectedAnswer") != null ? entry.get("expectedAnswer") : entry.get("latestAnswer"));
+    }
     SubmissionService.CompareResult result = submissionService.compare(question, body.get("answer"), true);
     entry.put("retryCount", asInt(entry.get("retryCount")) + 1);
     entry.put("lastRetryAt", Instant.now().toString());
     entry.put("lastRetryAnswer", result.answer());
     entry.put("lastRetryCorrect", Boolean.TRUE.equals(result.correct()));
     entry.put("removable", Boolean.TRUE.equals(result.correct()));
-    entry.put("status", Boolean.TRUE.equals(result.correct()) ? "mastered" : "active");
+    entry.put("status", "active");
     if (!Boolean.TRUE.equals(result.correct())) {
       entry.put("latestAnswer", result.answer());
       entry.put("wrongCount", asInt(entry.get("wrongCount")) + 1);

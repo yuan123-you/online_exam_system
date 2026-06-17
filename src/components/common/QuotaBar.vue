@@ -46,15 +46,17 @@ const clampedPercentage = computed(() => Math.min(100, percentage.value))
 
 <style scoped>
 .quota-bar {
-  margin-bottom: 12px;
+  margin-bottom: 8px;
 }
 
 .quota-info {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 6px;
-  font-size: 0.875rem;
+  margin-bottom: 4px;
+  font-size: 0.8rem;
+  flex-wrap: wrap;
+  gap: 4px;
 }
 
 .quota-label {
@@ -65,6 +67,7 @@ const clampedPercentage = computed(() => Math.min(100, percentage.value))
 .quota-text {
   color: var(--ok, #3d9980);
   font-weight: 500;
+  white-space: nowrap;
 }
 
 .quota-warn {
@@ -76,15 +79,15 @@ const clampedPercentage = computed(() => Math.min(100, percentage.value))
 }
 
 .quota-track {
-  height: 8px;
+  height: 6px;
   background: var(--line-soft, rgba(200, 221, 214, 0.6));
-  border-radius: 4px;
+  border-radius: 3px;
   overflow: hidden;
 }
 
 .quota-fill {
   height: 100%;
-  border-radius: 4px;
+  border-radius: 3px;
   background: var(--ok, #3d9980);
   transition: width 0.4s ease, background-color 0.3s ease;
 }
@@ -98,8 +101,8 @@ const clampedPercentage = computed(() => Math.min(100, percentage.value))
 }
 
 .quota-alert {
-  margin-top: 6px;
-  font-size: 0.8rem;
+  margin-top: 4px;
+  font-size: 0.75rem;
   color: var(--danger, #cf5c5c);
   font-weight: 500;
 }

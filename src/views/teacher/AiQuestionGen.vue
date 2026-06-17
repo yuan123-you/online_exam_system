@@ -79,8 +79,8 @@
           <label class="sp-label">题目数量</label>
           <div class="count-control">
             <button class="count-btn" :disabled="params.count <= 1" @click="params.count--">−</button>
-            <input type="number" v-model.number="params.count" class="count-input" min="1" max="10" />
-            <button class="count-btn" :disabled="params.count >= 10" @click="params.count++">+</button>
+            <input type="number" v-model.number="params.count" class="count-input" min="1" max="20" />
+            <button class="count-btn" :disabled="params.count >= 20" @click="params.count++">+</button>
           </div>
         </div>
 
@@ -122,7 +122,7 @@
           <span class="tb-title">AI 智能出题</span>
           <span class="tb-quota">已用 {{ store.aiQuotaUsed }} / {{ store.aiQuotaUsed + store.aiQuotaRemaining }}</span>
         </div>
-        <button class="ghost-btn" @click="$router.push('/questions')">返回题库</button>
+        <button class="ghost-btn" @click="$router.push(store.isAdmin ? '/overview' : '/questions')">返回</button>
       </header>
 
       <!-- Messages area -->
@@ -145,6 +145,8 @@
           :streaming-reasoning="streamingReasoning"
           :streaming-content="streamingContent"
           :loading="false"
+          tab="chat"
+          @regenerate="handleRegenerate"
         />
 
         <!-- Generated questions preview -->
@@ -152,16 +154,19 @@
           <div class="preview-header">
             <div class="preview-title">
               📋 已生成 {{ parsedQuestions.length }} 道题目
-              <span class="preview-selected">（已选 {{ selectedCount }}）</span>
+              <span class="preview-selected">（已选 {{ selectedCount }} / {{ parsedQuestions.length }}）</span>
             </div>
             <div class="preview-actions">
               <button class="select-all-btn" @click="toggleSelectAll">
-                {{ allSelected ? '取消全选' : '全选' }}
+                {{ allSelected ? '取消全选' : '☑ 全选' }}
               </button>
               <button class="primary-btn" :disabled="selectedCount === 0 || importing" @click="importSelected">
-                {{ importing ? '导入中...' : '导入选中到题库' }}
+                {{ importing ? '导入中...' : `📥 导入选中 (${selectedCount})` }}
               </button>
-              <button class="ghost-btn" @click="discardAll">放弃</button>
+              <button class="primary-btn add-all-btn" :disabled="parsedQuestions.length === 0 || importing" @click="importAll">
+                ⚡ 一键全部导入
+              </button>
+              <button class="ghost-btn" @click="discardAll">✕ 放弃</button>
             </div>
           </div>
           <div class="preview-list">
@@ -169,15 +174,55 @@
               v-for="(q, qi) in parsedQuestions"
               :key="qi"
               :class="['preview-card', { checked: selected[qi] !== false }]"
-              @click="selected[qi] = selected[qi] === false"
             >
-              <label class="pc-check" @click.stop>
-                <input type="checkbox" :checked="selected[qi] !== false" @change="selected[qi] = !selected[qi]" />
-              </label>
-              <span class="pc-num">{{ qi + 1 }}.</span>
-              <span :class="['pc-type', `type-${q.type}`]">{{ typeLabel(q.type as any) }}</span>
-              <span :class="['pc-diff', `diff-${q.difficulty}`]">{{ diffLabel(q.difficulty) }}</span>
-              <p class="pc-title">{{ q.title }}</p>
+              <div class="pc-card-head" @click="selected[qi] = selected[qi] === false">
+                <label class="pc-check" @click.stop>
+                  <input type="checkbox" :checked="selected[qi] !== false" @change="selected[qi] = !selected[qi]" />
+                  <span class="pc-check-box"></span>
+                </label>
+                <span class="pc-num">{{ qi + 1 }}.</span>
+                <span :class="['pc-type', `type-${q.type}`]">{{ typeLabel(q.type as any) }}</span>
+                <span :class="['pc-diff', `diff-${q.difficulty}`]">{{ diffLabel(q.difficulty) }}</span>
+                <span v-if="q.score" class="pc-score">{{ q.score }}分</span>
+                <button
+                  class="pc-toggle"
+                  @click.stop="expandedCards[qi] = !expandedCards[qi]"
+                  :title="expandedCards[qi] ? '收起' : '展开'"
+                >
+                  {{ expandedCards[qi] ? '▾' : '▸' }}
+                </button>
+              </div>
+              <div class="pc-card-body">
+                <p class="pc-title">{{ q.title }}</p>
+                <!-- Options preview for single/multiple/judge -->
+                <div
+                  v-if="(q.type === 'single' || q.type === 'multiple' || q.type === 'judge') && q.options?.length"
+                  class="pc-options"
+                >
+                  <div
+                    v-for="(opt, oi) in q.options"
+                    :key="oi"
+                    :class="['pc-opt', isCorrectOption(q, opt) ? 'pc-opt-correct' : '']"
+                  >
+                    <span class="pc-opt-letter">{{ ['A','B','C','D','E','F'][oi] || oi }}</span>
+                    <span class="pc-opt-text">{{ stripOptPrefix(opt) }}</span>
+                    <span v-if="isCorrectOption(q, opt)" class="pc-opt-mark">✓</span>
+                  </div>
+                </div>
+                <!-- Answer line -->
+                <div v-if="q.answer && q.answer.length > 0" class="pc-answer">
+                  <span class="pc-answer-label">正确答案：</span>
+                  <span class="pc-answer-value">{{ formatAnswer(q) }}</span>
+                </div>
+                <!-- Explanation (collapsible) -->
+                <div v-if="q.explanation" class="pc-explanation">
+                  <div class="pc-expl-header" @click="toggleExplanation(qi)">
+                    <span>💡 解析</span>
+                    <span class="pc-expl-arrow">{{ expandedCards[qi] ? '▾' : '▸' }}</span>
+                  </div>
+                  <div v-if="expandedCards[qi]" class="pc-expl-body">{{ q.explanation }}</div>
+                </div>
+              </div>
             </div>
           </div>
         </div>
@@ -228,6 +273,8 @@ import { useAutoScroll } from '@/composables/useAutoScroll'
 import { useToast } from '@/composables/useToast'
 import MessageBubbles from '@/views/student/AiPractice/MessageBubbles.vue'
 import type { AiQuestion } from '@/api/client'
+
+defineOptions({ name: 'AiQuestionGen' })
 
 const store = useAppStore()
 const toast = useToast()
@@ -283,6 +330,7 @@ const streamingReasoning = ref('')
 const streamingContent = ref('')
 const messages = ref<Array<{ role: string; content: string; reasoning?: string }>>([])
 const selected = reactive<Record<number, boolean>>({})
+const expandedCards = reactive<Record<number, boolean>>({})
 let abortCtrl: AbortController | null = null
 
 const quickChips = [
@@ -340,6 +388,45 @@ function diffLabel(d: string) {
   return { easy: '简单', medium: '中等', hard: '困难' }[d] || d
 }
 
+/** Strip leading "A. " / "A、 " prefix from option text */
+function stripOptPrefix(opt: string): string {
+  return String(opt).replace(/^[A-D][.、)\s]+/, '').trim()
+}
+
+/** Extract the option letter (A/B/C/D) from an option string like "A. xxx" */
+function extractOptLetter(opt: string): string {
+  const m = String(opt).match(/^([A-D])/)
+  return m ? m[1] : ''
+}
+
+/** Check if the given option is one of the correct answers */
+function isCorrectOption(q: AiQuestion, opt: string): boolean {
+  if (!q.answer || q.answer.length === 0) return false
+  const letter = extractOptLetter(opt)
+  if (!letter) return false
+  return q.answer.some((a) => String(a).includes(letter))
+}
+
+/** Format the answer array for display */
+function formatAnswer(q: AiQuestion): string {
+  if (!q.answer || q.answer.length === 0) return ''
+  if (q.type === 'fill' || q.type === 'short' || q.type === 'coding') {
+    return q.answer.join('，')
+  }
+  // For choice/judge: extract letters
+  const letters: string[] = []
+  for (const a of q.answer) {
+    const m = String(a).match(/([A-D])/)
+    if (m) letters.push(m[1])
+  }
+  return letters.length > 0 ? letters.join('，') : q.answer.join('，')
+}
+
+/** Toggle explanation expansion for a card */
+function toggleExplanation(qi: number) {
+  expandedCards[qi] = !expandedCards[qi]
+}
+
 function toggleSelectAll() {
   const qs = parsedQuestions.value
   if (allSelected.value) {
@@ -383,6 +470,8 @@ function handleGenerate() {
   messages.value.push({ role: 'user', content: summary })
   const aiIdx = messages.value.length
   const startTime = Date.now()
+  // Sync stream start time to store so LiveTimer in MessageBubbles can tick
+  store.chatStreamStartTime = startTime
   messages.value.push({ role: 'assistant', content: '', _startedAt: startTime } as any)
 
   abortCtrl = aiGenerateQuestionsStream(
@@ -444,6 +533,8 @@ function sendMessage(prompt: string) {
   messages.value.push({ role: 'user', content: prompt })
   const aiIdx = messages.value.length
   const startTime = Date.now()
+  // Sync stream start time to store so LiveTimer in MessageBubbles can tick
+  store.chatStreamStartTime = startTime
   messages.value.push({ role: 'assistant', content: '', _startedAt: startTime } as any)
 
   streamingActive.value = true
@@ -493,6 +584,26 @@ function stopStreaming() {
   genLoading.value = false
 }
 
+/** Handle regenerate event from MessageBubbles — re-sends the preceding user message */
+function handleRegenerate(msgIndex: number) {
+  // Don't regenerate while streaming
+  if (streamingActive.value) return
+
+  // Find the preceding user message
+  if (msgIndex <= 0 || messages.value[msgIndex - 1]?.role !== 'user') return
+  const userText = messages.value[msgIndex - 1].content
+
+  // Remove the AI message and the user message before it
+  messages.value.splice(msgIndex - 1, 2)
+
+  // Clear selected/expanded cards since we're regenerating
+  Object.keys(selected).forEach(k => delete selected[Number(k)])
+  Object.keys(expandedCards).forEach(k => delete expandedCards[Number(k)])
+
+  // Re-send the user message
+  sendMessage(userText)
+}
+
 function onKeydown(e: KeyboardEvent) {
   if (e.key === 'Enter' && !e.shiftKey) {
     e.preventDefault()
@@ -519,6 +630,7 @@ function autoResize() {
 function discardAll() {
   messages.value = []
   Object.keys(selected).forEach(k => delete selected[Number(k)])
+  Object.keys(expandedCards).forEach(k => delete expandedCards[Number(k)])
 }
 
 async function importSelected() {
@@ -531,6 +643,24 @@ async function importSelected() {
   try {
     await store.handleAiImportQuestions(qs)
     toast.success(`成功导入 ${qs.length} 道题目到题库`)
+    discardAll()
+  } catch (err: any) {
+    toast.error(err?.message || '导入失败，请重试')
+  } finally {
+    importing.value = false
+  }
+}
+
+async function importAll() {
+  const qs = parsedQuestions.value
+  if (qs.length === 0) {
+    toast.warning('没有可导入的题目')
+    return
+  }
+  importing.value = true
+  try {
+    await store.handleAiImportQuestions(qs)
+    toast.success(`成功导入全部 ${qs.length} 道题目到题库`)
     discardAll()
   } catch (err: any) {
     toast.error(err?.message || '导入失败，请重试')
@@ -586,6 +716,7 @@ onMounted(() => {
   display: flex;
   height: calc(100vh - 140px);
   max-height: 750px;
+  max-width: 100%;
   min-height: 420px;
   background: #fff;
   border: 1px solid #e5e7eb;
@@ -920,59 +1051,104 @@ onMounted(() => {
 .preview-panel {
   margin-top: 8px;
   border: 1px solid #e5e7eb;
-  border-radius: 10px;
+  border-radius: 12px;
   background: #fafbfc;
   overflow: hidden;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.04);
 }
 .preview-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 10px 14px;
-  background: #f3f4f6;
+  padding: 12px 16px;
+  background: linear-gradient(135deg, #f5f3ff 0%, #ede9fe 100%);
   border-bottom: 1px solid #e5e7eb;
   flex-wrap: wrap;
   gap: 8px;
 }
-.preview-title { font-size: 13px; font-weight: 600; color: #374151; }
-.preview-selected { font-weight: 400; color: #6b7280; }
-.preview-actions { display: flex; gap: 8px; align-items: center; }
+.preview-title { font-size: 14px; font-weight: 700; color: #4338ca; }
+.preview-selected { font-weight: 500; color: #6b7280; font-size: 12px; }
+.preview-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .select-all-btn {
-  padding: 5px 12px; border: 1px solid #d1d5db; border-radius: 6px;
+  padding: 6px 12px; border: 1px solid #d1d5db; border-radius: 6px;
   background: #fff; color: #374151; font-size: 12px; cursor: pointer;
-  transition: all 0.12s;
+  transition: all 0.12s; font-weight: 500;
 }
-.select-all-btn:hover { border-color: var(--primary); color: var(--primary); }
+.select-all-btn:hover { border-color: var(--primary); color: var(--primary); background: #f5f3ff; }
 
-.preview-list { padding: 4px 0; }
+.preview-list { padding: 8px; display: flex; flex-direction: column; gap: 8px; }
 .preview-card {
+  background: #fff;
+  border: 1.5px solid #e5e7eb;
+  border-radius: 10px;
+  overflow: hidden;
+  transition: all 0.18s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.preview-card:hover { border-color: #c7d2fe; box-shadow: 0 2px 8px rgba(99,102,241,0.08); }
+.preview-card.checked {
+  border-color: var(--primary);
+  background: linear-gradient(135deg, #faf5ff 0%, #fff 30%);
+  box-shadow: 0 2px 10px rgba(99,102,241,0.12);
+}
+
+/* Card head: checkbox + meta + toggle */
+.pc-card-head {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   gap: 8px;
-  padding: 10px 14px;
+  padding: 10px 12px;
+  background: #f9fafb;
   border-bottom: 1px solid #f3f4f6;
   cursor: pointer;
   transition: background 0.12s;
 }
-.preview-card:last-child { border-bottom: none; }
-.preview-card:hover { background: #f9fafb; }
-.preview-card.checked { background: #f5f3ff; }
+.preview-card.checked .pc-card-head { background: #f5f3ff; }
+.pc-card-head:hover { background: #f3f4f6; }
+.preview-card.checked .pc-card-head:hover { background: #ede9fe; }
+
+/* Custom checkbox */
 .pc-check {
-  display: flex;
+  display: inline-flex;
   align-items: center;
   cursor: pointer;
-  margin-top: 2px;
   flex-shrink: 0;
+  position: relative;
 }
 .pc-check input[type="checkbox"] {
-  width: 16px; height: 16px;
-  accent-color: var(--primary);
+  position: absolute;
+  opacity: 0;
+  width: 18px;
+  height: 18px;
   cursor: pointer;
+  margin: 0;
 }
-.pc-num { font-weight: 600; color: #374151; font-size: 13px; flex-shrink: 0; margin-top: 1px; }
+.pc-check-box {
+  width: 18px;
+  height: 18px;
+  border: 2px solid #d1d5db;
+  border-radius: 4px;
+  background: #fff;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s;
+}
+.pc-check input:checked + .pc-check-box {
+  background: var(--primary);
+  border-color: var(--primary);
+}
+.pc-check input:checked + .pc-check-box::after {
+  content: '✓';
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.pc-num { font-weight: 700; color: #111827; font-size: 14px; flex-shrink: 0; }
 .pc-type {
-  padding: 1px 6px; border-radius: 4px; font-size: 11px; font-weight: 500;
-  flex-shrink: 0; margin-top: 1px;
+  padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600;
+  flex-shrink: 0;
 }
 .pc-type.type-single { background: #eef2ff; color: #6366f1; }
 .pc-type.type-multiple { background: #f0fdf4; color: #16a34a; }
@@ -981,15 +1157,139 @@ onMounted(() => {
 .pc-type.type-short { background: #e0e7ff; color: #4338ca; }
 .pc-type.type-coding { background: #cffafe; color: #0891b2; }
 .pc-diff {
-  padding: 1px 6px; border-radius: 4px; font-size: 11px;
-  flex-shrink: 0; margin-top: 1px;
+  padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 500;
+  flex-shrink: 0;
 }
 .pc-diff.diff-easy { background: #f0fdf4; color: #16a34a; }
 .pc-diff.diff-medium { background: #fffbeb; color: #d97706; }
 .pc-diff.diff-hard { background: #fef2f2; color: #dc2626; }
+.pc-score {
+  font-size: 11px; color: #9ca3af; font-weight: 500;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+.pc-toggle {
+  width: 24px; height: 24px;
+  border: none; background: transparent;
+  color: #6b7280; font-size: 14px; cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  border-radius: 4px; transition: background 0.12s;
+  flex-shrink: 0;
+}
+.pc-toggle:hover { background: rgba(0,0,0,0.06); color: #374151; }
+
+/* Card body */
+.pc-card-body {
+  padding: 12px 14px;
+}
 .pc-title {
-  font-size: 13px; color: #374151; margin: 0; line-height: 1.4;
+  font-size: 14px; color: #1f2937; margin: 0 0 10px; line-height: 1.6;
+  font-weight: 500;
+  overflow-wrap: break-word;
+}
+
+/* Options */
+.pc-options {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+.pc-opt {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  border: 1.5px solid #e5e7eb;
+  border-radius: 8px;
+  background: #f9fafb;
+  transition: all 0.15s;
+}
+.pc-opt:hover { background: #f3f4f6; }
+.pc-opt-correct {
+  border-color: #22c55e;
+  background: #f0fdf4;
+}
+.pc-opt-correct:hover { background: #dcfce7; }
+.pc-opt-letter {
+  width: 24px; height: 24px;
+  border-radius: 50%;
+  background: #e5e7eb;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 700;
+  color: #4b5563;
+  flex-shrink: 0;
+}
+.pc-opt-correct .pc-opt-letter {
+  background: #22c55e;
+  color: #fff;
+}
+.pc-opt-text {
+  font-size: 13px; color: #374151; line-height: 1.5;
   flex: 1; min-width: 0;
+  overflow-wrap: break-word;
+}
+.pc-opt-correct .pc-opt-text { color: #166534; font-weight: 500; }
+.pc-opt-mark {
+  color: #22c55e;
+  font-size: 14px;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+/* Answer line */
+.pc-answer {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  background: #fefce8;
+  border: 1px solid #fde68a;
+  border-radius: 6px;
+  font-size: 13px;
+  margin-bottom: 8px;
+}
+.pc-answer-label { color: #92400e; font-weight: 600; }
+.pc-answer-value { color: #b45309; font-weight: 700; }
+
+/* Explanation */
+.pc-explanation {
+  margin-top: 6px;
+  border-top: 1px dashed #e5e7eb;
+  padding-top: 8px;
+}
+.pc-expl-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+  color: #6366f1;
+  padding: 4px 8px;
+  border-radius: 4px;
+  user-select: none;
+  transition: background 0.12s;
+}
+.pc-expl-header:hover { background: #eef2ff; }
+.pc-expl-arrow {
+  font-size: 10px;
+  transition: transform 0.2s;
+}
+.pc-expl-body {
+  margin-top: 6px;
+  padding: 10px 12px;
+  background: #f8fafc;
+  border-radius: 6px;
+  font-size: 12px;
+  line-height: 1.7;
+  color: #374151;
+  border: 1px solid #e5e7eb;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
 }
 
 /* Scroll to bottom */
@@ -1026,7 +1326,7 @@ onMounted(() => {
 /* Input area */
 .bottom-area { flex-shrink: 0; border-top: 1px solid #f3f4f6; background: #fff; }
 .input-row { padding: 10px 16px; }
-.input-wrapper { position: relative; display: flex; align-items: flex-end; overflow: hidden; }
+.input-wrapper { position: relative; display: flex; align-items: flex-end; }
 .msg-input {
   width: 100%;
   padding: 12px 44px 12px 16px;
@@ -1073,6 +1373,12 @@ onMounted(() => {
 }
 .primary-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 .primary-btn:hover:not(:disabled) { background: var(--primary-hover); }
+.add-all-btn {
+  background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+}
+.add-all-btn:hover:not(:disabled) {
+  background: linear-gradient(135deg, #059669 0%, #047857 100%);
+}
 
 /* ===== Responsive ===== */
 @media (max-width: 767px) {
@@ -1097,7 +1403,358 @@ onMounted(() => {
   }
   .chat-panel { flex: 1; min-height: 0; }
   .top-bar { padding-left: 100px; }
-  .preview-header { flex-direction: column; align-items: flex-start; }
-  .preview-actions { width: 100%; justify-content: flex-end; }
+  .preview-header { flex-direction: column; align-items: flex-start; padding: 10px 12px; }
+  .preview-actions { width: 100%; justify-content: flex-start; }
+  .preview-list { padding: 6px; gap: 6px; }
+  .pc-card-head { padding: 8px 10px; gap: 6px; flex-wrap: wrap; }
+  .pc-card-body { padding: 10px; }
+  .pc-title { font-size: 13px; }
+  .pc-opt { padding: 6px 10px; gap: 8px; }
+  .pc-opt-letter { width: 20px; height: 20px; font-size: 11px; }
+  .pc-opt-text { font-size: 12px; }
+  .pc-answer { padding: 6px 10px; font-size: 12px; }
+  .pc-expl-body { font-size: 11px; padding: 8px 10px; }
+}
+
+/* ===== Dark mode overrides ===== */
+[data-theme="dark"] .aiqg-layout {
+  background: var(--ai-surface);
+  border-color: var(--ai-border);
+}
+[data-theme="dark"] .mobile-toggle {
+  background: var(--ai-surface);
+  border-color: var(--ai-border);
+  color: var(--ai-text-secondary);
+}
+[data-theme="dark"] .mobile-toggle:hover { background: var(--ai-surface-hover); }
+[data-theme="dark"] .settings-panel {
+  background: var(--ai-surface-soft);
+  border-right-color: var(--ai-border-soft);
+}
+[data-theme="dark"] .sp-title { color: var(--ai-text); }
+[data-theme="dark"] .sp-label { color: var(--ai-text-muted); }
+[data-theme="dark"] .type-chip {
+  background: var(--ai-surface);
+  border-color: var(--ai-border);
+  color: var(--ai-text-secondary);
+}
+[data-theme="dark"] .diff-card {
+  background: var(--ai-surface);
+  border-color: var(--ai-border);
+  color: var(--ai-text-secondary);
+}
+[data-theme="dark"] .diff-card.active.diff-easy { background: rgba(34, 197, 94, 0.15); color: #4ade80; }
+[data-theme="dark"] .diff-card.active.diff-medium { background: rgba(245, 158, 11, 0.15); color: #fbbf24; }
+[data-theme="dark"] .diff-card.active.diff-hard { background: rgba(239, 68, 68, 0.15); color: #f87171; }
+[data-theme="dark"] .sp-select,
+[data-theme="dark"] .sp-input {
+  background: var(--ai-surface);
+  border-color: var(--ai-border);
+  color: var(--ai-text);
+}
+[data-theme="dark"] .custom-toggle {
+  background: var(--ai-surface);
+  border-color: var(--ai-border);
+  color: var(--ai-text-muted);
+}
+[data-theme="dark"] .count-control {
+  background: var(--ai-surface);
+  border-color: var(--ai-border);
+}
+[data-theme="dark"] .count-btn {
+  background: var(--ai-surface-hover);
+  color: var(--ai-text-secondary);
+}
+[data-theme="dark"] .count-btn:hover:not(:disabled) { background: var(--ai-border); }
+[data-theme="dark"] .count-input { color: var(--ai-text); }
+[data-theme="dark"] .deep-desc { color: var(--ai-text-faint); }
+[data-theme="dark"] .toggle-switch { background: #3f3f5a; }
+[data-theme="dark"] .top-bar {
+  background: var(--ai-surface-soft);
+  border-bottom-color: var(--ai-border-soft);
+}
+[data-theme="dark"] .tb-title { color: var(--ai-text); }
+[data-theme="dark"] .tb-quota {
+  color: var(--ai-text-muted);
+  background: var(--ai-surface-hover);
+}
+[data-theme="dark"] .msg-area { scrollbar-color: var(--ai-border) transparent; }
+[data-theme="dark"] .msg-area::-webkit-scrollbar-thumb { background: var(--ai-border); }
+[data-theme="dark"] .welcome h3 { color: var(--ai-text); }
+[data-theme="dark"] .welcome-sub { color: var(--ai-text-muted); }
+[data-theme="dark"] .wc-chip {
+  background: var(--ai-surface);
+  border-color: var(--ai-border);
+  color: var(--ai-text-secondary);
+}
+[data-theme="dark"] .wc-chip:hover { background: var(--ai-accent-soft); }
+[data-theme="dark"] .preview-panel {
+  background: var(--ai-surface-soft);
+  border-color: var(--ai-border);
+}
+[data-theme="dark"] .preview-header {
+  background: linear-gradient(135deg, rgba(129, 140, 248, 0.12) 0%, rgba(129, 140, 248, 0.06) 100%);
+  border-bottom-color: var(--ai-border);
+}
+[data-theme="dark"] .preview-title { color: var(--ai-accent); }
+[data-theme="dark"] .preview-selected { color: var(--ai-text-muted); }
+[data-theme="dark"] .select-all-btn {
+  background: var(--ai-surface);
+  border-color: var(--ai-border);
+  color: var(--ai-text-secondary);
+}
+[data-theme="dark"] .select-all-btn:hover { background: var(--ai-accent-soft); }
+[data-theme="dark"] .preview-card {
+  background: var(--ai-surface);
+  border-color: var(--ai-border);
+}
+[data-theme="dark"] .preview-card:hover { border-color: var(--ai-accent-border); }
+[data-theme="dark"] .preview-card.checked {
+  background: linear-gradient(135deg, var(--ai-accent-soft) 0%, var(--ai-surface) 30%);
+}
+[data-theme="dark"] .pc-card-head {
+  background: var(--ai-surface-hover);
+  border-bottom-color: var(--ai-border-soft);
+}
+[data-theme="dark"] .preview-card.checked .pc-card-head { background: var(--ai-accent-soft); }
+[data-theme="dark"] .pc-card-head:hover { background: var(--ai-border-soft); }
+[data-theme="dark"] .preview-card.checked .pc-card-head:hover { background: rgba(129, 140, 248, 0.2); }
+[data-theme="dark"] .pc-check-box {
+  border-color: var(--ai-border);
+  background: var(--ai-surface);
+}
+[data-theme="dark"] .pc-num { color: var(--ai-text); }
+[data-theme="dark"] .pc-type.type-single { background: rgba(99, 102, 241, 0.15); color: #a5b4fc; }
+[data-theme="dark"] .pc-type.type-multiple { background: rgba(22, 163, 74, 0.15); color: #4ade80; }
+[data-theme="dark"] .pc-type.type-judge { background: rgba(217, 119, 6, 0.15); color: #fbbf24; }
+[data-theme="dark"] .pc-type.type-fill { background: rgba(219, 39, 119, 0.15); color: #f472b6; }
+[data-theme="dark"] .pc-type.type-short { background: rgba(67, 56, 202, 0.15); color: #a5b4fc; }
+[data-theme="dark"] .pc-type.type-coding { background: rgba(8, 145, 178, 0.15); color: #22d3ee; }
+[data-theme="dark"] .pc-diff.diff-easy { background: rgba(22, 163, 74, 0.15); color: #4ade80; }
+[data-theme="dark"] .pc-diff.diff-medium { background: rgba(245, 158, 11, 0.15); color: #fbbf24; }
+[data-theme="dark"] .pc-diff.diff-hard { background: rgba(239, 68, 68, 0.15); color: #f87171; }
+[data-theme="dark"] .pc-score { color: var(--ai-text-faint); }
+[data-theme="dark"] .pc-toggle { color: var(--ai-text-muted); }
+[data-theme="dark"] .pc-toggle:hover { background: rgba(255, 255, 255, 0.08); color: var(--ai-text-secondary); }
+[data-theme="dark"] .pc-title { color: var(--ai-text); }
+[data-theme="dark"] .pc-opt {
+  border-color: var(--ai-border);
+  background: var(--ai-surface-hover);
+}
+[data-theme="dark"] .pc-opt:hover { background: var(--ai-border-soft); }
+[data-theme="dark"] .pc-opt-correct {
+  border-color: #22c55e;
+  background: rgba(34, 197, 94, 0.12);
+}
+[data-theme="dark"] .pc-opt-correct:hover { background: rgba(34, 197, 94, 0.2); }
+[data-theme="dark"] .pc-opt-letter {
+  background: var(--ai-border);
+  color: var(--ai-text-secondary);
+}
+[data-theme="dark"] .pc-opt-correct .pc-opt-letter { background: #22c55e; color: #fff; }
+[data-theme="dark"] .pc-opt-text { color: var(--ai-text-secondary); }
+[data-theme="dark"] .pc-opt-correct .pc-opt-text { color: #4ade80; }
+[data-theme="dark"] .pc-answer {
+  background: rgba(254, 240, 138, 0.1);
+  border-color: rgba(253, 224, 71, 0.3);
+}
+[data-theme="dark"] .pc-answer-label { color: #fbbf24; }
+[data-theme="dark"] .pc-answer-value { color: #f59e0b; }
+[data-theme="dark"] .pc-explanation { border-top-color: var(--ai-border); }
+[data-theme="dark"] .pc-expl-header { color: var(--ai-accent); }
+[data-theme="dark"] .pc-expl-header:hover { background: var(--ai-accent-soft); }
+[data-theme="dark"] .pc-expl-body {
+  background: var(--ai-surface-hover);
+  color: var(--ai-text-secondary);
+  border-color: var(--ai-border);
+}
+[data-theme="dark"] .bottom-area {
+  border-top-color: var(--ai-border-soft);
+  background: var(--ai-surface);
+}
+[data-theme="dark"] .msg-input {
+  background: var(--ai-surface-hover);
+  border-color: var(--ai-border);
+  color: var(--ai-text);
+}
+[data-theme="dark"] .msg-input:focus { background: var(--ai-surface); }
+[data-theme="dark"] .msg-input::-webkit-scrollbar-thumb { background: var(--ai-border); }
+[data-theme="dark"] .ghost-btn {
+  background: var(--ai-surface);
+  border-color: var(--ai-border);
+  color: var(--ai-text-muted);
+}
+[data-theme="dark"] .ghost-btn:hover { background: var(--ai-surface-hover); border-color: var(--ai-text-faint); }
+
+/* ===== Auto dark mode (system preference) ===== */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .aiqg-layout {
+    background: var(--ai-surface);
+    border-color: var(--ai-border);
+  }
+  :root:not([data-theme="light"]) .mobile-toggle {
+    background: var(--ai-surface);
+    border-color: var(--ai-border);
+    color: var(--ai-text-secondary);
+  }
+  :root:not([data-theme="light"]) .mobile-toggle:hover { background: var(--ai-surface-hover); }
+  :root:not([data-theme="light"]) .settings-panel {
+    background: var(--ai-surface-soft);
+    border-right-color: var(--ai-border-soft);
+  }
+  :root:not([data-theme="light"]) .sp-title { color: var(--ai-text); }
+  :root:not([data-theme="light"]) .sp-label { color: var(--ai-text-muted); }
+  :root:not([data-theme="light"]) .type-chip {
+    background: var(--ai-surface);
+    border-color: var(--ai-border);
+    color: var(--ai-text-secondary);
+  }
+  :root:not([data-theme="light"]) .diff-card {
+    background: var(--ai-surface);
+    border-color: var(--ai-border);
+    color: var(--ai-text-secondary);
+  }
+  :root:not([data-theme="light"]) .diff-card.active.diff-easy { background: rgba(34, 197, 94, 0.15); color: #4ade80; }
+  :root:not([data-theme="light"]) .diff-card.active.diff-medium { background: rgba(245, 158, 11, 0.15); color: #fbbf24; }
+  :root:not([data-theme="light"]) .diff-card.active.diff-hard { background: rgba(239, 68, 68, 0.15); color: #f87171; }
+  :root:not([data-theme="light"]) .sp-select,
+  :root:not([data-theme="light"]) .sp-input {
+    background: var(--ai-surface);
+    border-color: var(--ai-border);
+    color: var(--ai-text);
+  }
+  :root:not([data-theme="light"]) .custom-toggle {
+    background: var(--ai-surface);
+    border-color: var(--ai-border);
+    color: var(--ai-text-muted);
+  }
+  :root:not([data-theme="light"]) .count-control {
+    background: var(--ai-surface);
+    border-color: var(--ai-border);
+  }
+  :root:not([data-theme="light"]) .count-btn {
+    background: var(--ai-surface-hover);
+    color: var(--ai-text-secondary);
+  }
+  :root:not([data-theme="light"]) .count-btn:hover:not(:disabled) { background: var(--ai-border); }
+  :root:not([data-theme="light"]) .count-input { color: var(--ai-text); }
+  :root:not([data-theme="light"]) .deep-desc { color: var(--ai-text-faint); }
+  :root:not([data-theme="light"]) .toggle-switch { background: #3f3f5a; }
+  :root:not([data-theme="light"]) .top-bar {
+    background: var(--ai-surface-soft);
+    border-bottom-color: var(--ai-border-soft);
+  }
+  :root:not([data-theme="light"]) .tb-title { color: var(--ai-text); }
+  :root:not([data-theme="light"]) .tb-quota {
+    color: var(--ai-text-muted);
+    background: var(--ai-surface-hover);
+  }
+  :root:not([data-theme="light"]) .msg-area { scrollbar-color: var(--ai-border) transparent; }
+  :root:not([data-theme="light"]) .msg-area::-webkit-scrollbar-thumb { background: var(--ai-border); }
+  :root:not([data-theme="light"]) .welcome h3 { color: var(--ai-text); }
+  :root:not([data-theme="light"]) .welcome-sub { color: var(--ai-text-muted); }
+  :root:not([data-theme="light"]) .wc-chip {
+    background: var(--ai-surface);
+    border-color: var(--ai-border);
+    color: var(--ai-text-secondary);
+  }
+  :root:not([data-theme="light"]) .wc-chip:hover { background: var(--ai-accent-soft); }
+  :root:not([data-theme="light"]) .preview-panel {
+    background: var(--ai-surface-soft);
+    border-color: var(--ai-border);
+  }
+  :root:not([data-theme="light"]) .preview-header {
+    background: linear-gradient(135deg, rgba(129, 140, 248, 0.12) 0%, rgba(129, 140, 248, 0.06) 100%);
+    border-bottom-color: var(--ai-border);
+  }
+  :root:not([data-theme="light"]) .preview-title { color: var(--ai-accent); }
+  :root:not([data-theme="light"]) .preview-selected { color: var(--ai-text-muted); }
+  :root:not([data-theme="light"]) .select-all-btn {
+    background: var(--ai-surface);
+    border-color: var(--ai-border);
+    color: var(--ai-text-secondary);
+  }
+  :root:not([data-theme="light"]) .select-all-btn:hover { background: var(--ai-accent-soft); }
+  :root:not([data-theme="light"]) .preview-card {
+    background: var(--ai-surface);
+    border-color: var(--ai-border);
+  }
+  :root:not([data-theme="light"]) .preview-card:hover { border-color: var(--ai-accent-border); }
+  :root:not([data-theme="light"]) .preview-card.checked {
+    background: linear-gradient(135deg, var(--ai-accent-soft) 0%, var(--ai-surface) 30%);
+  }
+  :root:not([data-theme="light"]) .pc-card-head {
+    background: var(--ai-surface-hover);
+    border-bottom-color: var(--ai-border-soft);
+  }
+  :root:not([data-theme="light"]) .preview-card.checked .pc-card-head { background: var(--ai-accent-soft); }
+  :root:not([data-theme="light"]) .pc-card-head:hover { background: var(--ai-border-soft); }
+  :root:not([data-theme="light"]) .preview-card.checked .pc-card-head:hover { background: rgba(129, 140, 248, 0.2); }
+  :root:not([data-theme="light"]) .pc-check-box {
+    border-color: var(--ai-border);
+    background: var(--ai-surface);
+  }
+  :root:not([data-theme="light"]) .pc-num { color: var(--ai-text); }
+  :root:not([data-theme="light"]) .pc-type.type-single { background: rgba(99, 102, 241, 0.15); color: #a5b4fc; }
+  :root:not([data-theme="light"]) .pc-type.type-multiple { background: rgba(22, 163, 74, 0.15); color: #4ade80; }
+  :root:not([data-theme="light"]) .pc-type.type-judge { background: rgba(217, 119, 6, 0.15); color: #fbbf24; }
+  :root:not([data-theme="light"]) .pc-type.type-fill { background: rgba(219, 39, 119, 0.15); color: #f472b6; }
+  :root:not([data-theme="light"]) .pc-type.type-short { background: rgba(67, 56, 202, 0.15); color: #a5b4fc; }
+  :root:not([data-theme="light"]) .pc-type.type-coding { background: rgba(8, 145, 178, 0.15); color: #22d3ee; }
+  :root:not([data-theme="light"]) .pc-diff.diff-easy { background: rgba(22, 163, 74, 0.15); color: #4ade80; }
+  :root:not([data-theme="light"]) .pc-diff.diff-medium { background: rgba(245, 158, 11, 0.15); color: #fbbf24; }
+  :root:not([data-theme="light"]) .pc-diff.diff-hard { background: rgba(239, 68, 68, 0.15); color: #f87171; }
+  :root:not([data-theme="light"]) .pc-score { color: var(--ai-text-faint); }
+  :root:not([data-theme="light"]) .pc-toggle { color: var(--ai-text-muted); }
+  :root:not([data-theme="light"]) .pc-toggle:hover { background: rgba(255, 255, 255, 0.08); color: var(--ai-text-secondary); }
+  :root:not([data-theme="light"]) .pc-title { color: var(--ai-text); }
+  :root:not([data-theme="light"]) .pc-opt {
+    border-color: var(--ai-border);
+    background: var(--ai-surface-hover);
+  }
+  :root:not([data-theme="light"]) .pc-opt:hover { background: var(--ai-border-soft); }
+  :root:not([data-theme="light"]) .pc-opt-correct {
+    border-color: #22c55e;
+    background: rgba(34, 197, 94, 0.12);
+  }
+  :root:not([data-theme="light"]) .pc-opt-correct:hover { background: rgba(34, 197, 94, 0.2); }
+  :root:not([data-theme="light"]) .pc-opt-letter {
+    background: var(--ai-border);
+    color: var(--ai-text-secondary);
+  }
+  :root:not([data-theme="light"]) .pc-opt-correct .pc-opt-letter { background: #22c55e; color: #fff; }
+  :root:not([data-theme="light"]) .pc-opt-text { color: var(--ai-text-secondary); }
+  :root:not([data-theme="light"]) .pc-opt-correct .pc-opt-text { color: #4ade80; }
+  :root:not([data-theme="light"]) .pc-answer {
+    background: rgba(254, 240, 138, 0.1);
+    border-color: rgba(253, 224, 71, 0.3);
+  }
+  :root:not([data-theme="light"]) .pc-answer-label { color: #fbbf24; }
+  :root:not([data-theme="light"]) .pc-answer-value { color: #f59e0b; }
+  :root:not([data-theme="light"]) .pc-explanation { border-top-color: var(--ai-border); }
+  :root:not([data-theme="light"]) .pc-expl-header { color: var(--ai-accent); }
+  :root:not([data-theme="light"]) .pc-expl-header:hover { background: var(--ai-accent-soft); }
+  :root:not([data-theme="light"]) .pc-expl-body {
+    background: var(--ai-surface-hover);
+    color: var(--ai-text-secondary);
+    border-color: var(--ai-border);
+  }
+  :root:not([data-theme="light"]) .bottom-area {
+    border-top-color: var(--ai-border-soft);
+    background: var(--ai-surface);
+  }
+  :root:not([data-theme="light"]) .msg-input {
+    background: var(--ai-surface-hover);
+    border-color: var(--ai-border);
+    color: var(--ai-text);
+  }
+  :root:not([data-theme="light"]) .msg-input:focus { background: var(--ai-surface); }
+  :root:not([data-theme="light"]) .msg-input::-webkit-scrollbar-thumb { background: var(--ai-border); }
+  :root:not([data-theme="light"]) .ghost-btn {
+    background: var(--ai-surface);
+    border-color: var(--ai-border);
+    color: var(--ai-text-muted);
+  }
+  :root:not([data-theme="light"]) .ghost-btn:hover { background: var(--ai-surface-hover); border-color: var(--ai-text-faint); }
 }
 </style>

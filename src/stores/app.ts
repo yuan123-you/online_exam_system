@@ -328,7 +328,13 @@ export const useAppStore = defineStore('app', () => {
 
   // Chat history state
   const conversations = ref<Conversation[]>([])
-  const activeConversationId = ref<string | null>(null)
+  // Separate conversation IDs for chat and practice to prevent cross-contamination
+  const activeChatConversationId = ref<string | null>(null)
+  const activePracticeConversationId = ref<string | null>(null)
+  // Computed: returns the active conversation ID for the current tab
+  const activeConversationId = computed(() =>
+    activeTab.value === 'practice' ? activePracticeConversationId.value : activeChatConversationId.value
+  )
   const conversationsLoading = ref(false)
   // Track how many messages have been persisted per conversation to avoid re-saving duplicates
   const persistedCount: Record<string, number> = {}
@@ -408,7 +414,8 @@ export const useAppStore = defineStore('app', () => {
     lsSave(userId, 'practiceMessages', cleanMessages(practiceMessages.value))
     lsSave(userId, 'practiceQuestions', practiceQuestions.value)
     lsSave(userId, 'activeTab', activeTab.value)
-    lsSave(userId, 'activeConversationId', activeConversationId.value)
+    lsSave(userId, 'activeChatConversationId', activeChatConversationId.value)
+    lsSave(userId, 'activePracticeConversationId', activePracticeConversationId.value)
     lsSave(userId, 'deepThinking', deepThinkingEnabled.value)
   }
 
@@ -432,15 +439,18 @@ export const useAppStore = defineStore('app', () => {
     const savedTab = lsLoad<'chat' | 'practice'>(userId, 'activeTab')
     if (savedTab) activeTab.value = savedTab
 
-    const savedConvId = lsLoad<string>(userId, 'activeConversationId')
-    if (savedConvId) activeConversationId.value = savedConvId
+    const savedChatConvId = lsLoad<string>(userId, 'activeChatConversationId')
+    if (savedChatConvId) activeChatConversationId.value = savedChatConvId
+
+    const savedPracticeConvId = lsLoad<string>(userId, 'activePracticeConversationId')
+    if (savedPracticeConvId) activePracticeConversationId.value = savedPracticeConvId
 
     const savedDeepThinking = lsLoad<boolean>(userId, 'deepThinking')
     if (savedDeepThinking != null) deepThinkingEnabled.value = savedDeepThinking
   }
 
   // Watch 关键状态变化，自动触发持久化
-  watch([chatMessages, practiceMessages, practiceQuestions, activeTab, activeConversationId, deepThinkingEnabled],
+  watch([chatMessages, practiceMessages, practiceQuestions, activeTab, activeChatConversationId, activePracticeConversationId, deepThinkingEnabled],
     () => schedulePersist(),
     { deep: true }
   )
@@ -456,6 +466,13 @@ export const useAppStore = defineStore('app', () => {
   // Notification state
   const notifications = ref<Notification[]>([])
   const unreadNotificationCount = ref(0)
+
+  // Refresh trigger: incremented after a global data refresh so paginated views
+  // can re-fetch their data with current filters/search state.
+  const refreshTrigger = ref(0)
+  function triggerRefresh() {
+    refreshTrigger.value++
+  }
 
   // Computed: User role
   const role = computed(() => bootstrap.value?.currentUser.role || 'student')
@@ -473,19 +490,19 @@ export const useAppStore = defineStore('app', () => {
   const myQuestions = computed(() => {
     const bs = bootstrap.value
     if (!bs) return []
-    return bs.questions.filter((q) => q.teacherId === bs.currentUser.id)
+    return bs.questions.filter((q) => q.teacherId === bs.currentUser.id && !q.deleted)
   })
 
   const myPapers = computed(() => {
     const bs = bootstrap.value
     if (!bs) return []
-    return bs.papers.filter((p) => p.teacherId === bs.currentUser.id)
+    return bs.papers.filter((p) => p.teacherId === bs.currentUser.id && !p.deleted)
   })
 
   const myExams = computed(() => {
     const bs = bootstrap.value
     if (!bs) return []
-    return bs.exams.filter((e) => e.teacherId === bs.currentUser.id)
+    return bs.exams.filter((e) => e.teacherId === bs.currentUser.id && !e.deleted)
   })
 
   const mySubmissions = computed(() =>
@@ -689,6 +706,7 @@ export const useAppStore = defineStore('app', () => {
         { key: 'teachers', label: '教师管理', description: '维护教师账号' },
         { key: 'org', label: '组织管理', description: '学院与班级' },
         { key: 'admin-exams', label: '考试管理', description: '查看所有考试' },
+        { key: 'ai-questions', label: 'AI 出题', description: 'AI 智能出题' },
         { key: 'logs', label: '系统日志', description: '操作记录' },
         { key: 'profile', label: '个人信息', description: '修改密码' },
       ]
@@ -919,8 +937,9 @@ export const useAppStore = defineStore('app', () => {
     practiceFeedbackMessage.value = ''
     practiceFeedbackVisible.value = false
     stopPracticeFeedbackTimer()
+    activeChatConversationId.value = null
+    activePracticeConversationId.value = null
     conversations.value = []
-    activeConversationId.value = null
     conversationsLoading.value = false
     // Clear persisted-count tracking
     for (const k of Object.keys(persistedCount)) delete persistedCount[k]
@@ -1029,6 +1048,11 @@ export const useAppStore = defineStore('app', () => {
   async function startExam(examId: string) {
     try {
       const detail = await loadExamDetail(examId)
+      // 考试已交卷，不恢复考试会话
+      if (detail.sessionState === 'finished') {
+        showToast('该考试已交卷，无法再次进入', 'info')
+        return
+      }
       activeExam.value = detail
       // Persist active exam ID to sessionStorage so it survives page refresh
       sessionStorage.setItem('active_exam_id', examId)
@@ -1043,6 +1067,11 @@ export const useAppStore = defineStore('app', () => {
     if (!examId || activeExam.value) return
     try {
       const detail = await loadExamDetail(examId)
+      // 后端返回 sessionState=finished 表示考试已交卷，清理会话状态
+      if (detail.sessionState === 'finished') {
+        sessionStorage.removeItem('active_exam_id')
+        return
+      }
       // Only restore if the session is still active (has a deadline in the future)
       if (detail.session?.deadlineAt && new Date(detail.session.deadlineAt).getTime() > Date.now()) {
         activeExam.value = detail
@@ -1410,17 +1439,30 @@ export const useAppStore = defineStore('app', () => {
     if (recommendationsLoading.value && !forceRefresh) return
     recommendationsLoading.value = true
     try {
-      const recResult = await getRecommendations(forceRefresh)
-      recommendations.value = recResult.recommendations
-    } catch (err) {
-      console.warn('[Recommendations] Failed to load recommendations:', err)
+      try {
+        const recResult = await getRecommendations(forceRefresh)
+        recommendations.value = recResult.recommendations
+      } catch (err: any) {
+        // AbortError 是超时或页面卸载导致的正常中断，不应作为警告记录
+        if (err?.name === 'AbortError') {
+          console.debug('[Recommendations] Request aborted (timeout or page unload)')
+        } else {
+          console.warn('[Recommendations] Failed to load recommendations:', err)
+        }
+      }
+      try {
+        userProfile.value = await getUserProfile()
+      } catch (err: any) {
+        if (err?.name === 'AbortError') {
+          console.debug('[Recommendations] Profile request aborted')
+        } else {
+          console.warn('[Recommendations] Failed to load user profile:', err)
+        }
+      }
+    } finally {
+      // 确保无论成功或失败，loading 状态都会重置，避免按钮永久禁用
+      recommendationsLoading.value = false
     }
-    try {
-      userProfile.value = await getUserProfile()
-    } catch (err) {
-      console.warn('[Recommendations] Failed to load user profile:', err)
-    }
-    recommendationsLoading.value = false
   }
 
   /** Submit feedback on a recommendation */
@@ -1482,11 +1524,20 @@ export const useAppStore = defineStore('app', () => {
       const conv = await createConversation('新对话', undefined, type)
       conv.sessionType = type
       conversations.value.unshift(conv)
-      activeConversationId.value = conv.id
+      // Set the conversation ID for the appropriate tab only
+      if (type === 'practice') {
+        activePracticeConversationId.value = conv.id
+      } else {
+        activeChatConversationId.value = conv.id
+      }
       persistedCount[`chat:${conv.id}`] = 0
       persistedCount[`practice:${conv.id}`] = 0
-      chatMessages.value = []
-      practiceMessages.value = []
+      // Only clear the current tab's messages, not the other tab's
+      if (type === 'practice') {
+        practiceMessages.value = []
+      } else {
+        chatMessages.value = []
+      }
     } catch (err: any) {
       showToast(err?.message || '创建会话失败', 'error')
     }
@@ -1494,17 +1545,27 @@ export const useAppStore = defineStore('app', () => {
 
   /** Switch to a conversation and load its messages, auto-switch tab based on sessionType */
   async function handleSwitchConversation(conversationId: string) {
-    if (!currentUser.value || activeConversationId.value === conversationId) return
+    if (!currentUser.value) return
+    // Check if already active for the target tab
+    const conv = conversations.value.find(c => c.id === conversationId)
+    const targetTab = (conv?.sessionType as 'chat' | 'practice') || activeTab.value
+    const currentActiveId = targetTab === 'practice' ? activePracticeConversationId.value : activeChatConversationId.value
+    if (currentActiveId === conversationId) return
+
     conversationsLoading.value = true
     try {
-      // Find conversation metadata to determine session type
-      const conv = conversations.value.find(c => c.id === conversationId)
+      // Auto-switch tab based on conversation's session type
       if (conv?.sessionType) {
         activeTab.value = conv.sessionType as 'chat' | 'practice'
       }
 
       const result = await getConversationMessages(conversationId)
-      activeConversationId.value = conversationId
+      // Set the conversation ID for the appropriate tab only
+      if (targetTab === 'practice') {
+        activePracticeConversationId.value = conversationId
+      } else {
+        activeChatConversationId.value = conversationId
+      }
       // Deduplicate by message id from DB (content-based dedup was too aggressive —
       // it removed legitimate messages that happened to share the same text)
       const seenIds = new Set<string>()
@@ -1515,21 +1576,16 @@ export const useAppStore = defineStore('app', () => {
         return true
       })
       // Load into the appropriate message array based on session type
-      const target = activeTab.value === 'practice' ? practiceMessages : chatMessages
+      const target = targetTab === 'practice' ? practiceMessages : chatMessages
       target.value = deduped.map(m => ({
         role: m.role as 'user' | 'assistant',
         content: m.content,
         reasoning: m.reasoning,
       }))
       // Mark all loaded messages as persisted
-      persistedCount[`chat:${conversationId}`] = activeTab.value === 'chat' ? target.value.length : 0
-      persistedCount[`practice:${conversationId}`] = activeTab.value === 'practice' ? target.value.length : 0
-      // Clear the other array
-      if (activeTab.value === 'practice') {
-        chatMessages.value = []
-      } else {
-        practiceMessages.value = []
-      }
+      persistedCount[`chat:${conversationId}`] = targetTab === 'chat' ? target.value.length : 0
+      persistedCount[`practice:${conversationId}`] = targetTab === 'practice' ? target.value.length : 0
+      // Do NOT clear the other tab's messages — they are independent
     } catch (err: any) {
       showToast(err?.message || '加载会话失败', 'error')
     } finally {
@@ -1542,28 +1598,38 @@ export const useAppStore = defineStore('app', () => {
    *  Only saves new messages since last persist (delta) to avoid duplicates.
    *  Pass optional messages array for practice mode (chat and practice track separately). */
   async function handleSaveMessages(messages?: ChatMessage[]) {
+    const isPractice = !!messages
     const msgs = messages || chatMessages.value
     if (msgs.length === 0) return
 
+    // Determine which conversation ID to use based on mode
+    const currentConvId = isPractice ? activePracticeConversationId.value : activeChatConversationId.value
+
     // Auto-create conversation if needed (first message in a session)
-    if (!activeConversationId.value) {
+    if (!currentConvId) {
       try {
         if (!currentUser.value) return
-        const conv = await createConversation('新对话', undefined, activeTab.value)
-        conv.sessionType = activeTab.value
+        const type = isPractice ? 'practice' : 'chat'
+        const conv = await createConversation('新对话', undefined, type)
+        conv.sessionType = type
         conversations.value.unshift(conv)
-        activeConversationId.value = conv.id
+        // Set the conversation ID for the appropriate tab
+        if (isPractice) {
+          activePracticeConversationId.value = conv.id
+        } else {
+          activeChatConversationId.value = conv.id
+        }
       } catch (err: any) {
         console.error('Failed to auto-create conversation:', err)
         return
       }
     }
 
-    const convId = activeConversationId.value
+    const convId = isPractice ? activePracticeConversationId.value : activeChatConversationId.value
     if (!convId) return
 
     // Use separate tracking for chat vs practice since they have independent message arrays
-    const modeKey = messages ? `practice:${convId}` : `chat:${convId}`
+    const modeKey = isPractice ? `practice:${convId}` : `chat:${convId}`
 
     // Delta: only send messages that haven't been persisted yet
     const alreadySaved = persistedCount[modeKey] || 0
@@ -1588,9 +1654,13 @@ export const useAppStore = defineStore('app', () => {
       conversations.value = conversations.value.filter(c => c.id !== conversationId)
       delete persistedCount[`chat:${conversationId}`]
       delete persistedCount[`practice:${conversationId}`]
-      if (activeConversationId.value === conversationId) {
-        activeConversationId.value = null
+      // Clear the appropriate tab's state if this was the active conversation
+      if (activeChatConversationId.value === conversationId) {
+        activeChatConversationId.value = null
         chatMessages.value = []
+      }
+      if (activePracticeConversationId.value === conversationId) {
+        activePracticeConversationId.value = null
         practiceMessages.value = []
       }
       showToast('会话已删除', 'info')
@@ -1947,14 +2017,25 @@ export const useAppStore = defineStore('app', () => {
     stopChatFeedbackTimer()
   }
 
-  /** Retry a failed AI message — removes the error message and re-sends */
+  /** Retry a failed AI message — removes the error message and re-sends.
+   *  Also supports regenerating any AI message (even successful ones) by
+   *  finding the preceding user message and re-sending it.
+   */
   function handleRetryMessage(msgIndex: number, tab: 'chat' | 'practice') {
     const messages = tab === 'chat' ? chatMessages.value : practiceMessages.value
     const failedMsg = messages[msgIndex] as any
-    const retryText = failedMsg?._retryMessage
+
+    // Try _retryMessage first (for error messages), otherwise find the preceding user message
+    let retryText = failedMsg?._retryMessage
+    if (!retryText) {
+      // Regenerate any AI message: find the preceding user message
+      if (msgIndex > 0 && messages[msgIndex - 1]?.role === 'user') {
+        retryText = messages[msgIndex - 1].content
+      }
+    }
     if (!retryText) return
 
-    // Remove the failed assistant message and the user message before it
+    // Remove the failed/regenerated assistant message and the user message before it
     const removed = msgIndex > 0 && messages[msgIndex - 1]?.role === 'user' ? 2 : 1
     if (msgIndex > 0 && messages[msgIndex - 1]?.role === 'user') {
       messages.splice(msgIndex - 1, 2)
@@ -2603,6 +2684,8 @@ export const useAppStore = defineStore('app', () => {
     // Conversation history
     conversations,
     activeConversationId,
+    activeChatConversationId,
+    activePracticeConversationId,
     conversationsLoading,
     handleLoadConversations,
     handleNewConversation,
@@ -2671,5 +2754,9 @@ export const useAppStore = defineStore('app', () => {
     handleMarkNotificationRead,
     handleMarkAllNotificationsRead,
     handleCreateNotification,
+
+    // Refresh trigger (for paginated views to re-fetch on global refresh)
+    refreshTrigger,
+    triggerRefresh,
   }
 })

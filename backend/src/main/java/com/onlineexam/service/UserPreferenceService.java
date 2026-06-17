@@ -172,6 +172,13 @@ public class UserPreferenceService {
    * 构建完整用户画像 — 从多源数据采集并分析
    */
   private Map<String, Object> buildUserProfile(String userId) {
+    return buildUserProfile(userId, true);
+  }
+
+  /**
+   * 构建用户画像 — includeAiSummary=false 时跳过 AI 摘要生成（用于推荐刷新，避免阻塞）
+   */
+  private Map<String, Object> buildUserProfile(String userId, boolean includeAiSummary) {
     Map<String, Object> profile = new LinkedHashMap<>();
     profile.put("userId", userId);
     profile.put("generatedAt", Instant.now().toString());
@@ -215,8 +222,13 @@ public class UserPreferenceService {
     profile.put("learningPreferences", learningPreferences);
 
     // 9. 使用AI大模型生成画像摘要（异步降级）
-    String aiSummary = generateAiProfileSummary(profile);
-    profile.put("aiSummary", aiSummary);
+    // 推荐刷新路径跳过 AI 调用，避免长时间阻塞导致前端刷新按钮失效
+    if (includeAiSummary) {
+      String aiSummary = generateAiProfileSummary(profile);
+      profile.put("aiSummary", aiSummary);
+    } else {
+      profile.put("aiSummary", generateBasicSummary(profile));
+    }
 
     return profile;
   }
@@ -859,7 +871,8 @@ public class UserPreferenceService {
     }
 
     try {
-      Map<String, Object> profile = buildUserProfile(userId);
+      // 推荐生成不需要 AI 摘要，跳过以避免 AI 调用阻塞刷新
+      Map<String, Object> profile = buildUserProfile(userId, false);
       List<Map<String, Object>> recommendations = generateRecommendations(profile);
 
       // 更新缓存

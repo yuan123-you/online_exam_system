@@ -89,8 +89,28 @@
         </span>
         <!-- Final duration after streaming -->
         <span v-else-if="msg.duration != null" class="msg-duration">⏱ {{ formatDuration(msg.duration) }}</span>
-        <button v-if="!(isLast(idx) && streamingActive) && (msg as any)._retryMessage" class="retry-btn" @click="retryMessage(idx)">🔄 重新生成</button>
-        <button v-if="!(isLast(idx) && streamingActive)" class="copy-btn" @click="copyPlain(msg.content, idx)">📋 复制</button>
+        <div class="msg-actions" v-if="!(isLast(idx) && streamingActive)">
+          <!-- Regenerate button — shows for all AI messages, with refresh icon -->
+          <button
+            class="action-icon-btn regenerate-btn"
+            @click="regenerateMessage(idx)"
+            title="重新生成"
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M21 2v6h-6M3 12a9 9 0 0 1 15-6.7L21 8M3 22v-6h6M21 12a9 9 0 0 1-15 6.7L3 16"/>
+            </svg>
+          </button>
+          <!-- Copy button -->
+          <button class="action-icon-btn copy-icon-btn" @click="copyPlain(msg.content, idx)" title="复制">
+            <svg v-if="copiedIdx !== idx" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
+              <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+            </svg>
+            <svg v-else width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="20 6 9 17 4 12"/>
+            </svg>
+          </button>
+        </div>
       </div>
 
       <!-- Copy row for user messages -->
@@ -226,6 +246,10 @@ const props = defineProps<{
   streamingQuestions?: Array<Record<string, unknown>>
   loading: boolean
   tab?: 'chat' | 'practice'
+}>()
+
+const emit = defineEmits<{
+  (e: 'regenerate', msgIndex: number): void
 }>()
 
 const store = useAppStore()
@@ -454,8 +478,9 @@ function isLast(idx: number) {
   return idx === props.messages.length - 1
 }
 
-function retryMessage(idx: number) {
-  store.handleRetryMessage(idx, props.tab || 'chat')
+/** Regenerate any AI message — emits event for parent to handle */
+function regenerateMessage(idx: number) {
+  emit('regenerate', idx)
 }
 
 // Toggle explanation visibility
@@ -596,7 +621,11 @@ function parsedQuestions(msgIdx: number): AiQuestion[] {
   result = parseJsonFormat(content)
   if (result.length > 0) { result = normalizeParsedQuestions(result); _parseCache.set(cacheKey, result); return result }
 
-  // Strategy 3: Regex extraction
+  // Strategy 3: Parse Markdown format (### 第N题 / **[题型]** / A. 选项 / **答案：**)
+  result = parseMarkdownFormat(content)
+  if (result.length > 0) { result = normalizeParsedQuestions(result); _parseCache.set(cacheKey, result); return result }
+
+  // Strategy 4: Regex extraction
   result = extractQuestionsByRegex(content)
   if (result.length > 0) { result = normalizeParsedQuestions(result); _parseCache.set(cacheKey, result); return result }
 
@@ -684,6 +713,139 @@ function parseTextFormat(content: string): AiQuestion[] {
   return questions
 }
 
+/** Parse Markdown format: ### 第N题 / **[题型]** / A. 选项 / **答案：** / **解析：** */
+function parseMarkdownFormat(content: string): AiQuestion[] {
+  const questions: AiQuestion[] = []
+  // Split by question headers: "### 第X题", "## 第X题", "### 1.", "### 1、", "### 题目1"
+  const blocks = content.split(/\n(?:#{2,3}\s*(?:第\s*\d+\s*题|[0-9]+[.、)\s]|[一二三四五六七八九十]+[、.]\s*|题目\s*\d+))/g)
+  // The split removes the headers; re-find them via regex to attach to blocks
+  const headerRegex = /(?:#{2,3}\s*(?:第\s*(\d+)\s*题|([0-9]+)[.、)\s]|([一二三四五六七八九十]+)[、.]\s*|题目\s*(\d+)))/g
+  const headers: { index: number; num: number }[] = []
+  let hm: RegExpExecArray | null
+  while ((hm = headerRegex.exec(content)) !== null) {
+    const numRaw = hm[1] || hm[2] || (hm[3] ? String('一二三四五六七八九十'.indexOf(hm[3]) + 1) : '1') || hm[4] || '1'
+    const num = parseInt(numRaw)
+    headers.push({ index: hm.index, num: isNaN(num) ? 1 : num })
+  }
+  if (headers.length === 0) return []
+
+  for (let hi = 0; hi < headers.length; hi++) {
+    const start = headers[hi].index
+    const end = hi + 1 < headers.length ? headers[hi + 1].index : content.length
+    const block = content.substring(start, end)
+    if (!block.trim()) continue
+
+    const q: Partial<AiQuestion> = { score: 5, subject: 'AI练习', difficulty: 'medium', options: [], answer: [] }
+    const lines = block.split('\n')
+
+    let inExplanation = false
+    let explanationLines: string[] = []
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i].trim()
+      if (!line) continue
+
+      // Skip the header line itself
+      if (/^#{2,3}\s/.test(line)) continue
+
+      // Type detection: **[单选题]** or **[题型]** or [单选题]
+      const typeMatch = line.match(/\*?\*?\[?\s*(单选题|多选题|判断题|填空题|简答题|编程题|单选|多选|判断|填空|简答|编程)\s*\]?\*?\*?/)
+      if (typeMatch && !q.type) {
+        const t = typeMatch[1]
+        if (t.includes('单选')) q.type = 'single'
+        else if (t.includes('多选')) q.type = 'multiple'
+        else if (t.includes('判断')) q.type = 'judge'
+        else if (t.includes('填空')) q.type = 'fill'
+        else if (t.includes('简答')) q.type = 'short'
+        else if (t.includes('编程')) q.type = 'coding'
+        else q.type = 'single'
+      }
+
+      // Answer line: **答案：** X or **答案:** X or 答案：X
+      if (/^\*{0,2}\s*答案\s*[：:]\s*\*{0,2}/.test(line)) {
+        const ans = line.replace(/^\*{0,2}\s*答案\s*[：:]\s*\*{0,2}/, '').replace(/\*{0,2}$/, '').trim()
+        q.answer = ans.split(/[,，\s]+/).filter(Boolean)
+        continue
+      }
+
+      // Explanation line: **解析：** ... or **解析:** ...
+      if (/^\*{0,2}\s*解析\s*[：:]/.test(line)) {
+        inExplanation = true
+        const expl = line.replace(/^\*{0,2}\s*解析\s*[：:]\s*\*{0,2}/, '').trim()
+        if (expl) explanationLines.push(expl)
+        continue
+      }
+
+      // Score line: **分数：** 5
+      if (/^\*{0,2}\s*分数\s*[：:]/.test(line)) {
+        const sc = line.replace(/^\*{0,2}\s*分数\s*[：:]\s*/, '').replace(/\D/g, '')
+        q.score = parseInt(sc) || 5
+        continue
+      }
+
+      // Option line: A. xxx / A、xxx / A) xxx / A xxx
+      if (/^[A-D][.、)\s]/.test(line)) {
+        if (!q.options) q.options = []
+        q.options.push(line)
+        continue
+      }
+
+      // If we're in explanation mode, collect all lines
+      if (inExplanation) {
+        // Stop if we hit a separator or new question marker
+        if (/^---+$/.test(line) || /^#{2,3}/.test(line)) {
+          inExplanation = false
+          continue
+        }
+        explanationLines.push(line)
+        continue
+      }
+
+      // Title: first non-empty, non-header, non-option, non-meta line
+      if (!q.title && !/^[A-D][.、)\s]/.test(line) && !/^\*{0,2}\s*(答案|解析|分数|题型|难度)/.test(line) && !/^---+$/.test(line)) {
+        // Strip leading type marker like **[单选题]** from title
+        let title = line.replace(/\*?\*?\[?\s*(?:单选题|多选题|判断题|填空题|简答题|编程题|单选|多选|判断|填空|简答|编程)\s*\]?\*?\*?/, '').trim()
+        // Strip leading ** markers
+        title = title.replace(/^\*+/, '').replace(/\*+$/, '').trim()
+        if (title) q.title = title
+      }
+    }
+
+    if (q.title && q.type) {
+      q.id = `q-${questions.length}-${Date.now()}`
+      q.knowledgePoint = (q.title || '').substring(0, 30)
+      if (q.explanation === undefined) q.explanation = ''
+      if (explanationLines.length > 0) q.explanation = explanationLines.join('\n')
+      if (!q.options) q.options = []
+      if (!q.answer) q.answer = []
+      capOptions(q)
+      questions.push(q as AiQuestion)
+    }
+  }
+  return questions
+}
+
+/**
+ * Find the start index of a JSON array that looks like a question list.
+ * Scans all '[' positions and returns the first one whose following ~300 chars
+ * contain question-like fields ("title", "type", "options", "answer", "explanation").
+ * Returns -1 if no suitable array start is found.
+ */
+function findQuestionArrayStart(content: string): number {
+  let searchFrom = 0
+  while (true) {
+    const idx = content.indexOf('[', searchFrom)
+    if (idx === -1) break
+    // Peek ahead ~300 chars to check for question-like fields
+    const peek = content.substring(idx, Math.min(idx + 300, content.length))
+    if (/"(?:title|type|options|answer|explanation|subject|score)"\s*:/.test(peek)) {
+      return idx
+    }
+    searchFrom = idx + 1
+  }
+  return -1
+}
+
 /** Parse JSON format (fallback) */
 function parseJsonFormat(content: string): AiQuestion[] {
   let jsonStr = ''
@@ -691,7 +853,11 @@ function parseJsonFormat(content: string): AiQuestion[] {
   if (fenceMatch) { jsonStr = fenceMatch[1].trim() }
 
   if (!jsonStr) {
-    const startIdx = content.indexOf('[')
+    // Smart search: find the '[' that starts a question-like JSON array.
+    // Instead of using the first '[' (which may belong to thinking text like
+    // "让我分析一下[要求]"), scan all '[' positions and pick the one whose
+    // following content contains question fields ("title", "type", "options"...).
+    const startIdx = findQuestionArrayStart(content)
     if (startIdx === -1) return []
     let depth = 0, inString = false, escaped = false
     for (let i = startIdx; i < content.length; i++) {
@@ -706,9 +872,11 @@ function parseJsonFormat(content: string): AiQuestion[] {
   }
   if (!jsonStr) return []
   const parsed = tryParseJson(jsonStr)
-  if (Array.isArray(parsed) && parsed.length > 0) {
+  // Support both array and single object
+  const parsedArr = Array.isArray(parsed) ? parsed : (parsed && typeof parsed === 'object' && (parsed as any).title ? [parsed] : [])
+  if (parsedArr.length > 0) {
     // Filter out entries with blank / placeholder titles
-    const filtered = parsed.filter((q: any) => q.title && String(q.title).trim())
+    const filtered = parsedArr.filter((q: any) => q.title && String(q.title).trim())
     if (filtered.length > 0) {
       const capped = filtered.map((q: any) => {
         // Cap options
@@ -739,58 +907,50 @@ function parseJsonFormat(content: string): AiQuestion[] {
 /** Last-resort: regex-based extraction of individual question objects from malformed text */
 function extractQuestionsByRegex(text: string): AiQuestion[] {
   const questions: AiQuestion[] = []
-  // Match individual question blocks by looking for title/type/options/answer patterns
-  const blockRegex = /\{\s*"title"\s*:\s*"([^"]*(?:\\.[^"]*)*)"\s*,\s*"type"\s*:\s*"([^"]*)"\s*,\s*"options"\s*:\s*\[(.*?)\]\s*,\s*"answer"\s*:\s*\[(.*?)\]\s*,\s*"score"\s*:\s*(\d+)\s*,\s*"explanation"\s*:\s*"([^"]*(?:\\.[^"]*)*)"/gs
+  // Extract individual JSON objects `{...}` that contain a "title" field.
+  // This is field-order agnostic, so it handles JSON where "subject" precedes
+  // "title" or fields are in any order.
+  const objRegex = /\{[^{}]*?"title"\s*:\s*"[^"]*(?:\\.[^"]*)*"[^{}]*?\}/gs
   let match
-  while ((match = blockRegex.exec(text)) !== null) {
+  while ((match = objRegex.exec(text)) !== null) {
     try {
-      const title = match[1].replace(/\\"/g, '"').replace(/\\n/g, '\n')
-      const type = match[2]
-      const optionsRaw = match[3]
-      const answerRaw = match[4]
-      const score = parseInt(match[5]) || 5
-      const explanation = match[6].replace(/\\"/g, '"').replace(/\\n/g, '\n')
+      const objStr = match[0]
+      // Try to parse the individual object
+      const parsed = tryParseJson('[' + objStr + ']')
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        const q = parsed[0] as any
+        if (q.title && String(q.title).trim()) {
+          const title = String(q.title)
+          const type = (q.type || 'single') as string
+          let options: string[] = q.options || []
+          let answer: string[] = q.answer || []
+          const score = q.score || 5
+          const explanation = q.explanation || ''
 
-      // Parse options: "A.xxx","B.yyy"
-      const options: string[] = []
-      const optRegex = /"([^"]*(?:\\.[^"]*)*)"/g
-      let optMatch
-      while ((optMatch = optRegex.exec(optionsRaw)) !== null) {
-        options.push(optMatch[1].replace(/\\"/g, '"'))
-      }
-
-      // Parse answer
-      const answer: string[] = []
-      const ansRegex = /"([^"]*)"/g
-      let ansMatch
-      while ((ansMatch = ansRegex.exec(answerRaw)) !== null) {
-        answer.push(ansMatch[1])
-      }
-
-      if (title && type) {
-        if (type === 'judge' && options.length > 2) {
-          options.length = 2
-        } else if (options.length > 4 && (type === 'single' || type === 'multiple')) {
-          options.length = 4
-        }
-        // Normalize answer for choice/judge
-        if (type === 'single' || type === 'multiple' || type === 'judge') {
-          const cleanAnswer: string[] = []
-          for (const a of answer) {
-            const m = String(a).match(/([A-D])/)
-            if (m) cleanAnswer.push(m[1])
+          if (type === 'judge' && options.length > 2) {
+            options = options.slice(0, 2)
+          } else if (options.length > 4 && (type === 'single' || type === 'multiple')) {
+            options = options.slice(0, 4)
           }
-          if (cleanAnswer.length > 0) answer.length = 0, answer.push(...cleanAnswer)
+          // Normalize answer for choice/judge
+          if (type === 'single' || type === 'multiple' || type === 'judge') {
+            const cleanAnswer: string[] = []
+            for (const a of answer) {
+              const m = String(a).match(/([A-D])/)
+              if (m) cleanAnswer.push(m[1])
+            }
+            if (cleanAnswer.length > 0) answer = cleanAnswer
+          }
+          questions.push({
+            id: `q-${questions.length}-${Date.now()}`,
+            title, type: type as AiQuestion['type'],
+            options, answer,
+            score, explanation,
+            subject: q.subject || 'AI练习',
+            knowledgePoint: title.substring(0, 30),
+            difficulty: q.difficulty || 'medium',
+          })
         }
-        questions.push({
-          id: `q-${questions.length}-${Date.now()}`,
-          title, type: type as AiQuestion['type'],
-          options, answer,
-          score, explanation,
-          subject: 'AI练习',
-          knowledgePoint: title.substring(0, 30),
-          difficulty: 'medium',
-        })
       }
     } catch { /* skip malformed block */ }
   }
@@ -1108,9 +1268,10 @@ function renderContent(text: string, role: string, idx: number): string {
     if (parsed.length > 0) {
       return `<p style="color:var(--muted);font-style:italic;">📋 已生成 ${parsed.length} 道练习题，请在下方作答 👇</p>`
     }
-    // Parsing failed — hide raw JSON, show friendly message
+    // Parsing failed — render content as markdown so user can still see what AI generated,
+    // with a friendly hint that interactive cards couldn't be created.
     if (/[\{\[]/.test(text) && (text.includes('"title"') || text.includes('"type"') || text.includes('"options"'))) {
-      return '<p style="color:var(--muted);">📋 题目解析中，如未显示卡片请重新生成</p>'
+      return '<p style="color:var(--muted);">📋 题目卡片解析失败，可点击右上角「🔄」按钮重新生成：</p>' + renderMarkdown(text)
     }
     // Not JSON-like — render normally
     return renderMarkdown(text)
@@ -1232,7 +1393,7 @@ function escapeHtml(s: string) {
   display: flex; gap: 8px; max-width: 85%;
   min-width: 0;
 }
-.bubble-user { align-self: flex-end; flex-direction: row-reverse; }
+.bubble-user { align-self: flex-end; flex-direction: row; }
 .bubble-ai { align-self: flex-start; }
 
 /* ---- DeepSeek-style bubbles ---- */
@@ -1240,24 +1401,24 @@ function escapeHtml(s: string) {
   width: 32px; height: 32px; border-radius: 50%;
   display: flex; align-items: center; justify-content: center;
   font-size: 15px; flex-shrink: 0;
-  background: #f0f0f0;
-  border: 1px solid #e8e8e8;
+  background: var(--ai-surface-hover);
+  border: 1px solid var(--ai-border);
 }
-.user-avatar { background: #1d1d1f; border-color: #1d1d1f; }
+.user-avatar { background: var(--ai-user-bubble); border-color: var(--ai-user-bubble); }
 
 .bubble-body {
   padding: 12px 18px; border-radius: 16px;
   font-size: 14px; line-height: 1.75; min-width: 0;
 }
 .bubble-user .bubble-body {
-  background: #2b2b30;
-  color: #f1f1f3;
+  background: var(--ai-user-bubble);
+  color: var(--ai-user-bubble-text);
   border-bottom-right-radius: 6px;
 }
 .bubble-ai .bubble-body {
-  background: #fff;
-  color: #1d1d1f;
-  border: 1px solid #e8e8e8;
+  background: var(--ai-surface);
+  color: var(--ai-text);
+  border: 1px solid var(--ai-border);
   border-bottom-left-radius: 6px;
 }
 
@@ -1296,9 +1457,9 @@ function escapeHtml(s: string) {
   gap: 6px;
 }
 .feedback-pre {
-  background: linear-gradient(135deg, #eef2ff 0%, #f0fdf4 100%);
-  color: #4f46e5;
-  border: 1px solid #e0e7ff;
+  background: linear-gradient(135deg, var(--ai-accent-soft) 0%, #f0fdf4 100%);
+  color: var(--ai-accent-hover);
+  border: 1px solid var(--ai-accent-border);
 }
 .feedback-in {
   background: #fefce8;
@@ -1317,7 +1478,7 @@ function escapeHtml(s: string) {
 
 /* Streaming progress — question-by-question indicator */
 .message-content :deep(.streaming-progress) {
-  color: #6366f1;
+  color: var(--ai-accent);
   font-size: 13px;
   font-weight: 500;
   padding: 6px 0;
@@ -1338,15 +1499,15 @@ function escapeHtml(s: string) {
   gap: 8px;
 }
 .message-content :deep(.sq-header) {
-  color: #6366f1;
+  color: var(--ai-accent);
   font-size: 13px;
   font-weight: 500;
   padding: 4px 0 6px;
   animation: progress-pulse 2s ease-in-out infinite;
 }
 .message-content :deep(.sq-card) {
-  background: #f9fafb;
-  border: 1px solid #e5e7eb;
+  background: var(--ai-surface-soft);
+  border: 1px solid var(--ai-border);
   border-radius: 8px;
   padding: 10px 12px;
   transition: all 0.3s ease-out;
@@ -1367,20 +1528,20 @@ function escapeHtml(s: string) {
 .message-content :deep(.sq-num) {
   font-size: 13px;
   font-weight: 700;
-  color: #111827;
+  color: var(--ai-text);
 }
 .message-content :deep(.sq-type) {
   font-size: 10px;
   padding: 1px 6px;
   border-radius: 4px;
-  background: #eef2ff;
-  color: #6366f1;
+  background: var(--ai-accent-soft);
+  color: var(--ai-accent);
   font-weight: 500;
 }
 .message-content :deep(.sq-card-title) {
   font-size: 13px;
   line-height: 1.5;
-  color: #1f2937;
+  color: var(--ai-text-secondary);
   margin-bottom: 6px;
 }
 .message-content :deep(.sq-options) {
@@ -1393,20 +1554,20 @@ function escapeHtml(s: string) {
   align-items: center;
   gap: 6px;
   font-size: 12px;
-  color: #374151;
+  color: var(--ai-text-secondary);
   line-height: 1.4;
 }
 .message-content :deep(.sq-opt-letter) {
   width: 18px;
   height: 18px;
   border-radius: 50%;
-  background: #f3f4f6;
+  background: var(--ai-surface-hover);
   display: inline-flex;
   align-items: center;
   justify-content: center;
   font-size: 10px;
   font-weight: 600;
-  color: #6b7280;
+  color: var(--ai-text-muted);
   flex-shrink: 0;
 }
 .message-content :deep(.sq-opt-text) {
@@ -1417,9 +1578,9 @@ function escapeHtml(s: string) {
 /* ---- DeepSeek-style reasoning block (no inner scrollbar) ---- */
 .reasoning-block { margin-bottom: 8px; }
 .reasoning-block summary {
-  font-size: 13px; color: #6b7280; cursor: pointer; font-weight: 500;
+  font-size: 13px; color: var(--ai-text-muted); cursor: pointer; font-weight: 500;
   padding: 8px 12px; border-radius: 8px;
-  background: #f9fafb; border: 1px solid #e5e7eb;
+  background: var(--ai-surface-soft); border: 1px solid var(--ai-border);
   transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
   user-select: none;
   display: flex;
@@ -1439,47 +1600,47 @@ function escapeHtml(s: string) {
   transform: rotate(90deg);
 }
 .reasoning-block summary:hover {
-  color: #374151;
-  border-color: #d1d5db;
-  background: #f3f4f6;
+  color: var(--ai-text-secondary);
+  border-color: var(--ai-text-faint);
+  background: var(--ai-surface-hover);
   box-shadow: 0 1px 4px rgba(0,0,0,0.06);
 }
-.reasoning-block.reasoning-saved summary { color: #6b7280; font-weight: 500; }
+.reasoning-block.reasoning-saved summary { color: var(--ai-text-muted); font-weight: 500; }
 
 .reasoning-text {
-  font-size: 13px; line-height: 1.65; color: #4b5563;
+  font-size: 13px; line-height: 1.65; color: var(--ai-text-muted);
   padding: 10px 14px; margin-top: 6px;
-  border-left: 2px solid #d1d5db;
+  border-left: 2px solid var(--ai-border);
   border-radius: 0 6px 6px 0;
   /* No max-height, no overflow — scrolls with page */
 }
 .reasoning-saved .reasoning-text {
-  color: #6b7280;
-  background: #fcfcfd;
-  border-left-color: #e5e7eb;
+  color: var(--ai-text-muted);
+  background: var(--ai-surface-soft);
+  border-left-color: var(--ai-border);
 }
 
 /* Reasoning formatted content */
 .reasoning-text :deep(.reasoning-p) { margin: 2px 0; }
 .reasoning-text :deep(.reasoning-h4) {
-  font-size: 13px; font-weight: 600; color: #374151;
+  font-size: 13px; font-weight: 600; color: var(--ai-text-secondary);
   margin: 8px 0 4px; padding-bottom: 2px;
-  border-bottom: 1px solid #e5e7eb;
+  border-bottom: 1px solid var(--ai-border);
 }
 .reasoning-text :deep(.reasoning-h5) {
-  font-size: 12px; font-weight: 600; color: #4b5563;
+  font-size: 12px; font-weight: 600; color: var(--ai-text-muted);
   margin: 6px 0 2px;
 }
 .reasoning-text :deep(.reasoning-li) {
   display: block; font-size: 12px;
-  padding: 1px 0 1px 8px; color: #4b5563;
+  padding: 1px 0 1px 8px; color: var(--ai-text-muted);
 }
 .reasoning-text :deep(.reasoning-code) {
   background: rgba(0,0,0,0.06); padding: 1px 4px;
   border-radius: 3px; font-size: 11px; font-family: monospace;
 }
-.reasoning-text :deep(strong) { color: #374151; font-weight: 600; }
-.reasoning-text :deep(em) { color: #6b7280; }
+.reasoning-text :deep(strong) { color: var(--ai-text-secondary); font-weight: 600; }
+.reasoning-text :deep(em) { color: var(--ai-text-muted); }
 
 /* Message content */
 .message-content {
@@ -1517,7 +1678,7 @@ function escapeHtml(s: string) {
 
 /* Generating hint — shown while AI streams question JSON */
 .message-content :deep(.generating-hint) {
-  color: #6366f1;
+  color: var(--ai-accent);
   font-size: 13px;
   font-weight: 500;
   padding: 4px 0;
@@ -1548,18 +1709,18 @@ function escapeHtml(s: string) {
 
 .message-content :deep(.md-p) { margin: 3px 0; }
 .message-content :deep(.md-code) {
-  background: #1a1a2e; color: #cdd6f4;
+  background: var(--ai-code-bg); color: var(--ai-code-text);
   padding: 12px 14px; border-radius: 8px; overflow-x: auto;
   font-size: 13px; line-height: 1.55; margin: 8px 0;
-  border: 1px solid #2a2a3e;
+  border: 1px solid var(--ai-code-border);
   max-width: 100%;
   box-sizing: border-box;
 }
 /* Inline code in AI bubbles */
 .bubble-ai .message-content :deep(.md-inline) {
-  background: #f3f3f5; padding: 1px 6px;
+  background: var(--ai-inline-code-bg); padding: 1px 6px;
   border-radius: 4px; font-size: 12px; font-family: 'SF Mono', 'Cascadia Code', monospace;
-  color: #d9466c;
+  color: var(--ai-inline-code-text);
 }
 /* Inline code in user bubbles */
 .bubble-user .message-content :deep(.md-inline) {
@@ -1582,21 +1743,21 @@ function escapeHtml(s: string) {
 /* ===== Exam Paper Style ===== */
 .exam-paper {
   margin-top: 10px;
-  border: 1px solid #e5e7eb;
+  border: 1px solid var(--ai-border);
   border-radius: 10px;
   overflow: hidden;
-  background: #fff;
+  background: var(--ai-surface);
 }
 
 .exam-header {
   display: flex;
   align-items: center;
   padding: 10px 16px;
-  background: #f9fafb;
-  border-bottom: 1px solid #e5e7eb;
+  background: var(--ai-surface-soft);
+  border-bottom: 1px solid var(--ai-border);
 }
 
-.exam-title { font-size: 13px; font-weight: 600; color: #374151; }
+.exam-title { font-size: 13px; font-weight: 600; color: var(--ai-text-secondary); }
 
 .exam-submit {
   padding: 10px 28px;
@@ -1619,15 +1780,15 @@ function escapeHtml(s: string) {
   transform: translateY(0) scale(0.98);
 }
 
-.exam-score { font-size: 13px; font-weight: 600; color: #6366f1; }
+.exam-score { font-size: 13px; font-weight: 600; color: var(--ai-accent); }
 
 /* Footer: submit button / score at bottom */
 .exam-footer {
   padding: 16px;
   display: flex;
   justify-content: center;
-  border-top: 1px solid #e5e7eb;
-  background: #fafbfc;
+  border-top: 1px solid var(--ai-border);
+  background: var(--ai-surface-soft);
 }
 
 .exam-score-summary {
@@ -1648,7 +1809,7 @@ function escapeHtml(s: string) {
 /* Each question */
 .exam-question {
   padding: 14px 16px;
-  border-bottom: 1px solid #f3f4f6;
+  border-bottom: 1px solid var(--ai-border-soft);
 }
 .exam-question:last-child { border-bottom: none; }
 
@@ -1662,24 +1823,24 @@ function escapeHtml(s: string) {
 .eq-num {
   font-size: 14px;
   font-weight: 700;
-  color: #111827;
+  color: var(--ai-text);
 }
 
 .eq-type {
   font-size: 11px;
   padding: 2px 8px;
   border-radius: 4px;
-  background: #eef2ff;
-  color: #6366f1;
+  background: var(--ai-accent-soft);
+  color: var(--ai-accent);
   font-weight: 500;
 }
 
-.eq-score { font-size: 11px; color: #9ca3af; margin-left: auto; }
+.eq-score { font-size: 11px; color: var(--ai-text-faint); margin-left: auto; }
 
 .eq-body {
   font-size: 14px;
   line-height: 1.6;
-  color: #1f2937;
+  color: var(--ai-text);
   margin-bottom: 10px;
 }
 
@@ -1695,52 +1856,52 @@ function escapeHtml(s: string) {
   align-items: center;
   gap: 10px;
   padding: 8px 12px;
-  border: 1.5px solid #e5e7eb;
+  border: 1.5px solid var(--ai-border);
   border-radius: 8px;
   cursor: pointer;
   transition: all 0.12s;
 }
-.eq-opt:hover { background: #f9fafb; }
-.eq-opt.selected { border-color: #6366f1; background: #eef2ff; }
+.eq-opt:hover { background: var(--ai-surface-soft); }
+.eq-opt.selected { border-color: var(--ai-accent); background: var(--ai-accent-soft); }
 .eq-opt.correct { border-color: #22c55e; background: #f0fdf4; }
 .eq-opt.wrong { border-color: #ef4444; background: #fef2f2; }
 
 .eo-letter {
   width: 24px; height: 24px;
   border-radius: 50%;
-  background: #f3f4f6;
+  background: var(--ai-surface-hover);
   display: flex;
   align-items: center;
   justify-content: center;
   font-size: 12px;
   font-weight: 600;
-  color: #6b7280;
+  color: var(--ai-text-muted);
   flex-shrink: 0;
 }
-.eq-opt.selected .eo-letter { background: #6366f1; color: #fff; }
+.eq-opt.selected .eo-letter { background: var(--ai-accent); color: #fff; }
 .eq-opt.correct .eo-letter { background: #22c55e; color: #fff; }
 .eq-opt.wrong .eo-letter { background: #ef4444; color: #fff; }
 
 .eq-opt input { display: none; }
 
-.eo-text { font-size: 13px; color: #374151; line-height: 1.4; }
+.eo-text { font-size: 13px; color: var(--ai-text-secondary); line-height: 1.4; }
 
 /* Textarea for subjective */
 .eq-textarea textarea {
   width: 100%;
   padding: 10px 12px;
-  border: 1.5px solid #e5e7eb;
+  border: 1.5px solid var(--ai-border);
   border-radius: 8px;
   font-size: 13px;
   font-family: inherit;
   line-height: 1.5;
   resize: vertical;
-  background: #f9fafb;
-  color: #111827;
+  background: var(--ai-surface-soft);
+  color: var(--ai-text);
   outline: none;
   transition: border-color 0.15s;
 }
-.eq-textarea textarea:focus { border-color: #6366f1; background: #fff; }
+.eq-textarea textarea:focus { border-color: var(--ai-accent); background: var(--ai-surface); }
 .eq-textarea textarea:disabled { opacity: 0.6; }
 
 /* Result */
@@ -1768,15 +1929,15 @@ function escapeHtml(s: string) {
   cursor: pointer;
   font-size: 12px;
   font-weight: 500;
-  color: #6366f1;
+  color: var(--ai-accent);
   padding: 6px 8px;
   border-radius: 6px;
   user-select: none;
   transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
 }
 .eq-expl-header:hover {
-  color: #4f46e5;
-  background: #eef2ff;
+  color: var(--ai-accent-hover);
+  background: var(--ai-accent-soft);
 }
 
 .eq-expl-arrow {
@@ -1788,16 +1949,16 @@ function escapeHtml(s: string) {
 .eq-expl-body {
   margin-top: 6px;
   padding: 8px 10px;
-  background: #f8fafc;
+  background: var(--ai-surface-soft);
   border-radius: 6px;
   font-size: 12px;
   line-height: 1.7;
-  color: #374151;
-  border: 1px solid #e5e7eb;
+  color: var(--ai-text-secondary);
+  border: 1px solid var(--ai-border);
 }
 
 .eq-expl-body :deep(.expl-section) {
-  color: #6366f1;
+  color: var(--ai-accent);
   display: inline-block;
   margin: 4px 0 2px;
 }
@@ -1817,7 +1978,7 @@ function escapeHtml(s: string) {
 
 .msg-duration {
   font-size: 11px;
-  color: #9ca3af;
+  color: var(--ai-text-faint);
 }
 
 /* Live timer during streaming — styling delegated to LiveTimer component */
@@ -1835,40 +1996,81 @@ function escapeHtml(s: string) {
   font-size: 11px;
 }
 
-/* Simple copy button */
+/* Simple copy button — compact size (50%+ smaller than original) */
 .copy-btn {
-  padding: 4px 10px;
-  border: 1px solid #e5e7eb;
-  border-radius: 6px;
-  background: #fff;
-  color: #6b7280;
-  font-size: 12px;
+  padding: 2px 5px;
+  border: 1px solid var(--ai-border);
+  border-radius: 4px;
+  background: var(--ai-surface);
+  color: var(--ai-text-muted);
+  font-size: 10px;
+  line-height: 1.4;
   cursor: pointer;
   transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
 }
 .copy-btn:hover {
-  border-color: #6366f1;
-  color: #6366f1;
-  background: #eef2ff;
+  border-color: var(--ai-accent);
+  color: var(--ai-accent);
+  background: var(--ai-accent-soft);
   box-shadow: 0 1px 4px rgba(99,102,241,0.15);
 }
 
-/* Retry button for failed messages */
-.retry-btn {
-  padding: 4px 12px;
-  border: 1px solid #fbbf24;
-  border-radius: 6px;
-  background: #fffbeb;
-  color: #b45309;
-  font-size: 12px;
-  cursor: pointer;
-  transition: all 0.15s;
-  margin-right: 4px;
+/* ===== AI message action buttons (regenerate + copy) ===== */
+.msg-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
 }
-.retry-btn:hover {
-  border-color: #f59e0b;
-  background: #fef3c7;
-  color: #92400e;
+
+.action-icon-btn {
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid var(--ai-border);
+  border-radius: 6px;
+  background: var(--ai-surface);
+  color: var(--ai-text-faint);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  flex-shrink: 0;
+}
+.action-icon-btn svg {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+}
+.action-icon-btn:hover {
+  border-color: var(--ai-accent);
+  color: var(--ai-accent);
+  background: var(--ai-accent-soft);
+  box-shadow: 0 1px 4px rgba(99,102,241,0.15);
+}
+.action-icon-btn:active {
+  transform: scale(0.92);
+}
+
+/* Regenerate button — refresh icon */
+.regenerate-btn:hover {
+  border-color: var(--ai-accent);
+  color: var(--ai-accent);
+  background: var(--ai-accent-soft);
+}
+.regenerate-btn:hover svg {
+  animation: regen-spin 0.6s ease-in-out;
+}
+@keyframes regen-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(-360deg); }
+}
+
+/* Copy button — checkmark icon when copied */
+.copy-icon-btn.copied {
+  border-color: #22c55e;
+  color: #22c55e;
+  background: #f0fdf4;
 }
 
 /* ===== Responsive — Mobile (≤768px) ===== */
@@ -1942,7 +2144,10 @@ function escapeHtml(s: string) {
   .reasoning-text { font-size: 12px; padding: 8px 10px; }
 
   .msg-meta { margin-top: 4px; padding: 0 2px; }
-  .copy-trigger { font-size: 11px; padding: 4px 8px; }
+  .copy-btn { font-size: 9px; padding: 1px 4px; }
+  .copy-trigger { font-size: 9px; padding: 1px 4px; }
+  .action-icon-btn { width: 24px; height: 24px; }
+  .action-icon-btn svg { width: 12px; height: 12px; }
 
   .exam-paper { margin-top: 8px; border-radius: 8px; }
   .exam-header { padding: 8px 12px; }
@@ -2011,5 +2216,39 @@ function escapeHtml(s: string) {
     padding: 8px 10px;
     font-size: 12px;
   }
+}
+
+/* ===== Dark mode overrides ===== */
+[data-theme="dark"] .feedback-pre {
+  background: linear-gradient(135deg, var(--ai-accent-soft) 0%, rgba(129, 140, 248, 0.08) 100%);
+}
+[data-theme="dark"] .feedback-in {
+  background: rgba(234, 179, 8, 0.12);
+  color: #fbbf24;
+  border-color: rgba(234, 179, 8, 0.3);
+}
+[data-theme="dark"] .ess-badge.pass { background: rgba(34, 197, 94, 0.18); color: #86efac; }
+[data-theme="dark"] .ess-badge.fail { background: rgba(239, 68, 68, 0.18); color: #fca5a5; }
+[data-theme="dark"] .eq-opt.correct { background: rgba(34, 197, 94, 0.12); }
+[data-theme="dark"] .eq-opt.wrong { background: rgba(239, 68, 68, 0.12); }
+[data-theme="dark"] .eq-result.correct { background: rgba(34, 197, 94, 0.12); color: #4ade80; }
+[data-theme="dark"] .eq-result.wrong { background: rgba(239, 68, 68, 0.12); color: #fca5a5; }
+[data-theme="dark"] .copy-icon-btn.copied { background: rgba(34, 197, 94, 0.12); }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .feedback-pre {
+    background: linear-gradient(135deg, var(--ai-accent-soft) 0%, rgba(129, 140, 248, 0.08) 100%);
+  }
+  :root:not([data-theme="light"]) .feedback-in {
+    background: rgba(234, 179, 8, 0.12);
+    color: #fbbf24;
+    border-color: rgba(234, 179, 8, 0.3);
+  }
+  :root:not([data-theme="light"]) .ess-badge.pass { background: rgba(34, 197, 94, 0.18); color: #86efac; }
+  :root:not([data-theme="light"]) .ess-badge.fail { background: rgba(239, 68, 68, 0.18); color: #fca5a5; }
+  :root:not([data-theme="light"]) .eq-opt.correct { background: rgba(34, 197, 94, 0.12); }
+  :root:not([data-theme="light"]) .eq-opt.wrong { background: rgba(239, 68, 68, 0.12); }
+  :root:not([data-theme="light"]) .eq-result.correct { background: rgba(34, 197, 94, 0.12); color: #4ade80; }
+  :root:not([data-theme="light"]) .eq-result.wrong { background: rgba(239, 68, 68, 0.12); color: #fca5a5; }
+  :root:not([data-theme="light"]) .copy-icon-btn.copied { background: rgba(34, 197, 94, 0.12); }
 }
 </style>

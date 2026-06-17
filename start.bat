@@ -60,6 +60,6 @@ echo   后端地址: http://localhost:8080
 echo   前端开发: npm run dev:web (另开终端)
 echo   停止服务: Ctrl+C
 echo.
-java -jar backend\target\online-exam-backend-1.0.0.jar
+java -Dfile.encoding=UTF-8 -Dsun.jnu.encoding=UTF-8 -jar backend\target\online-exam-backend-1.0.0.jar
 
 pause

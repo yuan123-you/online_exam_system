@@ -97,6 +97,13 @@ watch([searchQuery, actionFilter], () => {
   store.loadLogsPage(1, searchQuery.value || undefined, actionFilter.value || undefined)
 })
 
+// 全局刷新时重新加载当前页（保留搜索/筛选状态）
+watch(() => store.refreshTrigger, (n) => {
+  if (n > 0) {
+    store.loadLogsPage(store.logsCurrentPage, searchQuery.value || undefined, actionFilter.value || undefined)
+  }
+})
+
 function handlePageChange(page: number) {
   store.loadLogsPage(page, searchQuery.value || undefined, actionFilter.value || undefined)
 }
@@ -160,7 +167,7 @@ onMounted(() => {
 }
 
 .search-input:focus {
-  background: #fff !important;
+  background: var(--input-focus-bg) !important;
   border-color: var(--primary) !important;
   box-shadow: var(--shadow-glow) !important;
 }
@@ -302,5 +309,17 @@ onMounted(() => {
     width: 100% !important;
     max-width: none;
   }
+}
+
+/* ---- Dark mode overrides ---- */
+[data-theme="dark"] .tag-create { background: rgba(16, 185, 129, 0.15); color: #6ee7b7; }
+[data-theme="dark"] .tag-delete { background: rgba(239, 68, 68, 0.15); color: #fca5a5; }
+[data-theme="dark"] .tag-update { background: rgba(37, 99, 235, 0.15); color: #93c5fd; }
+[data-theme="dark"] .tag-login { background: rgba(245, 158, 11, 0.15); color: #fcd34d; }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .tag-create { background: rgba(16, 185, 129, 0.15); color: #6ee7b7; }
+  :root:not([data-theme="light"]) .tag-delete { background: rgba(239, 68, 68, 0.15); color: #fca5a5; }
+  :root:not([data-theme="light"]) .tag-update { background: rgba(37, 99, 235, 0.15); color: #93c5fd; }
+  :root:not([data-theme="light"]) .tag-login { background: rgba(245, 158, 11, 0.15); color: #fcd34d; }
 }
 </style>

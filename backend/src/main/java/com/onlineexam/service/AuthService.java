@@ -99,14 +99,19 @@ public class AuthService {
     Store store = storeService.readStore();
     Map<String, Object> user = find(store.users, userId);
     if (user == null) return error(HttpStatus.UNAUTHORIZED, "Not logged in.");
-    if (!matchesPassword(str(body, "oldPassword"), str(user, "password"))) {
+    // Query password directly from DB — store cache doesn't include the password column
+    List<Map<String, Object>> rows = jdbc.queryForList(
+      "select password from user_account where id=? limit 1", userId);
+    if (rows.isEmpty()) return error(HttpStatus.UNAUTHORIZED, "Not logged in.");
+    String storedPassword = str(rows.get(0), "password");
+    if (!matchesPassword(str(body, "oldPassword"), storedPassword)) {
       return error(HttpStatus.BAD_REQUEST, "Old password is incorrect.");
     }
     String newPassword = str(body, "newPassword");
     if (newPassword.length() < 6) return error(HttpStatus.BAD_REQUEST, "Password must be at least 6 characters.");
     if (newPassword.length() > 100) return error(HttpStatus.BAD_REQUEST, "Password must be at most 100 characters.");
-    user.put("password", hashPassword(newPassword));
-    storeService.saveRecord("users", user);
+    jdbc.update("update user_account set password=? where id=?", hashPassword(newPassword), userId);
+    storeService.invalidateCache();
     systemLogService.log(user, "change password", str(user, "username"));
     return ResponseEntity.ok(mapOf("success", true));
   }

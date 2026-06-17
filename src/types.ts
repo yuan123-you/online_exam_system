@@ -35,6 +35,7 @@ export interface Question {
   answer: string[];
   score: number;
   sourceTag?: string;
+  deleted?: boolean;
 }
 
 export interface Paper {
@@ -47,6 +48,7 @@ export interface Paper {
   questionIds: string[];
   paperType?: string;
   sourceTag?: string;
+  deleted?: boolean;
 }
 
 export interface Exam {
@@ -64,6 +66,7 @@ export interface Exam {
   totalScore?: number;
   passScore?: number;
   paperName?: string;
+  deleted?: boolean;
 }
 
 export interface AnswerPayload {
@@ -173,6 +176,8 @@ export interface ExamDetail extends Exam {
   paper: Paper;
   questions: Array<Question & { order: number }>;
   session?: ExamSessionState;
+  /** 后端在考试已交卷时返回此标记，前端据此清理会话状态 */
+  sessionState?: 'finished';
 }
 
 export interface MenuItem {

@@ -157,7 +157,7 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { useAppStore } from '@/stores/app'
 import { typeLabel } from '@/utils/format'
-import { backupQuestionBank, listQuestionBackups, restoreQuestionBackup } from '@/api/client'
+import { backupQuestionBank, listQuestionBackups, restoreQuestionBackup, deleteQuestionBackup } from '@/api/client'
 import type { QuestionBackup } from '@/api/client'
 import { useToast } from '@/composables/useToast'
 import type { QuestionType } from '@/types'
@@ -209,6 +209,13 @@ function resetFilter() {
   selectedIds.value = []
   store.loadQuestionsPage(1)
 }
+
+// 全局刷新时重新加载当前页（保留搜索/筛选状态）
+watch(() => store.refreshTrigger, (n) => {
+  if (n > 0) {
+    store.loadQuestionsPage(store.currentPage, filterKeyword.value || undefined, filterType.value || undefined, filterSubject.value || undefined)
+  }
+})
 
 // ---- Batch Select ----
 const selectedIds = ref<string[]>([])
@@ -333,7 +340,7 @@ async function handleDeleteBackup(backupId: string) {
   if (!ok) return
   deleteBackupLoading.value = true
   try {
-    // Delete by filtering locally since there's no delete API
+    await deleteQuestionBackup(backupId)
     backups.value = backups.value.filter(b => b.id !== backupId)
     toast.success('备份已删除')
   } catch (err: any) {
@@ -827,5 +834,17 @@ onMounted(() => {
     padding: 3px 10px;
   }
 
+}
+
+/* ---- Dark mode overrides ---- */
+[data-theme="dark"] .backup-count {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--muted);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .backup-count {
+    background: rgba(255, 255, 255, 0.08);
+    color: var(--muted);
+  }
 }
 </style>
