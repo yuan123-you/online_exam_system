@@ -9,6 +9,10 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import jakarta.annotation.PostConstruct;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 
 /**
@@ -17,15 +21,41 @@ import org.springframework.stereotype.Service;
 @Service
 public class WrongBookService {
 
+  private static final Logger log = LoggerFactory.getLogger(WrongBookService.class);
   private static final int WRONG_BOOK_LIMIT = 1000;
   private static final int ARCHIVE_BATCH_SIZE = 50;
 
   private final StoreService storeService;
   private final SystemLogService systemLogService;
+  private final JdbcTemplate jdbc;
 
-  public WrongBookService(StoreService storeService, SystemLogService systemLogService) {
+  public WrongBookService(StoreService storeService, SystemLogService systemLogService, JdbcTemplate jdbc) {
     this.storeService = storeService;
     this.systemLogService = systemLogService;
+    this.jdbc = jdbc;
+  }
+
+  /**
+   * 启动时移除 wrong_book_entry.question_id 上的外键约束 fk_wrong_question。
+   * AI 练习产生的错题条目 questionId 不存在于 question 表，保留外键会导致
+   * 重做（retry）时 INSERT ... ON DUPLICATE KEY UPDATE 失败，返回 500。
+   */
+  @PostConstruct
+  void dropQuestionForeignKeyIfNeeded() {
+    try {
+      // 查询是否存在名为 fk_wrong_question 的外键约束
+      List<Map<String, Object>> constraints = jdbc.queryForList(
+        "SELECT CONSTRAINT_NAME FROM information_schema.TABLE_CONSTRAINTS " +
+        "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'wrong_book_entry' " +
+        "AND CONSTRAINT_NAME = 'fk_wrong_question' AND CONSTRAINT_TYPE = 'FOREIGN KEY'"
+      );
+      if (!constraints.isEmpty()) {
+        jdbc.execute("ALTER TABLE wrong_book_entry DROP FOREIGN KEY fk_wrong_question");
+        log.info("Dropped foreign key fk_wrong_question from wrong_book_entry to allow AI practice records.");
+      }
+    } catch (Exception e) {
+      log.warn("Failed to drop foreign key fk_wrong_question: {}", e.getMessage());
+    }
   }
 
   /**

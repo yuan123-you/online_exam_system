@@ -646,6 +646,46 @@ public class StoreService {
         "lastRetryCorrect", asBool(row.get("last_retry_correct")), "removable", asBool(row.get("removable")),
         "removedAt", asIso(row.get("removed_at")), "status", row.get("status")
       ))).toList();
+
+    // 批量关联题目信息（含选项 options，剔除 answer 以防泄露答案），
+    // 供前端错题重做弹窗渲染交互式选项卡片
+    if (!rows.isEmpty()) {
+      List<String> questionIds = rows.stream()
+        .map(r -> str(r.get("questionId")))
+        .filter(id -> !id.isBlank())
+        .distinct()
+        .toList();
+      if (!questionIds.isEmpty()) {
+        String placeholders = String.join(",", java.util.Collections.nCopies(questionIds.size(), "?"));
+        List<Map<String, Object>> questionRows = jdbc.queryForList(
+          "SELECT id, subject, knowledge_point, type, title, options_json, score, source_tag, difficulty " +
+          "FROM question WHERE id IN (" + placeholders + ")", questionIds.toArray());
+        Map<String, Map<String, Object>> questionMap = new java.util.HashMap<>();
+        for (Map<String, Object> q : questionRows) {
+          Map<String, Object> sanitized = compact(mapOf(
+            "id", q.get("id"), "subject", q.get("subject"), "knowledgePoint", q.get("knowledge_point"),
+            "type", q.get("type"), "title", q.get("title"), "options", readList(q.get("options_json")),
+            "score", asInt(q.get("score")), "sourceTag", q.get("source_tag"), "difficulty", q.get("difficulty")
+          ));
+          questionMap.put(str(q.get("id")), sanitized);
+        }
+        rows = rows.stream().map(r -> {
+          Map<String, Object> next = new LinkedHashMap<>(r);
+          String qid = str(r.get("questionId"));
+          Map<String, Object> q = questionMap.get(qid);
+          if (q != null) {
+            next.put("question", q);
+            // 用题目最新数据补全条目字段（防止题目被编辑后错题本字段过期）
+            if (q.containsKey("subject")) next.put("subject", q.get("subject"));
+            if (q.containsKey("knowledgePoint")) next.put("knowledgePoint", q.get("knowledgePoint"));
+            if (q.containsKey("type")) next.put("type", q.get("type"));
+            if (q.containsKey("title")) next.put("title", q.get("title"));
+          }
+          return next;
+        }).toList();
+      }
+    }
+
     return mapOf("rows", rows, "total", total, "page", page, "pageSize", pageSize);
   }
 

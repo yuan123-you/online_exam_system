@@ -15,6 +15,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.jdbc.core.JdbcTemplate;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
@@ -28,6 +29,9 @@ class WrongBookServiceTest {
 
     @Mock
     private SystemLogService systemLogService;
+
+    @Mock
+    private JdbcTemplate jdbc;
 
     @InjectMocks
     private WrongBookService wrongBookService;

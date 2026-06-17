@@ -962,6 +962,7 @@ export const useAppStore = defineStore('app', () => {
     previewPaperModel.value = null
     reviewingSubmission.value = null
     retryingEntry.value = null
+    wrongRetryResult.value = { status: 'idle' }
     batchImportRole.value = null
     activeExam.value = null
     autoGenVisible.value = false
@@ -1093,17 +1094,38 @@ export const useAppStore = defineStore('app', () => {
 
   function retryWrongEntry(entry: WrongBookEntry) {
     retryingEntry.value = entry
+    wrongRetryResult.value = { status: 'idle' }
   }
 
+  // 错题重做提交结果（供弹窗感知提交完成/失败）
+  const wrongRetryResult = ref<{ status: 'idle' | 'submitting' | 'success' | 'error'; correct?: boolean; message?: string }>({ status: 'idle' })
+
   async function handleWrongRetry(payload: { entryId: string; answer: string[] }) {
+    wrongRetryResult.value = { status: 'submitting' }
     try {
-      await retryWrongBook(payload.entryId, payload.answer)
-      retryingEntry.value = null
-      showToast('重做提交成功', 'success')
+      const result = await retryWrongBook(payload.entryId, payload.answer)
+      // 用最新条目替换，弹窗保持打开以展示作答结果与参考答案
+      retryingEntry.value = result.entry
+      wrongRetryResult.value = {
+        status: 'success',
+        correct: result.entry.lastRetryCorrect,
+        message: result.entry.lastRetryCorrect ? '回答正确！' : '回答错误，请再试一次',
+      }
+      showToast(result.entry.lastRetryCorrect ? '回答正确！' : '回答错误，请再试一次', result.entry.lastRetryCorrect ? 'success' : 'error')
       await loadData()
     } catch (err: any) {
+      wrongRetryResult.value = { status: 'error', message: err?.message || '重做失败' }
       showToast(err?.message || '重做失败', 'error')
     }
+  }
+
+  function closeWrongRetry() {
+    retryingEntry.value = null
+    wrongRetryResult.value = { status: 'idle' }
+  }
+
+  function resetWrongRetry() {
+    wrongRetryResult.value = { status: 'idle' }
   }
 
   async function removeWrongEntry(entryId: string) {
@@ -2646,6 +2668,9 @@ export const useAppStore = defineStore('app', () => {
     handleExamSubmitted,
     retryWrongEntry,
     handleWrongRetry,
+    closeWrongRetry,
+    resetWrongRetry,
+    wrongRetryResult,
     removeWrongEntry,
     handlePasswordChange,
     showBatchImport,

@@ -212,9 +212,9 @@ public class PracticeSessionService {
           q.put("userAnswer", null);
         }
         Object isCorrectObj = qRow.get("is_correct");
-        q.put("isCorrect", isCorrectObj != null ? ((Number) isCorrectObj).intValue() == 1 : null);
+        q.put("isCorrect", isCorrectObj != null ? toBoolInt(isCorrectObj) == 1 : null);
         Object isSubmittedObj = qRow.get("is_submitted");
-        q.put("isSubmitted", isSubmittedObj != null && ((Number) isSubmittedObj).intValue() == 1);
+        q.put("isSubmitted", isSubmittedObj != null && toBoolInt(isSubmittedObj) == 1);
         q.put("createdAt", str(qRow.get("created_at")));
         q.put("updatedAt", str(qRow.get("updated_at")));
         q.put("submittedAt", str(qRow.get("submitted_at")));
@@ -647,6 +647,15 @@ public class PracticeSessionService {
   }
 
   private int asInt(Object value) {
+    if (value instanceof Number n) return n.intValue();
+    if (value instanceof Boolean b) return b ? 1 : 0;
+    if (value == null || String.valueOf(value).isBlank()) return 0;
+    try { return Integer.parseInt(String.valueOf(value)); } catch (NumberFormatException e) { return 0; }
+  }
+
+  /** 安全地将 TINYINT(1) 字段转为 int（兼容 Boolean/Number/String 三种类型） */
+  private int toBoolInt(Object value) {
+    if (value instanceof Boolean b) return b ? 1 : 0;
     if (value instanceof Number n) return n.intValue();
     if (value == null || String.valueOf(value).isBlank()) return 0;
     try { return Integer.parseInt(String.valueOf(value)); } catch (NumberFormatException e) { return 0; }

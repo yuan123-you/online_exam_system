@@ -37,8 +37,10 @@
   <WrongBookRetryModal
     v-if="store.retryingEntry"
     :entry="store.retryingEntry"
-    @close="store.retryingEntry = null"
+    :retry-result="store.wrongRetryResult"
+    @close="store.closeWrongRetry"
     @submit="store.handleWrongRetry"
+    @reset="store.resetWrongRetry"
   />
 
   <BatchUserImportModal

@@ -46,35 +46,42 @@ public class WrongBookController {
   public ResponseEntity<?> retryWrongBook(@RequestHeader(value = "X-User-Id", required = false) String userId,
                                           @PathVariable String entryId,
                                           @RequestBody Map<String, Object> body) {
-    Store store = storeService.readStore();
-    Map<String, Object> user = find(store.users, userId);
-    if (!isRole(user, "student")) return error(HttpStatus.FORBIDDEN, "Forbidden.");
-    Map<String, Object> entry = store.wrongBookEntries.stream().filter(e -> Objects.equals(str(e, "id"), entryId) && Objects.equals(str(e, "studentId"), userId) && !e.containsKey("removedAt")).findFirst().orElse(null);
-    if (entry == null) return error(HttpStatus.NOT_FOUND, "Wrong-book entry not found.");
-    // AI 练习产生的错题条目引用的 questionId 未持久化到 questions 表，
-    // 此时用条目自身保存的 expectedAnswer/type 构造伪题目以完成重做判定。
-    Map<String, Object> question = find(store.questions, str(entry, "questionId"));
-    if (question == null) {
-      question = new LinkedHashMap<>();
-      question.put("id", str(entry, "questionId"));
-      question.put("type", str(entry, "type"));
-      question.put("answer", entry.get("expectedAnswer") != null ? entry.get("expectedAnswer") : entry.get("latestAnswer"));
+    try {
+      Store store = storeService.readStore();
+      Map<String, Object> user = find(store.users, userId);
+      if (!isRole(user, "student")) return error(HttpStatus.FORBIDDEN, "Forbidden.");
+      Map<String, Object> entry = store.wrongBookEntries.stream().filter(e -> Objects.equals(str(e, "id"), entryId) && Objects.equals(str(e, "studentId"), userId) && !e.containsKey("removedAt")).findFirst().orElse(null);
+      if (entry == null) return error(HttpStatus.NOT_FOUND, "Wrong-book entry not found.");
+      // AI 练习产生的错题条目引用的 questionId 未持久化到 questions 表，
+      // 此时用条目自身保存的 expectedAnswer/type 构造伪题目以完成重做判定。
+      Map<String, Object> question = find(store.questions, str(entry, "questionId"));
+      if (question == null) {
+        question = new LinkedHashMap<>();
+        question.put("id", str(entry, "questionId"));
+        question.put("type", str(entry, "type"));
+        question.put("answer", entry.get("expectedAnswer") != null ? entry.get("expectedAnswer") : entry.get("latestAnswer"));
+      }
+      SubmissionService.CompareResult result = submissionService.compare(question, body.get("answer"), true);
+      // 复制一份再修改，避免直接修改缓存中的引用导致并发问题
+      Map<String, Object> updated = new LinkedHashMap<>(entry);
+      updated.put("retryCount", asInt(entry.get("retryCount")) + 1);
+      updated.put("lastRetryAt", Instant.now().toString());
+      updated.put("lastRetryAnswer", result.answer());
+      updated.put("lastRetryCorrect", Boolean.TRUE.equals(result.correct()));
+      updated.put("removable", Boolean.TRUE.equals(result.correct()));
+      updated.put("status", "active");
+      if (!Boolean.TRUE.equals(result.correct())) {
+        updated.put("latestAnswer", result.answer());
+        updated.put("wrongCount", asInt(entry.get("wrongCount")) + 1);
+        updated.put("lastWrongAt", Instant.now().toString());
+      }
+      storeService.saveRecord("wrongBookEntries", updated);
+      systemLogService.log(user, "retry wrong book", entryId);
+      return ResponseEntity.ok(mapOf("entry", wrongBookService.buildWrongBookEntry(store, updated)));
+    } catch (Exception e) {
+      e.printStackTrace();
+      return error(HttpStatus.INTERNAL_SERVER_ERROR, "重做失败：" + e.getMessage());
     }
-    SubmissionService.CompareResult result = submissionService.compare(question, body.get("answer"), true);
-    entry.put("retryCount", asInt(entry.get("retryCount")) + 1);
-    entry.put("lastRetryAt", Instant.now().toString());
-    entry.put("lastRetryAnswer", result.answer());
-    entry.put("lastRetryCorrect", Boolean.TRUE.equals(result.correct()));
-    entry.put("removable", Boolean.TRUE.equals(result.correct()));
-    entry.put("status", "active");
-    if (!Boolean.TRUE.equals(result.correct())) {
-      entry.put("latestAnswer", result.answer());
-      entry.put("wrongCount", asInt(entry.get("wrongCount")) + 1);
-      entry.put("lastWrongAt", Instant.now().toString());
-    }
-    storeService.saveRecord("wrongBookEntries", entry);
-    systemLogService.log(user, "retry wrong book", entryId);
-    return ResponseEntity.ok(mapOf("entry", wrongBookService.buildWrongBookEntry(store, entry)));
   }
 
   @PostMapping("/wrongbook/{entryId}/remove")
