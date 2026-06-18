@@ -329,7 +329,8 @@ async function handleBatchRemove() {
 
 /* Ensure table cells don't overflow their containers */
 .table-wrap {
-  overflow: auto;
+  overflow: hidden;
+  max-width: 100%;
 }
 
 .table-wrap table {

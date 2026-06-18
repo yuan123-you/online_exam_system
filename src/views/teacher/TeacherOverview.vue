@@ -75,6 +75,12 @@
           </span>
           <span class="action-text">自动组卷</span>
         </button>
+        <button class="action-btn action-btn--notify" @click="showPublisher = true">
+          <span class="action-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+          </span>
+          <span class="action-text">发布通知</span>
+        </button>
       </div>
     </section>
 
@@ -107,17 +113,26 @@
         </li>
       </ul>
     </section>
+
+    <!-- 通知发布弹窗 -->
+    <NotificationPublisher v-if="showPublisher" @close="showPublisher = false" @submitted="onNotificationSubmitted" />
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAppStore } from '@/stores/app'
 import ChartCard from '@/components/common/ChartCard.vue'
+import NotificationPublisher from '@/components/common/NotificationPublisher.vue'
 
 const store = useAppStore()
 const router = useRouter()
+const showPublisher = ref(false)
+
+function onNotificationSubmitted() {
+  store.showToast('通知发布成功', 'success')
+}
 
 const activeExamCount = computed(() =>
   store.myExams.filter(e => e.statusText === '进行中').length
@@ -284,7 +299,7 @@ onMounted(() => {
 
 .action-grid {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(5, 1fr);
   gap: 10px;
 }
 
@@ -373,6 +388,18 @@ onMounted(() => {
   background: rgba(139, 92, 246, 0.12);
   border-color: rgba(139, 92, 246, 0.4);
   box-shadow: 0 4px 14px rgba(139, 92, 246, 0.15);
+}
+
+.action-btn--notify {
+  border-color: rgba(234, 88, 12, 0.25);
+  background: rgba(234, 88, 12, 0.06);
+  color: #c2410c;
+}
+
+.action-btn--notify:hover {
+  background: rgba(234, 88, 12, 0.12);
+  border-color: rgba(234, 88, 12, 0.4);
+  box-shadow: 0 4px 14px rgba(234, 88, 12, 0.15);
 }
 
 /* ---- Charts Grid ---- */
@@ -472,7 +499,7 @@ onMounted(() => {
   }
 
   .action-grid {
-    grid-template-columns: repeat(2, 1fr);
+    grid-template-columns: repeat(3, 1fr);
   }
 
   .charts-grid {
@@ -537,7 +564,9 @@ onMounted(() => {
 
 /* ---- Dark mode overrides ---- */
 [data-theme="dark"] .action-btn--auto { color: #c4b5fd; }
+[data-theme="dark"] .action-btn--notify { color: #fb923c; }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) .action-btn--auto { color: #c4b5fd; }
+  :root:not([data-theme="light"]) .action-btn--notify { color: #fb923c; }
 }
 </style>

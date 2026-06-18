@@ -34,6 +34,7 @@ public class NotificationService {
 
     String role = str(user, "role");
     String classId = str(user, "classId");
+    String departmentId = str(user, "departmentId");
 
     // 获取该用户已读的通知ID集合
     Set<String> readIds = getReadNotificationIds(userId);
@@ -48,8 +49,16 @@ public class NotificationService {
           if (Objects.equals(targetRole, role)) {
             // 如果是学生，检查班级
             String targetClassId = str(n, "targetClassId");
-            if (targetClassId.isEmpty()) return true; // 所有班级
-            return Objects.equals(targetClassId, classId);
+            if (!targetClassId.isEmpty()) {
+              return Objects.equals(targetClassId, classId);
+            }
+            // 如果是教师，检查学院
+            String targetDeptId = str(n, "targetDepartmentId");
+            if (!targetDeptId.isEmpty()) {
+              return Objects.equals(targetDeptId, departmentId);
+            }
+            // 无班级/学院限制，该角色所有人可见
+            return true;
           }
           return false;
         })
@@ -116,7 +125,8 @@ public class NotificationService {
    */
   @Transactional
   public Map<String, Object> createNotification(String senderId, String title, String content,
-                                                  String type, String targetRole, String targetClassId) {
+                                                  String type, String targetRole, String targetClassId,
+                                                  String targetDepartmentId) {
     Map<String, Object> notif = new LinkedHashMap<>();
     notif.put("id", UUID.randomUUID().toString());
     notif.put("senderId", senderId);
@@ -125,6 +135,7 @@ public class NotificationService {
     notif.put("type", type != null ? type : "general");
     notif.put("targetRole", targetRole);
     notif.put("targetClassId", targetClassId != null ? targetClassId : "");
+    notif.put("targetDepartmentId", targetDepartmentId != null ? targetDepartmentId : "");
     notif.put("targetUserId", "");
     notif.put("createdAt", Instant.now().toString());
     storeService.saveRecord("notifications", notif);

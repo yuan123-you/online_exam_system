@@ -3646,7 +3646,7 @@ th {
   .mobile-card-table .table-wrap,
   .table-card-mobile {
     border: none;
-    overflow: visible;
+    overflow: hidden;
   }
 
   .mobile-card-table table,
@@ -3669,6 +3669,10 @@ th {
     padding: 8px 10px;
     margin-bottom: 8px;
     box-shadow: var(--shadow-sm);
+    max-width: 100%;
+    overflow-wrap: break-word;
+    word-break: break-word;
+    box-sizing: border-box;
   }
 
   .mobile-card-table tbody td,
@@ -3681,6 +3685,9 @@ th {
     font-size: 12px;
     min-height: 28px;
     gap: 6px;
+    overflow-wrap: break-word;
+    word-break: break-word;
+    min-width: 0;
   }
 
   .mobile-card-table tbody td:last-child,

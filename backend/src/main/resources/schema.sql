@@ -341,6 +341,7 @@ CREATE TABLE IF NOT EXISTS notification (
   sender_id VARCHAR(64) NOT NULL,
   target_role VARCHAR(20) COMMENT '目标角色: student/teacher/all，NULL表示指定用户',
   target_class_id VARCHAR(64) COMMENT '目标班级ID，NULL表示所有班级',
+  target_department_id VARCHAR(64) COMMENT '目标学院ID，用于按学院筛选教师，NULL表示所有',
   target_user_id VARCHAR(64) COMMENT '目标用户ID（单条通知），NULL表示批量',
   title VARCHAR(200) NOT NULL,
   content TEXT NOT NULL,
@@ -349,10 +350,12 @@ CREATE TABLE IF NOT EXISTS notification (
   INDEX idx_notif_target_user (target_user_id),
   INDEX idx_notif_target_role (target_role),
   INDEX idx_notif_target_class (target_class_id),
+  INDEX idx_notif_target_dept (target_department_id),
   INDEX idx_notif_created (created_at),
   CONSTRAINT fk_notif_sender FOREIGN KEY (sender_id) REFERENCES user_account(id) ON DELETE SET NULL,
   CONSTRAINT fk_notif_target_user FOREIGN KEY (target_user_id) REFERENCES user_account(id) ON DELETE CASCADE,
   CONSTRAINT fk_notif_target_class FOREIGN KEY (target_class_id) REFERENCES class_info(id) ON DELETE CASCADE,
+  CONSTRAINT fk_notif_target_dept FOREIGN KEY (target_department_id) REFERENCES department(id) ON DELETE CASCADE,
   CONSTRAINT chk_notif_type CHECK (type IN ('general', 'exam', 'grade', 'system'))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 

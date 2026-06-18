@@ -178,6 +178,12 @@
             </div>
             <span>批量导入教师</span>
           </button>
+          <button class="quick-action-btn" type="button" @click="showPublisher = true">
+            <div class="qa-icon qa-icon--notify">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+            </div>
+            <span>发布通知</span>
+          </button>
         </div>
       </article>
 
@@ -212,6 +218,9 @@
         </div>
       </article>
     </section>
+
+    <!-- 通知发布弹窗 -->
+    <NotificationPublisher v-if="showPublisher" @close="showPublisher = false" @submitted="onNotificationSubmitted" />
   </div>
 </template>
 
@@ -220,11 +229,17 @@ import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAppStore } from '@/stores/app'
 import ChartCard from '@/components/common/ChartCard.vue'
+import NotificationPublisher from '@/components/common/NotificationPublisher.vue'
 import { formatDate } from '@/utils/format'
 
 const store = useAppStore()
 const router = useRouter()
 const refreshing = ref(false)
+const showPublisher = ref(false)
+
+function onNotificationSubmitted() {
+  store.showToast('通知发布成功', 'success')
+}
 
 const currentDate = computed(() => {
   const now = new Date()
@@ -542,7 +557,7 @@ onMounted(() => {
 /* 快捷操作 */
 .quick-actions-grid {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(4, 1fr);
   gap: 10px;
 }
 
@@ -592,6 +607,7 @@ onMounted(() => {
 .qa-icon--dept { background: #fce8e8; color: #cf5c5c; }
 .qa-icon--class { background: #e0ecf2; color: #2563eb; }
 .qa-icon--import { background: #fdf5e0; color: #d4a844; }
+.qa-icon--notify { background: #fef3c7; color: #c2410c; }
 
 /* 最近日志 */
 .recent-logs-list {
@@ -708,6 +724,7 @@ onMounted(() => {
 [data-theme="dark"] .qa-icon--dept { background: rgba(239, 68, 68, 0.15); color: #fca5a5; }
 [data-theme="dark"] .qa-icon--class { background: rgba(37, 99, 235, 0.15); color: #93c5fd; }
 [data-theme="dark"] .qa-icon--import { background: rgba(245, 158, 11, 0.15); color: #fcd34d; }
+[data-theme="dark"] .qa-icon--notify { background: rgba(234, 88, 12, 0.15); color: #fb923c; }
 [data-theme="dark"] .log-icon--create { background: rgba(16, 185, 129, 0.15); }
 [data-theme="dark"] .log-icon--delete { background: rgba(239, 68, 68, 0.15); color: #fca5a5; }
 [data-theme="dark"] .log-icon--update { background: rgba(37, 99, 235, 0.15); color: #93c5fd; }
@@ -724,6 +741,7 @@ onMounted(() => {
   :root:not([data-theme="light"]) .qa-icon--dept { background: rgba(239, 68, 68, 0.15); color: #fca5a5; }
   :root:not([data-theme="light"]) .qa-icon--class { background: rgba(37, 99, 235, 0.15); color: #93c5fd; }
   :root:not([data-theme="light"]) .qa-icon--import { background: rgba(245, 158, 11, 0.15); color: #fcd34d; }
+  :root:not([data-theme="light"]) .qa-icon--notify { background: rgba(234, 88, 12, 0.15); color: #fb923c; }
   :root:not([data-theme="light"]) .log-icon--create { background: rgba(16, 185, 129, 0.15); }
   :root:not([data-theme="light"]) .log-icon--delete { background: rgba(239, 68, 68, 0.15); color: #fca5a5; }
   :root:not([data-theme="light"]) .log-icon--update { background: rgba(37, 99, 235, 0.15); color: #93c5fd; }

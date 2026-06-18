@@ -2108,6 +2108,10 @@ export const useAppStore = defineStore('app', () => {
     // Practice mode: use the user's message directly (no cross-tab contamination from chat)
     let enrichedPrompt = message
 
+    // Build context: pass conversation history so the backend can handle follow-up
+    // requests like "再出几道题" (generate more questions on the same topic)
+    let contextMessages = practiceMessages.value.slice(0, -1)
+
     if (practiceTimeoutId) clearTimeout(practiceTimeoutId)
     practiceTimeoutId = setTimeout(() => {
       if (practiceStreamingActive.value && !practiceStreamingContent.value && !practiceStreamingReasoning.value) {
@@ -2168,6 +2172,7 @@ export const useAppStore = defineStore('app', () => {
         difficulty: inferredDifficulty || 'medium',
         count: inferredCount || 5,
         deepThinking: false, // practice mode skips deep thinking — generate cards directly
+        messages: contextMessages, // pass conversation history for follow-up request handling
       },
       (chunk) => {
         if (chunk.type === 'reasoning') {
@@ -2496,12 +2501,13 @@ export const useAppStore = defineStore('app', () => {
     }
   }
 
-  async function handleCreateNotification(data: { title: string; content: string; type?: string; targetRole?: string; targetClassId?: string }) {
+  async function handleCreateNotification(data: { title: string; content: string; type?: string; targetRole?: string; targetClassId?: string; targetDepartmentId?: string }, silent = false) {
     try {
       await createNotification(data)
-      showToast('通知发布成功', 'success')
+      if (!silent) showToast('通知发布成功', 'success')
     } catch (err: any) {
-      showToast(err?.message || '发布失败', 'error')
+      if (!silent) showToast(err?.message || '发布失败', 'error')
+      throw err
     }
   }
 

@@ -61,10 +61,11 @@ public class NotificationController {
     String type = String.valueOf(body.getOrDefault("type", "general"));
     String targetRole = String.valueOf(body.getOrDefault("targetRole", "student"));
     String targetClassId = body.get("targetClassId") != null ? String.valueOf(body.get("targetClassId")) : null;
+    String targetDepartmentId = body.get("targetDepartmentId") != null ? String.valueOf(body.get("targetDepartmentId")) : null;
 
     if (title.isBlank() || content.isBlank()) return error(HttpStatus.BAD_REQUEST, "标题和内容不能为空。");
 
-    Map<String, Object> notif = notificationService.createNotification(userId, title, content, type, targetRole, targetClassId);
+    Map<String, Object> notif = notificationService.createNotification(userId, title, content, type, targetRole, targetClassId, targetDepartmentId);
     return ResponseEntity.ok(Map.of("notification", notif));
   }
 

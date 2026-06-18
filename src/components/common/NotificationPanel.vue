@@ -1,5 +1,5 @@
 <template>
-  <div class="notif-panel" v-if="visible">
+  <div v-if="visible" ref="panelRef" class="notif-panel" :style="panelStyle">
     <div class="notif-header">
       <h4>通知</h4>
       <div class="notif-actions">
@@ -32,13 +32,16 @@
 </template>
 
 <script setup lang="ts">
+import { ref, computed, watch, nextTick, onMounted, onBeforeUnmount } from 'vue'
 import { useAppStore } from '@/stores/app'
 import type { Notification } from '@/api/client'
 
-defineProps<{ visible: boolean }>()
+const props = defineProps<{ visible: boolean }>()
 defineEmits<{ close: [] }>()
 
 const store = useAppStore()
+const panelRef = ref<HTMLElement | null>(null)
+const panelPos = ref({ top: 0, right: 0 })
 
 function typeLabel(type: string): string {
   switch (type) {
@@ -71,20 +74,81 @@ function handleClick(n: Notification) {
     store.handleMarkNotificationRead(n.id)
   }
 }
+
+/** 计算面板位置，确保不超出视口 */
+function updatePosition() {
+  const btn = document.querySelector('.notif-bell-btn') as HTMLElement | null
+  if (!btn) return
+
+  const rect = btn.getBoundingClientRect()
+  const vw = window.innerWidth
+  const vh = window.innerHeight
+
+  // 面板宽度根据视口自适应
+  let panelW = 360
+  if (vw < 640) panelW = Math.min(360, vw - 24)
+  else if (vw < 1024) panelW = Math.min(360, vw - 48)
+
+  const panelH = Math.min(480, vh - rect.bottom - 12)
+
+  // 水平定位：优先右对齐按钮，如果超出左边界则左移
+  let right = vw - rect.right
+  if (rect.right - panelW < 8) {
+    right = vw - panelW - 8
+  }
+
+  // 垂直定位：按钮下方，如果超出底部则向上偏移
+  let top = rect.bottom + 8
+  if (top + panelH > vh - 8) {
+    top = Math.max(8, vh - panelH - 8)
+  }
+
+  panelPos.value = { top, right }
+}
+
+const panelStyle = computed(() => ({
+  position: 'fixed' as const,
+  top: `${panelPos.value.top}px`,
+  right: `${panelPos.value.right}px`,
+  width: undefined, // handled by CSS
+  maxHeight: undefined, // handled by CSS
+}))
+
+// 面板打开时计算位置
+watch(() => props.visible, async (v) => {
+  if (v) {
+    await nextTick()
+    updatePosition()
+  }
+})
+
+// 窗口大小变化或滚动时重新计算位置
+let resizeHandler: (() => void) | null = null
+let scrollHandler: (() => void) | null = null
+
+onMounted(() => {
+  resizeHandler = () => { if (props.visible) updatePosition() }
+  scrollHandler = () => { if (props.visible) updatePosition() }
+  window.addEventListener('resize', resizeHandler)
+  window.addEventListener('scroll', scrollHandler, true)
+})
+
+onBeforeUnmount(() => {
+  if (resizeHandler) window.removeEventListener('resize', resizeHandler)
+  if (scrollHandler) window.removeEventListener('scroll', scrollHandler, true)
+})
 </script>
 
 <style scoped>
 .notif-panel {
-  position: absolute;
-  top: 100%;
-  right: 0;
+  position: fixed;
   width: 360px;
-  max-height: 480px;
+  max-height: min(480px, calc(100vh - 80px));
   background: var(--panel);
   border-radius: var(--radius);
   box-shadow: var(--shadow-lg);
   border: 1px solid var(--line);
-  z-index: 100;
+  z-index: 1000;
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -203,10 +267,18 @@ function handleClick(n: Notification) {
   margin-top: 4px;
 }
 
+/* 平板端适配 */
+@media (min-width: 641px) and (max-width: 1024px) {
+  .notif-panel {
+    width: min(360px, calc(100vw - 48px));
+  }
+}
+
+/* 移动端适配 */
 @media (max-width: 640px) {
   .notif-panel {
-    width: calc(100vw - 32px);
-    right: -60px;
+    width: min(360px, calc(100vw - 24px));
+    max-height: min(480px, calc(100vh - 60px));
   }
 }
 </style>

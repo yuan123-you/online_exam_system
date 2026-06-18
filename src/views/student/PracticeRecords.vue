@@ -131,7 +131,8 @@ const pagination = useClientPagination(practiceRecords, { defaultPageSize: 20, p
 }
 
 .table-wrap {
-  overflow: auto;
+  overflow: hidden;
+  max-width: 100%;
 }
 
 .table-wrap table {

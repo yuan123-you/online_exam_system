@@ -649,13 +649,22 @@ export function aiPracticeQuestionsStream(
     difficulty: string;
     count: number;
     deepThinking?: boolean;
+    messages?: ChatMessage[];
   },
   onChunk: (chunk: SseChunk) => void,
   onComplete: (data: SseComplete) => void,
   onError: (error: string) => void,
   onFinally?: () => void
 ): AbortController {
-  return sseStream('/api/ai/practice-questions/stream', params, onChunk, onComplete, onError, onFinally);
+  return sseStream('/api/ai/practice-questions/stream', {
+    customPrompt: params.customPrompt,
+    subject: params.subject,
+    type: params.type,
+    difficulty: params.difficulty,
+    count: params.count,
+    deepThinking: params.deepThinking || false,
+    messages: params.messages || [],
+  }, onChunk, onComplete, onError, onFinally);
 }
 
 /**
@@ -1231,7 +1240,7 @@ export function markAllNotificationsRead() {
   return request<{ success: boolean; count: number }>("/api/notifications/read-all", { method: "POST" });
 }
 
-export function createNotification(data: { title: string; content: string; type?: string; targetRole?: string; targetClassId?: string }) {
+export function createNotification(data: { title: string; content: string; type?: string; targetRole?: string; targetClassId?: string; targetDepartmentId?: string }) {
   return request<{ notification: Notification }>("/api/notifications", {
     method: "POST",
     body: JSON.stringify(data),

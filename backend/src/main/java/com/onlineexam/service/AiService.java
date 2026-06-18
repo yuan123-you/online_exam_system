@@ -1214,11 +1214,30 @@ public class AiService {
     String userPrompt;
     UserIntent streamIntent = null; // 用于智能参数调节
 
+    // 获取客户端传来的对话历史（用于处理续出题目请求）
+    @SuppressWarnings("unchecked")
+    List<Map<String, Object>> history = (List<Map<String, Object>>) body.get("messages");
+
     if (!customPrompt.isBlank()) {
       systemPrompt = QUESTION_SYSTEM_PROMPT;
-      UserIntent intent = analyzeUserIntent(customPrompt);
-      userPrompt = buildSmartUserPrompt(customPrompt, body, 20, intent);
-      streamIntent = intent;
+
+      // 检测是否为续出题目请求（如"再出几道题"），如果是则从历史中提取上下文
+      if (isFollowUpQuestionRequest(customPrompt) && history != null && !history.isEmpty()) {
+        userPrompt = buildFollowUpPracticePrompt(customPrompt, history, body);
+        // 从历史中推断意图参数
+        UserIntent intent = inferIntentFromHistory(history);
+        if (intent != null) {
+          streamIntent = intent;
+        } else {
+          intent = analyzeUserIntent(customPrompt);
+          userPrompt = buildSmartUserPrompt(customPrompt, body, 20, intent);
+          streamIntent = intent;
+        }
+      } else {
+        UserIntent intent = analyzeUserIntent(customPrompt);
+        userPrompt = buildSmartUserPrompt(customPrompt, body, 20, intent);
+        streamIntent = intent;
+      }
     } else {
       String subject = str(body, "subject");
       String type = str(body, "type").isBlank() ? "single" : str(body, "type");
@@ -1483,7 +1502,16 @@ public class AiService {
       **解析：** 详细解题思路。
       ---
       题目质量：选项有干扰性、四选项互不相同、只有一个正确答案、解析详尽、学科内容严格属于指定范畴。
-      严禁输出JSON格式题目，严禁拒绝出题或只出1道敷衍。""";
+      严禁输出JSON格式题目，严禁拒绝出题或只出1道敷衍。
+
+      【续出题目处理 - 最高优先级】
+      当用户发送"再出几道题"、"再来几道"、"继续出题"、"再出X道"、"再来点题"、"还要题"、"接着出"等续出请求时：
+      1. 必须回顾对话历史，找到用户最近一次出题请求的学科、题型、难度、知识点方向
+      2. 严格按照相同的学科、题型、难度、知识点方向继续出题，不得更换学科或主题
+      3. 必须避免与历史中已出的题目重复（题干不同、考查角度不同、选项不同）
+      4. 如果用户未指定数量，默认再出5道
+      5. 如果对话历史中没有出题记录，则询问用户想练习哪个学科/知识点
+      6. 输出格式同上，用Markdown格式，不要JSON""";
   }
 
   /** Build user prompt for chat, including conversation history from session.
@@ -1517,6 +1545,171 @@ public class AiService {
       converted.add(m);
     }
     return buildPromptFromHistory(converted, currentMessage);
+  }
+
+  /**
+   * 检测用户消息是否为续出题目请求（如"再出几道题"、"再来几道"、"继续出题"等）。
+   * 这类请求需要回顾对话历史，按照之前的学科/题型/难度继续出题，且不重复。
+   */
+  private boolean isFollowUpQuestionRequest(String text) {
+    if (text == null || text.isBlank()) return false;
+    String t = text.trim();
+    // 续出题目的关键词模式
+    if (t.matches(".*(再出|再来|继续|接着|还要|再给|再来点|再帮我|再生成|多出|多来).*道?.*题.*")) return true;
+    if (t.matches(".*(再出|再来|继续|接着|还要|再给|再来点).*\\d+\\s*道.*")) return true;
+    if (t.matches(".*题.*再来.*")) return true;
+    if (t.matches(".*(再来几道|再出几道|继续出题|接着出题|再来点题|还要题目|再出题).*$")) return true;
+    return false;
+  }
+
+  /**
+   * 从对话历史中推断用户意图（学科、题型、难度、数量等）。
+   * 用于处理续出题目请求时，从历史中提取上次出题的参数。
+   */
+  private UserIntent inferIntentFromHistory(List<Map<String, Object>> history) {
+    if (history == null || history.isEmpty()) return null;
+
+    // 从后往前找最近一次包含出题请求的用户消息
+    for (int i = history.size() - 1; i >= 0; i--) {
+      Map<String, Object> msg = history.get(i);
+      String role = str(msg, "role");
+      String content = str(msg, "content");
+      if ("user".equals(role) && !content.isBlank()) {
+        // 检测是否为出题请求
+        String intent = detectQuestionIntent(content);
+        if ("strong".equals(intent) || "weak".equals(intent)) {
+          // 分析这条出题请求的意图
+          UserIntent userIntent = analyzeUserIntent(content);
+          if (!userIntent.subject.isBlank() || !userIntent.type.isBlank()) {
+            return userIntent;
+          }
+        }
+      }
+    }
+    return null;
+  }
+
+  /**
+   * 构建续出题目的提示词。
+   * 从对话历史中提取上次出题的学科、题型、难度、知识点，以及已出过的题目，
+   * 引导AI按照相同主题继续出题且不重复。
+   */
+  private String buildFollowUpPracticePrompt(String currentMessage, List<Map<String, Object>> history,
+                                              Map<String, Object> body) {
+    StringBuilder sb = new StringBuilder();
+
+    // 从历史中提取上次出题请求的意图
+    UserIntent lastIntent = inferIntentFromHistory(history);
+    int count = 5; // 默认续出5道
+    // 从当前消息中提取数量（如"再出3道"）
+    int extractedCount = extractCountFromText(currentMessage);
+    if (extractedCount > 0) count = Math.min(extractedCount, 20);
+
+    sb.append("严格生成恰好 ").append(count).append(" 道题目，不要多也不要少。\n");
+
+    if (lastIntent != null) {
+      // 使用上次出题的学科、题型、难度
+      String typeVal = !lastIntent.type.isBlank() ? lastIntent.type : "single";
+      sb.append("题型：").append(typeToChinese(typeVal))
+        .append("（type字段必须为\"").append(typeVal).append("\"）\n");
+      if (!lastIntent.subject.isBlank()) {
+        sb.append("科目（基于上次出题记录）：").append(lastIntent.subject).append("\n");
+      }
+      String diff = !lastIntent.difficulty.isBlank() ? lastIntent.difficulty : "medium";
+      String diffChinese = switch (diff) {
+        case "easy" -> "简单"; case "hard" -> "困难"; default -> "中等";
+      };
+      sb.append("难度：").append(diffChinese).append("\n");
+      if (!lastIntent.knowledgePoint.isBlank()) {
+        sb.append("知识点方向：").append(lastIntent.knowledgePoint).append("\n");
+      }
+    } else {
+      sb.append("题型：单选题（type字段必须为\"single\"）\n");
+    }
+
+    sb.append("【学科约束】你必须从历史对话中识别所属学科，在每道题的subject字段中填写，且所有题目内容必须严格属于该学科范畴，严禁跨学科混淆！\n");
+
+    // 收集历史中已出过的题目题干，用于避免重复
+    sb.append("\n【已出过的题目 - 严禁重复】\n");
+    int questionNum = 0;
+    for (Map<String, Object> msg : history) {
+      String role = str(msg, "role");
+      String content = str(msg, "content");
+      if ("assistant".equals(role) && !content.isBlank()) {
+        // 提取AI回复中的题目题干（尝试解析JSON数组或从Markdown中提取）
+        List<String> titles = extractQuestionTitles(content);
+        for (String title : titles) {
+          questionNum++;
+          sb.append(questionNum).append(". ").append(title).append("\n");
+        }
+      }
+    }
+    if (questionNum == 0) {
+      sb.append("（无法从历史中提取具体题目，请根据历史出题主题生成不重复的新题目）\n");
+    }
+
+    sb.append("\n用户当前请求：").append(currentMessage);
+    sb.append("\n请基于以上历史出题记录，按照相同的学科、题型、难度、知识点方向，生成").append(count).append("道不重复的新题目。");
+    sb.append("新题目的题干、考查角度、选项必须与已出过的题目不同。");
+
+    if (lastIntent != null) {
+      sb.append(buildLanguageConstraint(lastIntent.subject));
+    }
+
+    return sb.toString();
+  }
+
+  /**
+   * 从AI回复内容中提取题目题干。
+   * 支持JSON数组格式和Markdown格式。
+   */
+  private List<String> extractQuestionTitles(String content) {
+    List<String> titles = new ArrayList<>();
+    if (content == null || content.isBlank()) return titles;
+
+    String cleaned = content.trim();
+    // 去除markdown代码块包裹
+    if (cleaned.startsWith("```")) {
+      int firstNewline = cleaned.indexOf('\n');
+      if (firstNewline > 0) cleaned = cleaned.substring(firstNewline + 1);
+      if (cleaned.endsWith("```")) cleaned = cleaned.substring(0, cleaned.length() - 3);
+      cleaned = cleaned.trim();
+    }
+
+    // 尝试JSON数组解析
+    int arrStart = cleaned.indexOf('[');
+    int arrEnd = cleaned.lastIndexOf(']');
+    if (arrStart >= 0 && arrEnd > arrStart) {
+      String jsonArray = cleaned.substring(arrStart, arrEnd + 1);
+      try {
+        List<Map<String, Object>> parsed = objectMapper.readValue(jsonArray, new TypeReference<>() {});
+        for (Map<String, Object> q : parsed) {
+          String title = str(q, "title");
+          if (!title.isBlank()) {
+            // 截断过长的题干
+            if (title.length() > 100) title = title.substring(0, 100) + "...";
+            titles.add(title);
+          }
+        }
+        if (!titles.isEmpty()) return titles;
+      } catch (Exception ignored) {
+        // JSON解析失败，尝试从Markdown中提取
+      }
+    }
+
+    // 从Markdown格式中提取题干（### 第X题 或 **[题型] 题干**）
+    java.util.regex.Matcher m = java.util.regex.Pattern.compile(
+      "(?:###\\s*第?\\d+\\s*题|\\*\\*\\[[^\\]]+\\]\\s*)([^\\n]{5,150})"
+    ).matcher(cleaned);
+    while (m.find() && titles.size() < 20) {
+      String title = m.group(1).replaceAll("\\*+", "").trim();
+      if (!title.isBlank() && title.length() > 3) {
+        if (title.length() > 100) title = title.substring(0, 100) + "...";
+        titles.add(title);
+      }
+    }
+
+    return titles;
   }
 
   /**
@@ -1590,6 +1783,17 @@ public class AiService {
     }
 
     sb.append("\n用户新消息：").append(currentMessage);
+
+    // 续出题目请求：添加显式提示，引导AI回顾历史并避免重复
+    if (isFollowUpQuestionRequest(currentMessage)) {
+      sb.append("\n\n【系统提示】这是一个续出题目请求。请务必：");
+      sb.append("\n1. 回顾以上对话历史，找到用户最近一次出题请求中的学科、题型、难度、知识点方向");
+      sb.append("\n2. 按照相同的学科、题型、难度、知识点方向继续出题，不得更换学科或主题");
+      sb.append("\n3. 避免与历史中已出的题目重复（题干不同、考查角度不同、选项不同）");
+      sb.append("\n4. 如果用户未指定数量，默认再出5道");
+      sb.append("\n5. 如果对话历史中没有出题记录，则询问用户想练习哪个学科/知识点");
+    }
+
     return sb.toString();
   }
 
