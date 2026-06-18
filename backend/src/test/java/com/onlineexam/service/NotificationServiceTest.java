@@ -313,7 +313,7 @@ class NotificationServiceTest {
         @Test
         void createsNotificationWithCorrectFields() {
             Map<String, Object> result = notificationService.createNotification(
-                    "t1", "Exam Notice", "Exam tomorrow", "exam", "student", "c1");
+                    "t1", "Exam Notice", "Exam tomorrow", "exam", "student", "c1", "d1");
 
             assertEquals("t1", result.get("senderId"));
             assertEquals("Exam Notice", result.get("title"));
@@ -321,6 +321,7 @@ class NotificationServiceTest {
             assertEquals("exam", result.get("type"));
             assertEquals("student", result.get("targetRole"));
             assertEquals("c1", result.get("targetClassId"));
+            assertEquals("d1", result.get("targetDepartmentId"));
             assertEquals("", result.get("targetUserId"));
             assertNotNull(result.get("id"));
             assertNotNull(result.get("createdAt"));
@@ -330,10 +331,11 @@ class NotificationServiceTest {
         @Test
         void defaultsTypeToGeneralAndTargetClassIdToEmpty() {
             Map<String, Object> result = notificationService.createNotification(
-                    "t1", "Title", "Content", null, "all", null);
+                    "t1", "Title", "Content", null, "all", null, null);
 
             assertEquals("general", result.get("type"));
             assertEquals("", result.get("targetClassId"));
+            assertEquals("", result.get("targetDepartmentId"));
         }
     }
 }
