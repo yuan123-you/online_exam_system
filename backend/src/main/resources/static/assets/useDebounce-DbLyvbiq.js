@@ -1,1 +1,0 @@
-import{X as e,tt as t}from"./app-CyrE0LDd.js";function n(n,r=300){let i=t(n),a=t(n),o=null;e(i,e=>{o&&clearTimeout(o),o=setTimeout(()=>{a.value=e},r)});function s(e){o&&clearTimeout(o),i.value=e,a.value=e}return{debouncedValue:a,inputValue:i,setValue:s}}export{n as t};

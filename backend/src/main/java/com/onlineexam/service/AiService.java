@@ -318,9 +318,9 @@ public class AiService {
       // 通过AI语义理解分析用户意图，替代正则匹配
       UserIntent intent = analyzeUserIntent(customPrompt);
       systemPrompt = QUESTION_SYSTEM_PROMPT;
-      userPrompt = buildSmartUserPrompt(customPrompt, body, 20, intent);
+      userPrompt = buildSmartUserPrompt(customPrompt, body, 200, intent);
       // 使用AI分析结果作为元数据
-      count = intent.count > 0 ? intent.count : Math.min(asInt(body.get("count")), 20);
+      count = intent.count > 0 ? intent.count : asInt(body.get("count"));
       if (count <= 0) count = 5;
       type = !intent.type.isBlank() ? intent.type : (str(body, "type").isBlank() ? "single" : str(body, "type"));
       subject = !intent.subject.isBlank() ? intent.subject : str(body, "subject");
@@ -330,7 +330,7 @@ public class AiService {
       subject = str(body, "subject");
       knowledgePoint = str(body, "knowledgePoint");
       difficulty = str(body, "difficulty").isBlank() ? "medium" : str(body, "difficulty");
-      count = Math.min(asInt(body.get("count")), 20);
+      count = asInt(body.get("count"));
       if (count <= 0) count = 5;
       type = str(body, "type").isBlank() ? "single" : str(body, "type");
 
@@ -619,12 +619,12 @@ public class AiService {
 
     if (!customPrompt.isBlank()) {
       systemPrompt = QUESTION_SYSTEM_PROMPT;
-      userPrompt = buildSmartUserPrompt(customPrompt, body, 20);
+      userPrompt = buildSmartUserPrompt(customPrompt, body, 200);
     } else {
       String subject = str(body, "subject");
       String type = str(body, "type").isBlank() ? "single" : str(body, "type");
       String difficulty = str(body, "difficulty").isBlank() ? "medium" : str(body, "difficulty");
-      int count = Math.min(asInt(body.get("count")), 20);
+      int count = asInt(body.get("count"));
       if (count <= 0) count = 5;
 
       String typeChinese = switch (type) {
@@ -939,6 +939,15 @@ public class AiService {
         return;
       }
 
+      // Heartbeat: send SSE comments every 15s to prevent frontend timeout
+      final java.util.concurrent.ScheduledExecutorService heartbeatExec =
+        java.util.concurrent.Executors.newSingleThreadScheduledExecutor(r -> {
+          Thread t = new Thread(r, "sse-heartbeat-" + threadId);
+          t.setDaemon(true);
+          return t;
+        });
+      final java.util.concurrent.atomic.AtomicBoolean streamDone = new java.util.concurrent.atomic.AtomicBoolean(false);
+
       try { // 信号量守卫：finally 中释放
       java.io.BufferedReader reader = null;
       java.net.HttpURLConnection conn = null;
@@ -956,7 +965,9 @@ public class AiService {
         conn.setRequestProperty("Accept", "text/event-stream");
         conn.setDoOutput(true);
         conn.setConnectTimeout(10000);  // 10s连接超时（原15s）
-        conn.setReadTimeout(60000);     // 60s读取超时（原90s，配合降低的max_tokens加速失败反馈）
+        // 增加读取超时至180秒，匹配SseEmitter超时时间
+        // 防止AI深度思考或慢速生成时后端过早中断连接
+        conn.setReadTimeout(180000);    // 180s读取超时（原60s）
 
         // Build request body - 智能参数调节：根据intent自动选择最优模型和参数
         String effectiveModel = model;
@@ -1029,6 +1040,16 @@ public class AiService {
         StringBuilder reasoningBuilder = new StringBuilder();
         int chunkCount = 0;
         int errorChunkCount = 0;
+
+        // Start heartbeat now that connection is established
+        heartbeatExec.scheduleAtFixedRate(() -> {
+          if (streamDone.get()) return;
+          try {
+            emitter.send(SseEmitter.event().comment("heartbeat"));
+          } catch (Exception ignored) {
+            // Connection already closed, ignore
+          }
+        }, 15, 15, java.util.concurrent.TimeUnit.SECONDS);
 
         while ((line = reader.readLine()) != null) {
           String data = null;
@@ -1147,6 +1168,8 @@ public class AiService {
         log.info("[AiService SSE] [{}] {}ms后重试...", threadId, waitMs);
         try { Thread.sleep(waitMs); } catch (InterruptedException ie) { Thread.currentThread().interrupt(); }
       } finally {
+        streamDone.set(true);
+        heartbeatExec.shutdownNow();
         if (reader != null) try { reader.close(); } catch (Exception ignored) {}
         reader = null;
         if (conn != null) try { conn.disconnect(); } catch (Exception ignored) {}
@@ -1154,6 +1177,8 @@ public class AiService {
       }
       } // end retry loop
       } finally {
+        streamDone.set(true);
+        heartbeatExec.shutdownNow();
         semaphore.release();
       }
     }, aiTaskExecutor);
@@ -1163,6 +1188,378 @@ public class AiService {
   private String escapeJson(String s) {
     if (s == null) return "";
     return s.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n").replace("\r", "\\r").replace("\t", "\\t");
+  }
+
+  /**
+   * 分批流式出题 - 将大数量题目拆分为多次 API 调用，通过同一个 SSE emitter 推送。
+   * 每批生成 batchSize 道题，所有批次完成后发送 complete 事件。
+   * 适用于学生端/教师端大批量出题（如100道题），避免单次 API 调用因 max_tokens 限制被截断。
+   *
+   * @param systemPrompt  系统提示词
+   * @param baseUserPrompt 基础用户提示词（会被修改为每批的数量）
+   * @param thinkingEnabled 是否启用深度思考
+   * @param temperature   温度
+   * @param circuitType   熔断器类型
+   * @param intent        用户意图
+   * @param emitter       SSE 发射器
+   * @param totalCount    总题目数
+   * @param batchSize     每批题目数（默认20）
+   */
+  private void callAiApiStreamBatch(String systemPrompt, String baseUserPrompt,
+                                     boolean thinkingEnabled, double temperature,
+                                     String circuitType, UserIntent intent,
+                                     SseEmitter emitter, int totalCount, int batchSize) {
+    CompletableFuture.runAsync(() -> {
+      Semaphore semaphore = getSemaphore();
+      try {
+        if (!semaphore.tryAcquire(120, TimeUnit.SECONDS)) {
+          try {
+            emitter.send(SseEmitter.event().name("error").data("{\"error\":\"AI 服务繁忙，请稍后再试\"}"));
+            emitter.complete();
+          } catch (Exception ignored) {}
+          return;
+        }
+      } catch (InterruptedException ie) {
+        Thread.currentThread().interrupt();
+        return;
+      }
+
+      // Heartbeat executor for the entire batch process
+      final java.util.concurrent.ScheduledExecutorService heartbeatExec =
+        java.util.concurrent.Executors.newSingleThreadScheduledExecutor(r -> {
+          Thread t = new Thread(r, "sse-batch-heartbeat");
+          t.setDaemon(true);
+          return t;
+        });
+      final java.util.concurrent.atomic.AtomicBoolean batchDone = new java.util.concurrent.atomic.AtomicBoolean(false);
+
+      // Start heartbeat to keep SSE connection alive
+      heartbeatExec.scheduleAtFixedRate(() -> {
+        if (batchDone.get()) return;
+        try {
+          emitter.send(SseEmitter.event().comment("heartbeat"));
+        } catch (Exception ignored) {}
+      }, 15, 15, java.util.concurrent.TimeUnit.SECONDS);
+
+      try {
+        int totalBatches = (totalCount + batchSize - 1) / batchSize;
+        StringBuilder allContent = new StringBuilder();
+        StringBuilder allReasoning = new StringBuilder();
+        List<String> batchContents = new ArrayList<>(); // 每批的原始内容，用于合并JSON
+        long startTime = System.currentTimeMillis();
+        int generatedTotal = 0;
+
+        // 发送批次进度事件
+        emitter.send(SseEmitter.event().name("batch_progress").data(
+          objectMapper.writeValueAsString(Map.of("batch", 0, "totalBatches", totalBatches, "totalCount", totalCount, "generated", 0))
+        ));
+
+        for (int batch = 0; batch < totalBatches; batch++) {
+          int batchCount = Math.min(batchSize, totalCount - batch * batchSize);
+
+          // 构建本批的用户提示词：替换数量为本批次数量
+          String batchUserPrompt = baseUserPrompt
+            .replaceAll("严格生成恰好 \\d+ 道", "严格生成恰好 " + batchCount + " 道")
+            .replaceAll("严格生成恰好 \\d+道", "严格生成恰好 " + batchCount + "道");
+
+          // 如果替换没有生效（格式不同），在开头添加数量指令
+          if (batchUserPrompt.equals(baseUserPrompt)) {
+            batchUserPrompt = "严格生成恰好 " + batchCount + " 道题目，不要多也不要少。\n" + batchUserPrompt;
+          }
+
+          // 构建本批的 intent（调整 count）
+          UserIntent batchIntent = new UserIntent(
+            intent.subject, intent.difficulty, intent.knowledgePoint,
+            intent.intent, intent.type, batchCount, intent.language, intent.complexity
+          );
+
+          // 构建请求
+          String effectiveModel = batchIntent.recommendModel(model);
+          double effectiveTemperature = batchIntent.recommendTemperature();
+          int effectiveMaxTokens = batchIntent.recommendMaxTokens();
+
+          java.util.LinkedHashMap<String, Object> reqBody = new java.util.LinkedHashMap<>();
+          reqBody.put("model", effectiveModel);
+          reqBody.put("messages", java.util.List.of(
+            java.util.Map.of("role", "system", "content", systemPrompt),
+            java.util.Map.of("role", "user", "content", batchUserPrompt)
+          ));
+          reqBody.put("temperature", effectiveTemperature);
+          reqBody.put("max_tokens", effectiveMaxTokens);
+          reqBody.put("stream", true);
+
+          String jsonBody = objectMapper.writeValueAsString(reqBody);
+          log.info("[AiService SSE Batch] 批次 {}/{}: 生成 {} 道题, model={}, maxTokens={}",
+            batch + 1, totalBatches, batchCount, effectiveModel, effectiveMaxTokens);
+
+          // 发送批次开始事件
+          emitter.send(SseEmitter.event().name("batch_start").data(
+            objectMapper.writeValueAsString(Map.of("batch", batch + 1, "totalBatches", totalBatches, "batchCount", batchCount))
+          ));
+
+          // 调用 AI API（非流式读取，批量场景下逐批读取更可靠）
+          java.net.HttpURLConnection conn = null;
+          java.io.BufferedReader reader = null;
+          int maxRetries = 3;
+          boolean batchSuccess = false;
+
+          for (int attempt = 1; attempt <= maxRetries; attempt++) {
+            try {
+              java.net.URL url = new java.net.URL(apiUrl);
+              conn = (java.net.HttpURLConnection) url.openConnection();
+              conn.setRequestMethod("POST");
+              conn.setRequestProperty("Content-Type", "application/json");
+              conn.setRequestProperty("Authorization", "Bearer " + apiKey);
+              conn.setRequestProperty("Accept", "text/event-stream");
+              conn.setDoOutput(true);
+              conn.setConnectTimeout(10000);
+              conn.setReadTimeout(180000);
+
+              try (java.io.OutputStream os = conn.getOutputStream()) {
+                os.write(jsonBody.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                os.flush();
+              }
+
+              int responseCode = conn.getResponseCode();
+
+              // 429/503 重试
+              if ((responseCode == 429 || responseCode == 503) && attempt < maxRetries) {
+                long waitMs = responseCode == 429
+                  ? (long) (5000 * Math.pow(3, attempt - 1))
+                  : (long) (3000 * Math.pow(2.5, attempt - 1));
+                log.info("[AiService SSE Batch] 批次 {} 收到{}，{}ms后重试", batch + 1, responseCode, waitMs);
+                conn.disconnect(); conn = null;
+                try { Thread.sleep(waitMs); } catch (InterruptedException ie) { Thread.currentThread().interrupt(); }
+                continue;
+              }
+
+              if (responseCode != 200) {
+                java.io.InputStream errorStream = conn.getErrorStream();
+                String errorBody = errorStream != null ? new String(errorStream.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8) : "";
+                log.error("[AiService SSE Batch] 批次 {} API错误: HTTP {}", batch + 1, responseCode);
+                String friendlyMsg = friendlyAiError(responseCode, errorBody);
+                // 发送批次错误但继续下一批
+                emitter.send(SseEmitter.event().name("batch_error").data(
+                  objectMapper.writeValueAsString(Map.of("batch", batch + 1, "error", friendlyMsg))
+                ));
+                break;
+              }
+
+              // 读取 SSE 流
+              reader = new java.io.BufferedReader(new java.io.InputStreamReader(conn.getInputStream(), java.nio.charset.StandardCharsets.UTF_8));
+              StringBuilder batchContent = new StringBuilder();
+              StringBuilder batchReasoning = new StringBuilder();
+              String line;
+
+              while ((line = reader.readLine()) != null) {
+                String data = null;
+                if (line.startsWith("data: ")) data = line.substring(6).trim();
+                else if (line.startsWith("data:")) data = line.substring(5).trim();
+
+                if (data != null) {
+                  if ("[DONE]".equals(data)) {
+                    break;
+                  }
+                  try {
+                    @SuppressWarnings("unchecked")
+                    java.util.Map<String, Object> jsonMap = objectMapper.readValue(data, java.util.Map.class);
+                    @SuppressWarnings("unchecked")
+                    java.util.List<java.util.Map<String, Object>> choices =
+                      (java.util.List<java.util.Map<String, Object>>) jsonMap.get("choices");
+                    if (choices != null && !choices.isEmpty()) {
+                      @SuppressWarnings("unchecked")
+                      java.util.Map<String, Object> delta = (java.util.Map<String, Object>) choices.get(0).get("delta");
+                      if (delta != null) {
+                        String reasoningContent = delta.containsKey("reasoning_content") && delta.get("reasoning_content") != null
+                          ? String.valueOf(delta.get("reasoning_content")) : "";
+                        String content = delta.containsKey("content") && delta.get("content") != null
+                          ? String.valueOf(delta.get("content")) : "";
+
+                        if (!thinkingEnabled && !reasoningContent.isEmpty()) {
+                          reasoningContent = "";
+                        }
+
+                        if (!reasoningContent.isEmpty()) {
+                          batchReasoning.append(reasoningContent);
+                          allReasoning.append(reasoningContent);
+                          // 转发 reasoning chunk
+                          java.util.Map<String, Object> chunk = new java.util.LinkedHashMap<>();
+                          chunk.put("type", "reasoning");
+                          chunk.put("text", reasoningContent);
+                          emitter.send(SseEmitter.event().name("chunk").data(objectMapper.writeValueAsString(chunk)));
+                        }
+                        if (!content.isEmpty()) {
+                          batchContent.append(content);
+                          allContent.append(content);
+                          // 转发 content chunk
+                          java.util.Map<String, Object> chunk = new java.util.LinkedHashMap<>();
+                          chunk.put("type", "content");
+                          chunk.put("text", content);
+                          emitter.send(SseEmitter.event().name("chunk").data(objectMapper.writeValueAsString(chunk)));
+                        }
+                      }
+                    }
+                  } catch (Exception parseEx) {
+                    // skip malformed chunk
+                  }
+                }
+              }
+
+              // 本批完成，解析生成的题目数量
+              int batchGenerated = countQuestionsInContent(batchContent.toString());
+              generatedTotal += batchGenerated;
+              batchSuccess = true;
+              batchContents.add(batchContent.toString()); // 保存本批内容
+
+              log.info("[AiService SSE Batch] 批次 {}/{} 完成: 生成 {} 道题, 累计 {} 道",
+                batch + 1, totalBatches, batchGenerated, generatedTotal);
+
+              // 发送批次完成事件
+              emitter.send(SseEmitter.event().name("batch_progress").data(
+                objectMapper.writeValueAsString(Map.of(
+                  "batch", batch + 1, "totalBatches", totalBatches,
+                  "totalCount", totalCount, "generated", generatedTotal,
+                  "batchContent", batchContent.toString()
+                ))
+              ));
+
+              // 批次间短暂延迟，避免 API 限流
+              if (batch < totalBatches - 1) {
+                Thread.sleep(1000);
+              }
+              break; // 成功，跳出重试循环
+
+            } catch (Exception e) {
+              log.error("[AiService SSE Batch] 批次 {} 第{}次异常: {}", batch + 1, attempt, e.getMessage());
+              if (attempt >= maxRetries) {
+                emitter.send(SseEmitter.event().name("batch_error").data(
+                  objectMapper.writeValueAsString(Map.of("batch", batch + 1, "error", "批次生成失败: " + e.getMessage()))
+                ));
+              } else {
+                long waitMs = (long) (2000 * Math.pow(2, attempt - 1));
+                try { Thread.sleep(waitMs); } catch (InterruptedException ie) { Thread.currentThread().interrupt(); }
+              }
+            } finally {
+              if (reader != null) try { reader.close(); } catch (Exception ignored) {}
+              reader = null;
+              if (conn != null) try { conn.disconnect(); } catch (Exception ignored) {}
+              conn = null;
+            }
+          } // end retry loop
+        } // end batch loop
+
+        // 所有批次完成，合并所有批次的 JSON 数组为一个有效的 JSON 数组
+        long elapsed = System.currentTimeMillis() - startTime;
+        circuitBreaker.recordSuccess(circuitType);
+        recordLatency(elapsed, true);
+
+        // 合并多批 JSON 数组
+        String mergedContent = mergeBatchJsonArrays(batchContents);
+
+        java.util.Map<String, Object> donePayload = new java.util.LinkedHashMap<>();
+        donePayload.put("content", mergedContent);
+        donePayload.put("reasoning", allReasoning.toString());
+        donePayload.put("done", true);
+        donePayload.put("durationMs", elapsed);
+        donePayload.put("generatedTotal", generatedTotal);
+        donePayload.put("totalBatches", totalBatches);
+        emitter.send(SseEmitter.event().name("complete").data(objectMapper.writeValueAsString(donePayload)));
+        emitter.complete();
+
+      } catch (Exception e) {
+        log.error("[AiService SSE Batch] 分批出题异常: {}", e.getMessage());
+        try {
+          emitter.send(SseEmitter.event().name("error").data(
+            "{\"error\":\"分批出题失败: " + escapeJson(e.getMessage()) + "\"}"));
+          emitter.complete();
+        } catch (Exception ignored) {}
+      } finally {
+        batchDone.set(true);
+        heartbeatExec.shutdownNow();
+        semaphore.release();
+      }
+    }, aiTaskExecutor);
+  }
+
+  /**
+   * 从 AI 生成的内容中统计题目数量。
+   * 尝试解析 JSON 数组获取长度，失败则通过题号模式估算。
+   */
+  private int countQuestionsInContent(String content) {
+    if (content == null || content.isBlank()) return 0;
+    String cleaned = content.trim();
+    // 去除 markdown 代码块
+    if (cleaned.startsWith("```")) {
+      int firstNewline = cleaned.indexOf('\n');
+      if (firstNewline > 0) cleaned = cleaned.substring(firstNewline + 1);
+      if (cleaned.endsWith("```")) cleaned = cleaned.substring(0, cleaned.length() - 3);
+      cleaned = cleaned.trim();
+    }
+    // 尝试 JSON 数组解析
+    int arrStart = cleaned.indexOf('[');
+    int arrEnd = cleaned.lastIndexOf(']');
+    if (arrStart >= 0 && arrEnd > arrStart) {
+      try {
+        List<Map<String, Object>> parsed = objectMapper.readValue(
+          cleaned.substring(arrStart, arrEnd + 1), new TypeReference<>() {});
+        return parsed.size();
+      } catch (Exception ignored) {}
+    }
+    // 回退：通过题号模式估算
+    int count = 0;
+    java.util.regex.Matcher m = java.util.regex.Pattern.compile("(?:^|\\n)\\s*\\d+\\.\\s").matcher(cleaned);
+    while (m.find()) count++;
+    return Math.max(count, 1);
+  }
+
+  /**
+   * 合并多批次的 JSON 数组为一个有效的 JSON 数组字符串。
+   * 每批内容可能是独立的 JSON 数组（如 [{...},{...}]），需要合并为 [{...},{...},{...},{...}]。
+   */
+  private String mergeBatchJsonArrays(List<String> batchContents) {
+    if (batchContents == null || batchContents.isEmpty()) return "[]";
+    if (batchContents.size() == 1) return batchContents.get(0);
+
+    List<Map<String, Object>> allQuestions = new ArrayList<>();
+    for (String content : batchContents) {
+      if (content == null || content.isBlank()) continue;
+      String cleaned = content.trim();
+      // 去除 markdown 代码块
+      if (cleaned.startsWith("```")) {
+        int firstNewline = cleaned.indexOf('\n');
+        if (firstNewline > 0) cleaned = cleaned.substring(firstNewline + 1);
+        if (cleaned.endsWith("```")) cleaned = cleaned.substring(0, cleaned.length() - 3);
+        cleaned = cleaned.trim();
+      }
+      // 提取 JSON 数组
+      int arrStart = cleaned.indexOf('[');
+      int arrEnd = cleaned.lastIndexOf(']');
+      if (arrStart >= 0 && arrEnd > arrStart) {
+        try {
+          List<Map<String, Object>> parsed = objectMapper.readValue(
+            cleaned.substring(arrStart, arrEnd + 1), new TypeReference<>() {});
+          allQuestions.addAll(parsed);
+        } catch (Exception e) {
+          log.warn("[AiService] 合并批次JSON失败，跳过该批次: {}", e.getMessage());
+        }
+      }
+    }
+    try {
+      return objectMapper.writeValueAsString(allQuestions);
+    } catch (Exception e) {
+      log.error("[AiService] 序列化合并后的题目失败: {}", e.getMessage());
+      // 回退：直接拼接
+      StringBuilder sb = new StringBuilder("[");
+      for (int i = 0; i < batchContents.size(); i++) {
+        String c = batchContents.get(i).trim();
+        if (c.startsWith("[")) c = c.substring(1);
+        if (c.endsWith("]")) c = c.substring(0, c.length() - 1);
+        if (i > 0 && !c.isEmpty()) sb.append(",");
+        sb.append(c);
+      }
+      sb.append("]");
+      return sb.toString();
+    }
   }
 
   // ========== 流式练习/出题 ==========
@@ -1230,20 +1627,21 @@ public class AiService {
           streamIntent = intent;
         } else {
           intent = analyzeUserIntent(customPrompt);
-          userPrompt = buildSmartUserPrompt(customPrompt, body, 20, intent);
+          userPrompt = buildSmartUserPrompt(customPrompt, body, 200, intent);
           streamIntent = intent;
         }
       } else {
         UserIntent intent = analyzeUserIntent(customPrompt);
-        userPrompt = buildSmartUserPrompt(customPrompt, body, 20, intent);
+        userPrompt = buildSmartUserPrompt(customPrompt, body, 200, intent);
         streamIntent = intent;
       }
     } else {
       String subject = str(body, "subject");
       String type = str(body, "type").isBlank() ? "single" : str(body, "type");
       String difficulty = str(body, "difficulty").isBlank() ? "medium" : str(body, "difficulty");
-      int count = Math.min(asInt(body.get("count")), 20);
+      int count = asInt(body.get("count"));
       if (count <= 0) count = 5;
+      // 移除20上限，支持大批量出题（分批机制在后续处理）
 
       String typeChinese = switch (type) {
         case "single" -> "单选"; case "multiple" -> "多选";
@@ -1268,7 +1666,14 @@ public class AiService {
     }
 
     boolean deepThinking = Boolean.TRUE.equals(body.get("deepThinking"));
-    callAiApiStream(systemPrompt, userPrompt, deepThinking, 0.5, false, "practice", streamIntent, emitter);
+
+    // 分批出题：当题目数量 > 20 时，自动拆分为多批，每批最多 20 道
+    int totalCount = streamIntent != null ? streamIntent.count : 5;
+    if (totalCount > 20) {
+      callAiApiStreamBatch(systemPrompt, userPrompt, deepThinking, 0.5, "practice", streamIntent, emitter, totalCount, 20);
+    } else {
+      callAiApiStream(systemPrompt, userPrompt, deepThinking, 0.5, false, "practice", streamIntent, emitter);
+    }
   }
 
   /**
@@ -1321,14 +1726,15 @@ public class AiService {
     if (!customPrompt.isBlank()) {
       systemPrompt = QUESTION_SYSTEM_PROMPT;
       UserIntent intent = analyzeUserIntent(customPrompt);
-      userPrompt = buildSmartUserPrompt(customPrompt, body, 20, intent);
+      userPrompt = buildSmartUserPrompt(customPrompt, body, 200, intent);
       streamIntent = intent;
     } else {
       String subject = str(body, "subject");
       String knowledgePoint = str(body, "knowledgePoint");
       String difficulty = str(body, "difficulty").isBlank() ? "medium" : str(body, "difficulty");
-      int count = Math.min(asInt(body.get("count")), 20);
+      int count = asInt(body.get("count"));
       if (count <= 0) count = 5;
+      // 移除20上限，支持大批量出题（分批机制在后续处理）
       String type = str(body, "type").isBlank() ? "single" : str(body, "type");
 
       String typeChinese = switch (type) {
@@ -1355,7 +1761,14 @@ public class AiService {
     }
 
     boolean deepThinking = Boolean.TRUE.equals(body.get("deepThinking"));
-    callAiApiStream(systemPrompt, userPrompt, deepThinking, 0.7, false, "generate", streamIntent, emitter);
+
+    // 分批出题：当题目数量 > 20 时，自动拆分为多批，每批最多 20 道
+    int totalCount = streamIntent != null ? streamIntent.count : 5;
+    if (totalCount > 20) {
+      callAiApiStreamBatch(systemPrompt, userPrompt, deepThinking, 0.7, "generate", streamIntent, emitter, totalCount, 20);
+    } else {
+      callAiApiStream(systemPrompt, userPrompt, deepThinking, 0.7, false, "generate", streamIntent, emitter);
+    }
   }
 
   // ========== General AI Chat ==========
@@ -1482,36 +1895,28 @@ public class AiService {
     callAiApiStream(systemPrompt, userPrompt, deepThinking, 0.7, false, "chat", null, emitter, session);
   }
 
-  /** Build system prompt for general chat (精简版 - 减少token加速处理) */
+  /** Build system prompt for general chat (精简版 - 减少token加速处理)
+   *  注意：对话模式严禁生成题目。出题功能由 practice-questions 和 generate-questions 端点独立处理。
+   *  对话模式只负责答疑、概念讲解、学习指导等通用学习助手职责。
+   */
   private String buildChatSystemPrompt() {
     String today = java.time.LocalDate.now().format(java.time.format.DateTimeFormatter.ofPattern("yyyy年M月d日"));
     return """
       你是在线考试系统的AI学习助手"智学"。当前日期：""" + today + """
 
+      你是通用学习助手，职责是：答疑解惑、讲解概念、提供学习建议、分析问题思路。
+      严禁生成题目（包括选择题、判断题、填空题等任何形式的题目）。
+      严禁输出JSON格式内容。
+      严禁输出"### 第X题"、**[题型]**等题目格式。
+
       核心原则：
       1. 直接给出最终回答，严禁输出思考过程、分析步骤等中间内容
       2. 回答要有深度广度，善用Markdown格式（标题、加粗、列表、代码块）
       3. 数学公式用LaTeX（$行内$，$$独立$$），使用中文回答，风格友好专业
-
-      【出题请求处理】
-      当用户要求出题时，严格按要求数量出题（要5道出5道，绝不敷衍），用Markdown格式输出（不要JSON）：
-      ### 第1题
-      **[题型] 题干**
-      A. 选项一  B. 选项二  C. 选项三  D. 选项四
-      **答案：** X
-      **解析：** 详细解题思路。
-      ---
-      题目质量：选项有干扰性、四选项互不相同、只有一个正确答案、解析详尽、学科内容严格属于指定范畴。
-      严禁输出JSON格式题目，严禁拒绝出题或只出1道敷衍。
-
-      【续出题目处理 - 最高优先级】
-      当用户发送"再出几道题"、"再来几道"、"继续出题"、"再出X道"、"再来点题"、"还要题"、"接着出"等续出请求时：
-      1. 必须回顾对话历史，找到用户最近一次出题请求的学科、题型、难度、知识点方向
-      2. 严格按照相同的学科、题型、难度、知识点方向继续出题，不得更换学科或主题
-      3. 必须避免与历史中已出的题目重复（题干不同、考查角度不同、选项不同）
-      4. 如果用户未指定数量，默认再出5道
-      5. 如果对话历史中没有出题记录，则询问用户想练习哪个学科/知识点
-      6. 输出格式同上，用Markdown格式，不要JSON""";
+      4. 当用户要求出题/练题时，礼貌引导用户切换到"练题"标签页使用出题功能，例如：
+         "我可以为您讲解知识点，如果您需要做题练习，请切换到左侧的「练题」标签页哦~"
+      5. 当用户发送"再出几道题"、"继续出题"等续出请求时，同样引导用户切换到练题标签页
+      6. 专注回答用户当前问题，不要主动提及出题功能除非用户明确要求出题""";
   }
 
   /** Build user prompt for chat, including conversation history from session.
@@ -1784,15 +2189,8 @@ public class AiService {
 
     sb.append("\n用户新消息：").append(currentMessage);
 
-    // 续出题目请求：添加显式提示，引导AI回顾历史并避免重复
-    if (isFollowUpQuestionRequest(currentMessage)) {
-      sb.append("\n\n【系统提示】这是一个续出题目请求。请务必：");
-      sb.append("\n1. 回顾以上对话历史，找到用户最近一次出题请求中的学科、题型、难度、知识点方向");
-      sb.append("\n2. 按照相同的学科、题型、难度、知识点方向继续出题，不得更换学科或主题");
-      sb.append("\n3. 避免与历史中已出的题目重复（题干不同、考查角度不同、选项不同）");
-      sb.append("\n4. 如果用户未指定数量，默认再出5道");
-      sb.append("\n5. 如果对话历史中没有出题记录，则询问用户想练习哪个学科/知识点");
-    }
+    // 对话模式严禁生成题目。若用户发送续出题目请求，由系统提示词引导其切换到练题标签页，
+    // 此处不再注入任何出题相关指令，避免污染对话上下文导致AI乱生成题目。
 
     return sb.toString();
   }

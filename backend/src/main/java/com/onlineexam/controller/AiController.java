@@ -92,7 +92,7 @@ public class AiController {
   @PostMapping(value = "/ai/practice-questions/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
   public SseEmitter aiPracticeQuestionsStream(@RequestHeader(value = "X-User-Id", required = false) String userId,
                                               @RequestBody Map<String, Object> body) {
-    SseEmitter emitter = new SseEmitter(180_000L); // 3 min timeout
+    SseEmitter emitter = new SseEmitter(600_000L); // 10 min timeout (supports batch generation of 100+ questions)
     aiService.practiceQuestionsStream(userId, body, emitter);
     return emitter;
   }
@@ -103,7 +103,7 @@ public class AiController {
   @PostMapping(value = "/ai/generate-questions/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
   public SseEmitter aiGenerateQuestionsStream(@RequestHeader(value = "X-User-Id", required = false) String userId,
                                               @RequestBody Map<String, Object> body) {
-    SseEmitter emitter = new SseEmitter(180_000L);
+    SseEmitter emitter = new SseEmitter(600_000L);
     aiService.generateQuestionsStream(userId, body, emitter);
     return emitter;
   }
@@ -123,7 +123,7 @@ public class AiController {
   @PostMapping(value = "/ai/generate-questions-structured/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
   public SseEmitter aiGenerateQuestionsStructuredStream(@RequestHeader(value = "X-User-Id", required = false) String userId,
                                                          @RequestBody Map<String, Object> body) {
-    SseEmitter emitter = new SseEmitter(180_000L);
+    SseEmitter emitter = new SseEmitter(600_000L);
     aiService.generateQuestionsStream(userId, body, emitter);
     return emitter;
   }
@@ -267,7 +267,7 @@ public class AiController {
   @PostMapping(value = "/ai/chat/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
   public SseEmitter aiChatStream(@RequestHeader(value = "X-User-Id", required = false) String userId,
                                  @RequestBody Map<String, Object> body) {
-    SseEmitter emitter = new SseEmitter(180_000L); // 3 min timeout
+    SseEmitter emitter = new SseEmitter(600_000L); // 10 min timeout (supports batch generation of 100+ questions)
     aiService.chatStream(userId, body, emitter);
     return emitter;
   }

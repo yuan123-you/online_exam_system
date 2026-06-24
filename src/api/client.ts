@@ -459,6 +459,16 @@ export interface SseComplete {
   reasoning: string;
   done: boolean;
   durationMs?: number;
+  generatedTotal?: number;
+  totalBatches?: number;
+}
+
+export interface SseBatchProgress {
+  batch: number;
+  totalBatches: number;
+  totalCount: number;
+  generated: number;
+  batchContent?: string;
 }
 
 export interface SseError {
@@ -477,12 +487,16 @@ function sseStream(
   onError: (error: string) => void,
   onFinally?: () => void,
   maxRetries: number = 2,
+  onBatchProgress?: (data: SseBatchProgress) => void,
 ): AbortController {
   const controller = new AbortController();
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
   if (currentAuthToken) headers['X-User-Id'] = currentAuthToken;
 
-  const HEARTBEAT_TIMEOUT_MS = 45_000;
+  // 增加心跳超时时间至300秒，匹配后端SseEmitter超时时间（600秒）
+  // 防止AI深度思考或慢速生成时前端过早中断连接
+  // 分批出题时每批之间有间隔，需要更长的超时容忍
+  const HEARTBEAT_TIMEOUT_MS = 300_000;
   let heartbeatTimer: ReturnType<typeof setTimeout> | null = null;
 
   const clearHeartbeat = () => {
@@ -495,7 +509,7 @@ function sseStream(
   const resetHeartbeat = () => {
     clearHeartbeat();
     heartbeatTimer = setTimeout(() => {
-      console.log('[SSE] 心跳超时（30秒无数据），自动断开连接');
+      console.log('[SSE] 心跳超时（300秒无数据），自动断开连接');
       controller.abort();
     }, HEARTBEAT_TIMEOUT_MS);
   };
@@ -561,6 +575,51 @@ function sseStream(
 
       const decoder = new TextDecoder();
       let buffer = '';
+      // 必须在 while 循环外部声明，否则跨 chunk 的 SSE 事件会丢失 event 类型
+      let currentEvent = '';
+      let currentData = '';
+      let completeReceived = false;
+      let errorReceived = false;
+
+      /** 处理已按 \n 分割的行列表 */
+      const processLines = (lines: string[]) => {
+        for (const line of lines) {
+          if (line.startsWith('event: ')) {
+            currentEvent = line.substring(7).trim();
+          } else if (line.startsWith('event:')) {
+            currentEvent = line.substring(6).trim();
+          } else if (line.startsWith('data: ')) {
+            currentData += (currentData ? '\n' : '') + line.substring(6).trim();
+          } else if (line.startsWith('data:')) {
+            currentData += (currentData ? '\n' : '') + line.substring(5).trim();
+          } else if (line === '') {
+            if (currentData) {
+              try {
+                const parsed = JSON.parse(currentData);
+                if (currentEvent === 'chunk') {
+                  onChunk(parsed as SseChunk);
+                } else if (currentEvent === 'complete') {
+                  onComplete(parsed as SseComplete);
+                  completeReceived = true;
+                } else if (currentEvent === 'error') {
+                  onError(replaceCircuitBreakerMsg(parsed.error || 'AI 请求出错'));
+                  errorReceived = true;
+                } else if (currentEvent === 'batch_progress' || currentEvent === 'batch_start') {
+                  // 分批出题进度事件
+                  if (onBatchProgress) {
+                    onBatchProgress(parsed as SseBatchProgress);
+                  }
+                } else if (currentEvent === 'batch_error') {
+                  // 批次错误事件，不中断整体流程
+                  console.warn('[SSE] 批次生成出错:', parsed.error);
+                }
+              } catch { /* skip malformed JSON */ }
+            }
+            currentEvent = '';
+            currentData = '';
+          }
+        }
+      };
 
       try {
         while (true) {
@@ -571,36 +630,35 @@ function sseStream(
           buffer += decoder.decode(value, { stream: true });
           const lines = buffer.split('\n');
           buffer = lines.pop() || '';
+          processLines(lines);
+        }
 
-          let currentEvent = '';
-          let currentData = '';
-
-          for (const line of lines) {
-            if (line.startsWith('event: ')) {
-              currentEvent = line.substring(7).trim();
-            } else if (line.startsWith('event:')) {
-              currentEvent = line.substring(6).trim();
-            } else if (line.startsWith('data: ')) {
-              currentData += (currentData ? '\n' : '') + line.substring(6).trim()
-            } else if (line.startsWith('data:')) {
-              currentData += (currentData ? '\n' : '') + line.substring(5).trim();
-            } else if (line === '') {
-              if (currentData) {
-                try {
-                  const parsed = JSON.parse(currentData);
-                  if (currentEvent === 'chunk') {
-                    onChunk(parsed as SseChunk);
-                  } else if (currentEvent === 'complete') {
-                    onComplete(parsed as SseComplete);
-                  } else if (currentEvent === 'error') {
-                    onError(replaceCircuitBreakerMsg(parsed.error || 'AI 请求出错'));
-                  }
-                } catch { /* skip malformed JSON */ }
+        // 流结束后处理剩余缓冲区（可能包含最后的 complete 事件）
+        if (buffer.trim()) {
+          processLines(buffer.split('\n'));
+          // 处理末尾无空行终止的最后一个事件
+          if (currentData) {
+            try {
+              const parsed = JSON.parse(currentData);
+              if (currentEvent === 'complete') {
+                onComplete(parsed as SseComplete);
+                completeReceived = true;
+              } else if (currentEvent === 'error') {
+                onError(replaceCircuitBreakerMsg(parsed.error || 'AI 请求出错'));
+                errorReceived = true;
+              } else if (currentEvent === 'chunk') {
+                onChunk(parsed as SseChunk);
               }
-              currentEvent = '';
-              currentData = '';
-            }
+            } catch { /* skip malformed JSON */ }
+            currentEvent = '';
+            currentData = '';
           }
+        }
+
+        // 兜底：流正常结束但未收到 complete 或 error 事件
+        // 可能原因：网络中断、后端异常、SSE 数据被截断等
+        if (!completeReceived && !errorReceived) {
+          onComplete({ content: '', reasoning: '', done: true });
         }
       } catch (err: unknown) {
         // Silently ignore abort errors (e.g., user navigated away or clicked stop)
@@ -654,7 +712,8 @@ export function aiPracticeQuestionsStream(
   onChunk: (chunk: SseChunk) => void,
   onComplete: (data: SseComplete) => void,
   onError: (error: string) => void,
-  onFinally?: () => void
+  onFinally?: () => void,
+  onBatchProgress?: (data: SseBatchProgress) => void,
 ): AbortController {
   return sseStream('/api/ai/practice-questions/stream', {
     customPrompt: params.customPrompt,
@@ -664,7 +723,7 @@ export function aiPracticeQuestionsStream(
     count: params.count,
     deepThinking: params.deepThinking || false,
     messages: params.messages || [],
-  }, onChunk, onComplete, onError, onFinally);
+  }, onChunk, onComplete, onError, onFinally, 2, onBatchProgress);
 }
 
 /**
@@ -672,12 +731,13 @@ export function aiPracticeQuestionsStream(
  */
 export function aiGenerateQuestionsStream(
   params: {
-    subject: string;
+    subject?: string;
     knowledgePoint?: string;
-    type: string;
-    difficulty: string;
-    count: number;
+    type?: string;
+    difficulty?: string;
+    count?: number;
     deepThinking?: boolean;
+    customPrompt?: string;
   },
   onChunk: (chunk: SseChunk) => void,
   onComplete: (data: SseComplete) => void,

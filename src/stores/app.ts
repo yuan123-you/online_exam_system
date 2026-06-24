@@ -1848,24 +1848,68 @@ export const useAppStore = defineStore('app', () => {
     }
   }
 
-  /** Try to parse complete questions from streaming content for question-by-question display */
+  /**
+   * 找到流式内容中 JSON 题目数组的起始位置（'[' 的索引）。
+   * 扫描所有 '[' 位置，返回第一个后续内容包含题目字段的位置。
+   */
+  function findQuestionArrayStart(content: string): number {
+    let searchFrom = 0
+    while (true) {
+      const idx = content.indexOf('[', searchFrom)
+      if (idx === -1) break
+      const peek = content.substring(idx, Math.min(idx + 300, content.length))
+      if (/"(?:title|type|options|answer|explanation|subject|score)"\s*:/.test(peek)) {
+        return idx
+      }
+      searchFrom = idx + 1
+    }
+    return -1
+  }
+
+  /**
+   * 增量解析流式内容中的完整 JSON 题目对象。
+   * 使用大括号深度追踪，支持嵌套数组/对象（如 options 数组、嵌套 explanation 等）。
+   * 每解析到一道完整题目就立即返回，实现「出一题渲染一题」。
+   */
   function tryParseStreamingQuestions(content: string): Array<Record<string, unknown>> {
     const result: Array<Record<string, unknown>> = []
-    // Extract complete JSON objects from the streaming content
-    const objectPattern = /\{\s*(?:"[^"]*"\s*:\s*(?:"[^"]*"|\[[^\]]*\]|\d+|true|false)\s*,?\s*)+\}/g
-    let match
-    while ((match = objectPattern.exec(content)) !== null) {
-      try {
-        const obj = JSON.parse(match[0])
-        if (obj.title && obj.type) {
-          const exists = result.some(q => q.title === obj.title)
-          if (!exists) {
-            // Mark as new if not already in the current streaming questions list
-            const alreadySeen = practiceStreamingQuestions.value.some(q => q.title === obj.title)
-            result.push({ ...obj, _isNew: !alreadySeen })
-          }
+    // 找到 JSON 数组开始位置
+    const arrStart = findQuestionArrayStart(content)
+    if (arrStart === -1) return result
+
+    let depth = 0
+    let objStart = -1
+    let inString = false
+    let escaped = false
+
+    for (let i = arrStart; i < content.length; i++) {
+      const ch = content[i]
+      if (escaped) { escaped = false; continue }
+      if (ch === '\\') { escaped = true; continue }
+      if (ch === '"') { inString = !inString; continue }
+      if (inString) continue
+
+      if (ch === '{') {
+        if (depth === 0) objStart = i
+        depth++
+      } else if (ch === '}') {
+        depth--
+        if (depth === 0 && objStart >= 0) {
+          // 完整的顶层对象已闭合
+          const objStr = content.substring(objStart, i + 1)
+          try {
+            const obj = JSON.parse(objStr)
+            if (obj.title && obj.type) {
+              const exists = result.some(q => q.title === obj.title)
+              if (!exists) {
+                const alreadySeen = practiceStreamingQuestions.value.some(q => q.title === obj.title)
+                result.push({ ...obj, _isNew: !alreadySeen })
+              }
+            }
+          } catch { /* 不完整的 JSON，跳过 */ }
+          objStart = -1
         }
-      } catch { /* skip */ }
+      }
     }
     return result
   }
@@ -1953,9 +1997,11 @@ export const useAppStore = defineStore('app', () => {
         chatLoading.value = false
         // Finish typewriter immediately on complete
         finishChatTypewriter()
-        if (data.content) {
+        // 使用 data.content，若为空则回退到流式累积的内容（防止 SSE 解析丢失导致输出框空白）
+        const rawContent = data.content || chatStreamingContent.value
+        if (rawContent) {
           // 剥离 AI 思考文本，将其移入 reasoning 字段
-          const { content, thinking } = stripThinkingFromContent(data.content)
+          const { content, thinking } = stripThinkingFromContent(rawContent)
           chatMessages.value[aiMsgIndex].content = content
           if (thinking) {
             const existing = data.reasoning || chatStreamingReasoning.value || ''
@@ -2010,8 +2056,29 @@ export const useAppStore = defineStore('app', () => {
     )
   }
 
-  /** Stop the ongoing chat stream */
+  /** Stop the ongoing chat stream and preserve partial content */
   function handleChatStop() {
+    // Preserve partial content before aborting
+    // If there's streaming content, save it to the last AI message
+    if (chatStreamingContent.value && chatMessages.value.length > 0) {
+      const lastIdx = chatMessages.value.length - 1
+      const lastMsg = chatMessages.value[lastIdx]
+      if (lastMsg.role === 'assistant' && !lastMsg.content) {
+        // Save partial content to the message
+        const { content, thinking } = stripThinkingFromContent(chatStreamingContent.value)
+        chatMessages.value[lastIdx].content = content
+        if (thinking) {
+          const existing = chatStreamingReasoning.value || ''
+          chatMessages.value[lastIdx].reasoning = existing ? thinking + '\n\n' + existing : thinking
+        } else if (chatStreamingReasoning.value) {
+          chatMessages.value[lastIdx].reasoning = chatStreamingReasoning.value
+        }
+        // Persist to conversation history
+        handleSaveMessages()
+        showToast('已保存部分内容', 'info')
+      }
+    }
+    
     if (chatAbortController) {
       chatAbortController.abort()
       chatAbortController = null
@@ -2140,7 +2207,7 @@ export const useAppStore = defineStore('app', () => {
       : /困难|较难|高难|挑战/.test(message) ? 'hard'
       : ''
     const countMatch = message.match(/(\d+)\s*道/)
-    const inferredCount = countMatch ? Math.min(parseInt(countMatch[1]), 20) : 0
+    const inferredCount = countMatch ? Math.min(parseInt(countMatch[1]), 200) : 0
     // Extract subject from user message for practice session metadata
     const subjectPatterns: [RegExp, string][] = [
       [/高等数学|微积分|线性代数|高数/, '高等数学'],
@@ -2207,9 +2274,11 @@ export const useAppStore = defineStore('app', () => {
         clearTimeout(practiceTimeout2)
         practiceStreamingActive.value = false
         practSessionLoading.value = false
-        if (data.content) {
+        // 使用 data.content，若为空则回退到流式累积的内容（防止 SSE 解析丢失导致输出框空白）
+        const rawContent = data.content || practiceStreamingContent.value
+        if (rawContent) {
           // 剥离 AI 思考文本，将其移入 reasoning 字段
-          const { content, thinking } = stripThinkingFromContent(data.content)
+          const { content, thinking } = stripThinkingFromContent(rawContent)
           practiceMessages.value[aiMsgIndex].content = content
           if (thinking) {
             const existing = data.reasoning || practiceStreamingReasoning.value || ''
@@ -2235,7 +2304,7 @@ export const useAppStore = defineStore('app', () => {
 
         // 自动创建练习会话并保存生成的题目
         try {
-          const cleaned = (data.content || '').replace(/^```[a-z]*\n?/i, '').replace(/\n?```$/i, '').trim()
+          const cleaned = (rawContent || '').replace(/^```[a-z]*\n?/i, '').replace(/\n?```$/i, '').trim()
           const parsed = JSON.parse(cleaned)
           if (Array.isArray(parsed) && parsed.length > 0) {
             handleCreatePracticeSession(parsed, inferredSubject || undefined)
@@ -2243,7 +2312,7 @@ export const useAppStore = defineStore('app', () => {
         } catch {
           // Not valid JSON — try with the full content
           try {
-            const content = data.content || ''
+            const content = rawContent || ''
             const arrStart = content.indexOf('[')
             const arrEnd = content.lastIndexOf(']')
             if (arrStart >= 0 && arrEnd > arrStart) {
@@ -2281,12 +2350,39 @@ export const useAppStore = defineStore('app', () => {
         clearTimeout(practiceTimeout2)
         practiceStreamingActive.value = false
         practSessionLoading.value = false
+      },
+      // onBatchProgress - 分批出题进度回调
+      (batchData) => {
+        if (batchData.totalBatches > 1) {
+          practiceStreamingHint.value = `📦 分批生成中：第 ${batchData.batch}/${batchData.totalBatches} 批，已生成 ${batchData.generated}/${batchData.totalCount} 道题`
+        }
       }
     )
   }
 
-  /** Stop the ongoing practice stream */
+  /** Stop the ongoing practice stream and preserve partial content */
   function handlePracticeStop() {
+    // Preserve partial content before aborting
+    // If there's streaming content, save it to the last AI message
+    if (practiceStreamingContent.value && practiceMessages.value.length > 0) {
+      const lastIdx = practiceMessages.value.length - 1
+      const lastMsg = practiceMessages.value[lastIdx]
+      if (lastMsg.role === 'assistant' && !lastMsg.content) {
+        // Save partial content to the message
+        const { content, thinking } = stripThinkingFromContent(practiceStreamingContent.value)
+        practiceMessages.value[lastIdx].content = content
+        if (thinking) {
+          const existing = practiceStreamingReasoning.value || ''
+          practiceMessages.value[lastIdx].reasoning = existing ? thinking + '\n\n' + existing : thinking
+        } else if (practiceStreamingReasoning.value) {
+          practiceMessages.value[lastIdx].reasoning = practiceStreamingReasoning.value
+        }
+        // Persist to conversation history
+        handleSaveMessages(practiceMessages.value)
+        showToast('已保存部分内容', 'info')
+      }
+    }
+    
     if (practiceAbortController) {
       practiceAbortController.abort()
       practiceAbortController = null
@@ -2314,7 +2410,7 @@ export const useAppStore = defineStore('app', () => {
 
   // ========== Practice Session Persistence Actions ==========
 
-  /** 恢复用户活跃的练习会话（页面刷新时调用） */
+  /** 恢复用户最近的练习会话（页面刷新时调用，包括已提交的会话以保留作答结果） */
   async function restorePracticeSession() {
     if (!currentUser.value) return
     practiceSessionLoading.value = true
