@@ -18,7 +18,7 @@ set -euo pipefail
 # Configuration
 #--------------------------------------------------------------
 DOMAIN="web.novo.ccwu.cc"
-SERVER_IP="54.179.150.131"
+SERVER_IP="129.151.25.15"
 APP_DIR="/opt/online-exam"
 BACKUP_DIR="/opt/online-exam-backups"
 REPO_URL="https://github.com/yuan123-you/online_exam_system.git"
@@ -431,7 +431,7 @@ info "Writing Nginx configuration..."
 sudo tee /etc/nginx/sites-available/online-exam > /dev/null <<'NGINX_EOF'
 server {
     listen 80;
-    server_name web.novo.ccwu.cc 54.179.150.131;
+    server_name web.novo.ccwu.cc 129.151.25.15;
 
     root /opt/online-exam/dist;
     index index.html;
@@ -468,7 +468,7 @@ server {
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
         proxy_connect_timeout 60s;
-        proxy_read_timeout 200s;
+        proxy_read_timeout 600s;
         proxy_send_timeout 60s;
         client_max_body_size 10m;
 
