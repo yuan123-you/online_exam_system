@@ -44,6 +44,29 @@ public class StoreService {
     this.jdbc = jdbc;
     this.mapper = mapper;
     this.submissionJson = new JsonHelper(mapper);
+    ensureSchemaColumns();
+  }
+
+  private void ensureSchemaColumns() {
+    if (jdbc == null) return;
+    ensureColumn("question", "deleted", "TINYINT(1) NOT NULL DEFAULT 0");
+    ensureColumn("paper", "deleted", "TINYINT(1) NOT NULL DEFAULT 0");
+    ensureColumn("exam", "deleted", "TINYINT(1) NOT NULL DEFAULT 0");
+  }
+
+  private void ensureColumn(String table, String column, String definition) {
+    try {
+      Integer count = jdbc.queryForObject(
+        "SELECT count(*) FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = ? AND column_name = ?",
+        Integer.class, table, column
+      );
+      if (count == null || count == 0) {
+        jdbc.execute("ALTER TABLE " + table + " ADD COLUMN " + column + " " + definition);
+        log.info("Added missing column {}.{}", table, column);
+      }
+    } catch (Exception e) {
+      log.debug("Auto-column check for {}.{}: {}", table, column, e.getMessage());
+    }
   }
 
   /** 使缓存失效（写操作后调用） */
