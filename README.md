@@ -167,7 +167,7 @@ npm run dev:web
 | `ADMIN_USERNAME` / `ADMIN_PASSWORD` | 首次创建管理员，均须显式注入 | 都未设置时跳过；不重置已有账号 |
 | `AUTH_SESSION_SECRET` | 会话签名密钥，至少 32 字节 | 未设置时启动随机生成，重启后旧令牌失效；多实例需使用同一密钥 |
 | `AI_API_KEY` | 模型 API 密钥 | 空值；使用 AI 前需要配置 |
-| `AI_MODEL` | 模型名称 | `glm-4-air` |
+| `AI_MODEL` | 模型名称 | `glm-4.7-flash`（限流时自动降级到 `glm-4-flash`） |
 | `AI_CONCURRENT_LIMIT` | AI 请求并发上限 | `10` |
 | `CORS_ALLOWED_ORIGINS` | 允许的前端来源 | 参见配置文件；部署时按实际域名收敛 |
 

@@ -92,11 +92,11 @@ public class AiService {
   @Value("${ai.api-key:}")
   private String apiKey;
 
-  @Value("${ai.model:glm-4-flash}")
+  @Value("${ai.model:glm-4.7-flash}")
   private String model;
 
-  /** 备用模型列表：主模型 429 时自动降级（flash更快，作为降级保底） */
-  private static final List<String> FALLBACK_MODELS = List.of("glm-4-flash", "glm-4-airx", "glm-4-air");
+  /** 备用模型列表：主模型 429 时自动降级（glm-4-flash 免费且稳定，作为限流保底） */
+  private static final List<String> FALLBACK_MODELS = List.of("glm-4-flash");
 
   /** 获取当前可用的模型名称（排除已 429 的主模型后尝试备用模型） */
   private volatile String activeModel = null;
