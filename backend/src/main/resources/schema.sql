@@ -50,6 +50,7 @@ CREATE TABLE IF NOT EXISTS question (
   difficulty VARCHAR(20) NOT NULL,
   type VARCHAR(20) NOT NULL,
   title TEXT NOT NULL,
+  explanation TEXT NULL,
   options_json JSON,
   answer_json JSON NOT NULL,
   score INT NOT NULL,
@@ -63,7 +64,7 @@ CREATE TABLE IF NOT EXISTS question (
   CONSTRAINT fk_question_teacher FOREIGN KEY (teacher_id) REFERENCES user_account(id) ON DELETE RESTRICT,
   CONSTRAINT chk_question_score CHECK (score > 0),
   CONSTRAINT chk_question_type CHECK (type IN ('single', 'multiple', 'judge', 'fill', 'short', 'coding')),
-  CONSTRAINT chk_question_difficulty CHECK (difficulty IN ('easy', 'medium', 'hard'))
+  CONSTRAINT chk_question_difficulty CHECK (difficulty IN ('easy', 'medium', 'hard', '易', '中', '难'))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS paper (
@@ -110,6 +111,14 @@ CREATE TABLE IF NOT EXISTS exam (
   CONSTRAINT chk_exam_anti_cheat CHECK (anti_cheat_limit >= 0)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+-- Server-owned immutable first-publication version; never backfill from the current question bank.
+CREATE TABLE IF NOT EXISTS exam_snapshot (
+  exam_id VARCHAR(64) PRIMARY KEY,
+  content_json JSON NOT NULL,
+  created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  CONSTRAINT fk_exam_snapshot_exam FOREIGN KEY (exam_id) REFERENCES exam(id) ON DELETE RESTRICT
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
 CREATE TABLE IF NOT EXISTS submission (
   id VARCHAR(64) PRIMARY KEY,
   exam_id VARCHAR(64) NOT NULL,
@@ -129,6 +138,7 @@ CREATE TABLE IF NOT EXISTS submission (
   updated_at DATETIME(3),
   manual_extended_minutes INT DEFAULT 0,
   graded_by VARCHAR(50),
+  revision BIGINT NOT NULL DEFAULT 0,
   question_order_json JSON,
   option_order_json JSON,
   created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
@@ -352,7 +362,7 @@ CREATE TABLE IF NOT EXISTS notification (
   INDEX idx_notif_target_class (target_class_id),
   INDEX idx_notif_target_dept (target_department_id),
   INDEX idx_notif_created (created_at),
-  CONSTRAINT fk_notif_sender FOREIGN KEY (sender_id) REFERENCES user_account(id) ON DELETE SET NULL,
+  CONSTRAINT fk_notif_sender FOREIGN KEY (sender_id) REFERENCES user_account(id) ON DELETE CASCADE,
   CONSTRAINT fk_notif_target_user FOREIGN KEY (target_user_id) REFERENCES user_account(id) ON DELETE CASCADE,
   CONSTRAINT fk_notif_target_class FOREIGN KEY (target_class_id) REFERENCES class_info(id) ON DELETE CASCADE,
   CONSTRAINT fk_notif_target_dept FOREIGN KEY (target_department_id) REFERENCES department(id) ON DELETE CASCADE,

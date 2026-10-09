@@ -1,0 +1,17 @@
+
+# Never include local secrets, user-data exports or Git history in Docker contexts
+.git
+.env
+.env.*
+**/.env
+**/.env.*
+**/.ssh_key*
+**/*.pem
+**/*.key
+**/id_rsa*
+**/id_ed25519*
+**/.deployment-private
+**/.codex-deploy
+**/.tmp_ssh
+**/*-data-export.sql
+**/*data-dump*.sql

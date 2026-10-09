@@ -28,6 +28,7 @@ public class SubmissionRepository {
       "switchCount", asInt(row.get("switch_count")), "suspicious", asBool(row.get("suspicious")),
       "suspiciousReasons", json.readList(row.get("suspicious_reasons_json")), "autoScore", asInt(row.get("auto_score")),
       "finalScore", asInt(row.get("final_score")), "status", normalizeStatus(str(row.get("status"))),
+      "revision", SubmissionWrites.readRevision(row.get("revision")),
       "startedAt", json.asIso(row.get("started_at")), "deadlineAt", json.asIso(row.get("deadline_at")),
       "submittedAt", json.asIso(row.get("submitted_at")), "updatedAt", json.asIso(row.get("updated_at")),
       "manualExtendedMinutes", asInt(row.get("manual_extended_minutes")), "gradedBy", row.get("graded_by"),
@@ -36,23 +37,9 @@ public class SubmissionRepository {
     ))).toList();
   }
 
-  /** 保存或更新提交记录 */
-  public void save(Map<String, Object> r) {
-    jdbc.update("""
-      insert into submission(id,exam_id,student_id,student_name,answers_json,answer_detail_json,switch_count,suspicious,
-      suspicious_reasons_json,auto_score,final_score,status,started_at,deadline_at,submitted_at,updated_at,manual_extended_minutes,graded_by,question_order_json,option_order_json)
-      values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-      on duplicate key update student_name=values(student_name),answers_json=values(answers_json),
-      answer_detail_json=values(answer_detail_json),switch_count=values(switch_count),suspicious=values(suspicious),
-      suspicious_reasons_json=values(suspicious_reasons_json),auto_score=values(auto_score),final_score=values(final_score),
-      status=values(status),started_at=values(started_at),deadline_at=values(deadline_at),submitted_at=values(submitted_at),
-      updated_at=values(updated_at),manual_extended_minutes=values(manual_extended_minutes),graded_by=values(graded_by),
-      question_order_json=values(question_order_json),option_order_json=values(option_order_json)
-      """, str(r, "id"), str(r, "examId"), str(r, "studentId"), str(r, "studentName"), json.json(r.get("answers")),
-      json.json(r.get("answerDetail")), asInt(r.get("switchCount")), asBool(r.get("suspicious")), json.json(r.get("suspiciousReasons")),
-      asInt(r.get("autoScore")), asInt(r.get("finalScore")), normalizeStatus(str(r, "status")), json.timestamp(r.get("startedAt")),
-      json.timestamp(r.get("deadlineAt")), json.timestamp(r.get("submittedAt")), json.timestamp(r.get("updatedAt")),
-      asInt(r.get("manualExtendedMinutes")), nullableStr(r, "gradedBy"), json.json(r.get("questionOrder")), json.json(r.get("optionOrder")));
+  /** Creation cannot overwrite another session; existing writes require a matching server-read revision. */
+  public void save(Map<String, Object> record) {
+    SubmissionWrites.save(jdbc, json, record);
   }
 
   /** 根据 ID 删除提交记录 */

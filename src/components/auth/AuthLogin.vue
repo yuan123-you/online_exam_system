@@ -40,9 +40,11 @@
             <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/></svg>
           </div>
           <p class="eyebrow">ONLINE EXAM</p>
-          <h1>用户登录</h1>
-          <p class="brand-subtitle">欢迎回来，请输入您的账号信息</p>
+          <slot name="heading"><h1>用户登录</h1>
+          <p class="brand-subtitle">欢迎回来，请输入您的账号信息</p></slot>
         </div>
+        <slot name="tabs" />
+        <div id="login-panel" role="tabpanel" aria-labelledby="login-tab" v-show="!registrationActive">
         <form class="form-grid" @submit.prevent="submitLogin" autocomplete="off" data-lpignore="true">
           <div aria-hidden="true" style="position:absolute;left:-9999px;top:-9999px;overflow:hidden">
             <input type="text" name="__trap_user" tabindex="-1" autocomplete="username" />
@@ -95,6 +97,9 @@
             {{ loading ? "登录中..." : "进入系统" }}
           </button>
         </form>
+        </div>
+        <slot name="registration" />
+        <div class="login-register-link"><slot name="footer" /></div>
       </div>
     </div>
 
@@ -123,7 +128,7 @@ const features = [
 ]
 
 const props = defineProps<{
-  loading: boolean; message: string; defaultUsername?: string
+  loading: boolean; message: string; defaultUsername?: string; registrationActive?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -138,11 +143,13 @@ const usernameRef = ref<HTMLInputElement | null>(null)
 const passwordRef = ref<HTMLInputElement | null>(null)
 const visibleMessage = ref("")
 
+watch(() => props.defaultUsername, (value) => { username.value = value ?? "" })
+
 watch(() => props.message, (val) => { if (val) { visibleMessage.value = val; emit("clearMessage") } })
 
 function submitLogin() {
-  if (!username.value.trim()) { visibleMessage.value = '账号仅支持 4-20 位字母和数字，不能包含空格、下划线及任何特殊符号'; return }
-  if (!password.value) { visibleMessage.value = '密码仅支持 6-18 位字母和数字，不能包含特殊符号'; return }
+  if (!username.value.trim()) { visibleMessage.value = '请填写有效账号'; return }
+  if (!password.value) { visibleMessage.value = '请填写密码'; return }
   const u = validateUsername(username.value); if (!u.valid) { visibleMessage.value = u.message; return }
   const p = validatePassword(password.value); if (!p.valid) { visibleMessage.value = p.message; return }
   emit("submit", { username: username.value, password: password.value })
@@ -157,6 +164,8 @@ onMounted(() => nextTick(() => {
 </script>
 
 <style scoped>
+.login-register-link { margin-top: 22px; text-align: center; font-size: 14px; }
+.login-register-link :deep(a) { color: #287d63; text-decoration: underline; text-underline-offset: 4px; }
 /* ===== Shell: Full-screen two-column layout ===== */
 .login-shell {
   min-height: 100dvh;
@@ -686,4 +695,8 @@ onMounted(() => nextTick(() => {
     }
   }
 }
+.login-shell .login-intro { --ink:#203d32; --muted:#526e60; color:#203d32; }
+/* Keep the authentication card readable even when the app inherits a dark theme. */
+.login-shell .login-panel .login-card { background:#fff; --ink:#203d32; --muted:#526e60; --muted-light:#62766c; }
+.login-shell .login-card .login-input { background:#fff; color:#203d32; }
 </style>

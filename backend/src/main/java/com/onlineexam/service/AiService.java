@@ -56,25 +56,28 @@ public class AiService {
 
   private static final Set<String> SUBJECTIVE_TYPES = Set.of("short", "coding");
 
-  /** 出题系统提示词（精简版 - 保留核心约束，减少token加速处理） */
+  /** 出题系统提示词（严谨切题版 - 严格基于用户输入材料/知识点，防止偏移，选项防重） */
   private static final String QUESTION_SYSTEM_PROMPT =
-    "你是出题专家。严格按用户要求的数量和题型出题，一道不少一道不多。\n"
+    "你是严谨的教学出题专家。严格按用户要求的数量、题型与实际考点出题，一道不少一道不多。\n"
     + "输出纯JSON数组，不要markdown包裹，不要多余文字：\n"
-    + "[{\"subject\":\"学科\",\"title\":\"题干\",\"type\":\"题型\",\"options\":[...],\"answer\":[...],\"score\":5,\"explanation\":\"解析\"}]\n\n"
+    + "[{\"subject\":\"学科\",\"knowledgePoint\":\"知识点\",\"difficulty\":\"难度\",\"title\":\"题干\",\"type\":\"题型\",\"options\":[...],\"answer\":[...],\"score\":5,\"explanation\":\"解析\"}]\n\n"
     + "字段规则：\n"
-    + "- subject: 【必填】从用户需求识别学科/科目（如\"数学\"、\"物理\"、\"哲学\"、\"科目一\"等），填入标准学科名称。\n"
+    + "- subject: 【必填】准确填写所属学科/科目（如\"高等数学\"、\"大学物理\"、\"Java\"、\"操作系统\"等标准学科名称），严禁填入题型或废话。\n"
+    + "- knowledgePoint: 【必填】准确填写题目考查的核心知识点（如\"微积分\"、\"二叉树遍历\"、\"死锁\"等）。\n"
+    + "- difficulty: easy(简单) | medium(中等) | hard(困难)\n"
     + "- type: single(单选) | multiple(多选) | judge(判断) | fill(填空) | short(简答) | coding(编程)\n"
-    + "- options: 单选/多选必须4个[\"A.选项1\",\"B.选项2\",\"C.选项3\",\"D.选项4\"]；判断2个[\"A.正确\",\"B.错误\"]；填空/简答/编程为[]\n"
-    + "- answer: 单选[\"A\"]，多选[\"A\",\"C\"]，判断[\"A\"]，填空[\"答案文本\"]\n"
-    + "- explanation: 必须包含【答案】和【解析】两部分\n"
+    + "- options: 单选/多选必须4个[\"A. 选项1\",\"B. 选项2\",\"C. 选项3\",\"D. 选项4\"]；判断2个[\"A. 正确\",\"B. 错误\"]；填空/简答/编程为[]。注意：选项文本中严禁重复添加字母前缀（严禁出现\"A. A. 内容\"或\"A. (A) 内容\")。\n"
+    + "- answer: 单选[\"A\"]，多选[\"A\",\"C\"]，判断[\"A\"]，填空[\"答案文本\"]，简答/编程[\"参考答案要点\"]\n"
+    + "- explanation: 必须包含【答案】和【解析】两部分，详细阐述解题依据与选项辨析\n"
     + "- score: 固定为5\n\n"
     + "【核心约束】\n"
-    + "1. 题目内容必须严格属于用户指定学科范畴，严禁跨学科混淆。物理题中的计算仍属于物理，不是数学。\n"
-    + "2. 外语类科目（英语、日语、法语等）：题干和选项用目标语言撰写，答案和解析用中文（术语保留原文）。大学英语难度对标CET-4/CET-6。\n"
-    + "3. 四个选项必须互不相同，只有一个正确答案（单选题），正确答案必须有充分依据。\n"
-    + "4. 严禁输出思考过程，直接输出JSON数组。\n\n"
+    + "1. 【严格切题，绝不偏题】：当用户提供具体背景材料、文本段落、知识点、代码片段或原始题目时，题目必须100%基于用户给出的材料出题，考查其核心内容，严禁脱离材料任意发散，严禁跨学科混淆！\n"
+    + "2. 【题干完整规范】：若题目涉及代码、数学公式或阅读材料，必须在 title 中完整呈现。公式使用 LaTeX 规范（如 $...$ 或 $...$），代码使用标准 Markdown 代码块。\n"
+    + "3. 【选项严密】：单选题必须且只能有1个无可争议的正确答案，其余3个选项必须具备合理干扰性且互不相同；选项内容严禁重复。\n"
+    + "4. 【外语科目】：外语类科目（英语、日语、法语等）题干和选项用目标语言撰写，解析用中文（术语保留原文）。大学英语难度对标CET-4/CET-6。\n"
+    + "5. 严禁输出思考过程或多余前后缀说明，直接输出纯JSON数组。\n\n"
     + "示例（数学单选题）：\n"
-    + "[{\"subject\":\"数学\",\"title\":\"函数f(x)=x²-4x+3的零点为？\",\"type\":\"single\",\"options\":[\"A.x=1和x=3\",\"B.x=-1和x=-3\",\"C.x=1和x=-3\",\"D.x=-1和x=3\"],\"answer\":[\"A\"],\"score\":5,\"explanation\":\"【答案】A 【解析】令f(x)=0，即x²-4x+3=0，分解因式(x-1)(x-3)=0，解得x=1或x=3。\"}]";
+    + "[{\"subject\":\"高等数学\",\"knowledgePoint\":\"函数零点\",\"difficulty\":\"medium\",\"title\":\"函数 $f(x)=x^2-4x+3$ 的零点为？\",\"type\":\"single\",\"options\":[\"A. x=1和x=3\",\"B. x=-1和x=-3\",\"C. x=1和x=-3\",\"D. x=-1和x=3\"],\"answer\":[\"A\"],\"score\":5,\"explanation\":\"【答案】A 【解析】令 $f(x)=0$，即 $x^2-4x+3=0$，因式分解 $(x-1)(x-3)=0$，解得 $x=1$ 或 $x=3$。\"}]";
 
   private final StoreService storeService;
   private final SystemLogService systemLogService;
@@ -373,6 +376,8 @@ public class AiService {
       }
       circuitBreaker.recordSuccess("generate");
     } catch (Exception e) {
+      // Raw HTTP-200 text is cached before validation; a rejected candidate must not poison retries.
+      responseCache.remove(computeCacheKey(systemPrompt, userPrompt));
       circuitBreaker.recordFailure("generate");
       systemLogService.log(user, "AI出题失败", e.getMessage());
       return error(HttpStatus.SERVICE_UNAVAILABLE, "AI 服务暂时不可用：" + e.getMessage());
@@ -399,60 +404,40 @@ public class AiService {
     if (!isRole(user, "teacher") && !isRole(user, "admin")) return error(HttpStatus.FORBIDDEN, "Forbidden.");
 
     long existingCount = store.questions.stream().filter(q -> Objects.equals(str(q, "teacherId"), userId)).count();
-    long remaining = 5000 - existingCount;
-
-    @SuppressWarnings("unchecked")
-    List<Map<String, Object>> questions = (List<Map<String, Object>>) body.get("questions");
-    if (questions == null || questions.isEmpty()) {
-      return error(HttpStatus.BAD_REQUEST, "没有需要导入的题目");
+    if (!(body.get("questions") instanceof List<?> questions) || questions.isEmpty()) {
+      return error(HttpStatus.BAD_REQUEST, "需要导入非空题目数组");
     }
-
-    List<Map<String, Object>> imported = Collections.synchronizedList(new ArrayList<>());
-    List<Map<String, Object>> errors = Collections.synchronizedList(new ArrayList<>());
-
+    List<Map<String, Object>> imported = new ArrayList<>();
+    List<Map<String, Object>> errors = new ArrayList<>();
     for (int i = 0; i < questions.size(); i++) {
-      Map<String, Object> q = questions.get(i);
+      Object raw = questions.get(i);
+      String title = raw instanceof Map<?, ?> q && q.get("title") instanceof String text ? text : "";
       if (existingCount + imported.size() >= 5000) {
-        Map<String, Object> err = new LinkedHashMap<>();
-        err.put("index", i);
-        err.put("title", str(q, "title"));
-        err.put("message", "题库已满（5000题上限），无法继续导入");
-        errors.add(err);
+        errors.add(mapOf("index", i, "title", title, "message", "题库已满（5000题上限），无法继续导入"));
         continue;
       }
-
-      String id = str(q, "id");
-      if (id.isBlank()) id = createId("ai-question");
-
-      Map<String, Object> record = new LinkedHashMap<>();
-      record.put("id", id);
-      record.put("teacherId", userId);
-      record.put("subject", str(q, "subject").isBlank() ? "AI生成" : str(q, "subject"));
-      record.put("knowledgePoint", str(q, "knowledgePoint").isBlank() ? "综合" : str(q, "knowledgePoint"));
-      record.put("difficulty", str(q, "difficulty").isBlank() ? "medium" : str(q, "difficulty"));
-      record.put("type", str(q, "type").isBlank() ? "single" : str(q, "type"));
-      record.put("title", str(q, "title"));
-      record.put("options", asList(q.get("options")));
-      record.put("answer", asList(q.get("answer")));
-      record.put("score", asInt(q.get("score")) > 0 ? asInt(q.get("score")) : 5);
-      record.put("sourceTag", "ai-generated");
-
+      Map<String, Object> record;
       try {
-        storeService.saveRecord("questions", record);
+        if (!(raw instanceof Map<?, ?> candidate)) throw new IllegalArgumentException("题目必须是对象");
+        record = AiQuestionPolicy.normalize(candidate, "AI生成", "综合", "medium", "single");
+        // Only the server may select database keys or assign ownership.
+        record.put("id", createId("ai-question"));
+        record.put("teacherId", userId);
+      } catch (IllegalArgumentException e) {
+        errors.add(mapOf("index", i, "title", title, "message", e.getMessage()));
+        continue;
+      }
+      try {
+        storeService.createRecord("questions", record);
         imported.add(record);
       } catch (Exception e) {
-        Map<String, Object> err = new LinkedHashMap<>();
-        err.put("index", i);
-        err.put("title", str(q, "title"));
-        err.put("message", "导入失败：" + e.getMessage());
-        errors.add(err);
+        log.warn("AI question import persistence failed at index {}", i, e);
+        errors.add(mapOf("index", i, "title", title, "message", "导入失败，请稍后重试"));
       }
     }
-
     systemLogService.log(user, "AI导入题目", "导入=" + imported.size() + ", 失败=" + errors.size());
     return ResponseEntity.ok(mapOf(
-      "importedCount", imported.size(),
-      "errors", errors,
+      "importedCount", imported.size(), "errors", errors,
       "totalCount", existingCount + imported.size(),
       "remainingQuota", Math.max(0, 5000 - existingCount - imported.size())
     ));
@@ -469,14 +454,6 @@ public class AiService {
     Map<String, Object> user = find(store.users, userId);
     if (!isRole(user, "teacher") && !isRole(user, "admin")) return error(HttpStatus.FORBIDDEN, "Forbidden.");
 
-    var apiKeyError = checkApiKeyConfigured();
-    if (apiKeyError != null) return apiKeyError;
-
-    // 熔断器检查
-    if (!circuitBreaker.allowRequest("grade")) {
-      return error(HttpStatus.SERVICE_UNAVAILABLE, "AI 评分服务暂时不可用（熔断保护中），请稍后重试");
-    }
-
     Map<String, Object> submission = find(store.submissions, str(body, "submissionId"));
     if (submission == null) return error(HttpStatus.NOT_FOUND, "Submission not found.");
 
@@ -484,104 +461,66 @@ public class AiService {
     if (exam == null) return error(HttpStatus.NOT_FOUND, "Exam not found.");
     if (!isRole(user, "admin") && !Objects.equals(str(exam, "teacherId"), userId)) return error(HttpStatus.FORBIDDEN, "Forbidden.");
 
+    // Preserve the historic missing-version error contract before any grading admission.
+    ExamContent.paper(store, exam);
+    if (!Set.of("待阅卷", "已完成").contains(str(submission, "status"))) {
+      return error(HttpStatus.CONFLICT, "Submission has not been submitted.");
+    }
+
+    var apiKeyError = checkApiKeyConfigured();
+    if (apiKeyError != null) return apiKeyError;
+
     if (!checkRateLimit(userId)) {
       return error(HttpStatus.TOO_MANY_REQUESTS, "AI 调用频率过高，请稍后再试");
     }
 
-    List<Object> details = new ArrayList<>(asList(submission.get("answerDetail")));
-
-    // 分离主观题和客观题
-    List<Map<String, Object>> subjectiveDetails = new ArrayList<>();
-    List<Integer> subjectiveIndices = new ArrayList<>();
-    for (int i = 0; i < details.size(); i++) {
-      Map<String, Object> detail = new LinkedHashMap<>(asMap(details.get(i)));
-      String type = str(detail, "type");
-      if (SUBJECTIVE_TYPES.contains(type)) {
-        subjectiveDetails.add(detail);
-        subjectiveIndices.add(i);
-      }
-    }
-
-    // 并行评分所有主观题
-    AtomicInteger aiScore = new AtomicInteger(0);
-    if (!subjectiveDetails.isEmpty()) {
-      List<CompletableFuture<Void>> futures = new ArrayList<>();
-      for (int si = 0; si < subjectiveDetails.size(); si++) {
-        Map<String, Object> detail = subjectiveDetails.get(si);
-        final int detailIndex = si;
-        CompletableFuture<Void> future = CompletableFuture.runAsync(() -> {
-          int fullScore = asInt(detail.get("fullScore"));
-          List<String> given = normalizeAnswer(detail.get("answer"));
-          List<String> expected = normalizeAnswer(detail.get("expectedAnswer"));
-          String givenText = String.join(" ", given);
-          String expectedText = String.join(" ", expected);
-
-          if (givenText.isBlank()) {
-            detail.put("aiScore", 0);
-            detail.put("aiComment", "未作答");
-          } else {
-            try {
-              Map<String, Object> aiResult = aiGradeAnswer(
-                str(detail, "title"), givenText, expectedText, fullScore
-              );
-              int score = asInt(aiResult.get("score"));
-              score = Math.max(0, Math.min(fullScore, score));
-              String comment = str(aiResult, "comment");
-
-              detail.put("aiScore", score);
-              detail.put("aiComment", "AI评分：" + score + "/" + fullScore + "（" + comment + "）");
-              aiScore.addAndGet(score);
-            } catch (Exception e) {
-              int score = fallbackKeywordScore(givenText, expectedText, fullScore);
-              detail.put("aiScore", score);
-              detail.put("aiComment", "AI评分：" + score + "/" + fullScore + "（关键词匹配，AI服务暂不可用）");
-              aiScore.addAndGet(score);
-            }
-          }
-        }, aiTaskExecutor);
-        futures.add(future);
-      }
-
-      // 等待所有主观题评分完成（最多等待 60 秒）
-      try {
-        CompletableFuture.allOf(futures.toArray(new CompletableFuture[0]))
-          .get(60, TimeUnit.SECONDS);
-      } catch (Exception e) {
-        log.warn("[AiService] 并行评分超时或异常: {}", e.getMessage());
-        // 对未完成的主观题使用关键词匹配兜底
-        for (Map<String, Object> detail : subjectiveDetails) {
-          if (!detail.containsKey("aiScore")) {
+    List<CompletableFuture<Map<String, Object>>> futures = new ArrayList<>();
+    List<Map<String, Object>> aiDetails = new ArrayList<>();
+    int aiScore = 0;
+    try {
+      // Each task owns its result; no shared map or aggregate is mutated by late work.
+      for (Object raw : asList(submission.get("answerDetail"))) {
+        Map<String, Object> detail = new LinkedHashMap<>(asMap(raw));
+        if (SUBJECTIVE_TYPES.contains(str(detail, "type"))) {
+          futures.add(CompletableFuture.supplyAsync(() -> {
             int fullScore = asInt(detail.get("fullScore"));
             String givenText = String.join(" ", normalizeAnswer(detail.get("answer")));
             String expectedText = String.join(" ", normalizeAnswer(detail.get("expectedAnswer")));
-            int score = fallbackKeywordScore(givenText, expectedText, fullScore);
-            detail.put("aiScore", score);
-            detail.put("aiComment", "AI评分：" + score + "/" + fullScore + "（超时，关键词匹配）");
-            aiScore.addAndGet(score);
-          }
+            if (givenText.isBlank()) {
+              detail.put("aiScore", 0);
+              detail.put("aiComment", "未作答");
+            } else {
+              Map<String, Object> graded = aiGradeAnswer(str(detail, "title"), givenText, expectedText, fullScore);
+              int score = (Integer) graded.get("score");
+              detail.put("aiScore", score);
+              detail.put("aiComment", "AI评分：" + score + "/" + fullScore + "（" + graded.get("comment") + "）");
+            }
+            return detail;
+          }, aiTaskExecutor));
+        } else {
+          futures.add(CompletableFuture.completedFuture(detail));
         }
       }
-    }
-
-    // 合并结果：客观题直接计分，主观题使用 AI 评分
-    List<Object> aiDetails = new ArrayList<>();
-    int subjectiveIdx = 0;
-    for (int i = 0; i < details.size(); i++) {
-      Map<String, Object> original = asMap(details.get(i));
-      String type = str(original, "type");
-      if (SUBJECTIVE_TYPES.contains(type)) {
-        aiDetails.add(subjectiveDetails.get(subjectiveIdx));
-        subjectiveIdx++;
-      } else {
-        Map<String, Object> detail = new LinkedHashMap<>(original);
-        aiScore.addAndGet(asInt(detail.get("score")));
+      CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).get(60, TimeUnit.SECONDS);
+      for (CompletableFuture<Map<String, Object>> future : futures) {
+        Map<String, Object> detail = future.join();
+        aiScore = Math.addExact(aiScore, asInt(detail.get(
+            SUBJECTIVE_TYPES.contains(str(detail, "type")) ? "aiScore" : "score")));
         aiDetails.add(detail);
       }
+    } catch (InterruptedException e) {
+      futures.forEach(future -> future.cancel(true));
+      Thread.currentThread().interrupt();
+      return error(HttpStatus.SERVICE_UNAVAILABLE, "AI评分已中断，请重试；未生成评分建议。");
+    } catch (Exception e) {
+      futures.forEach(future -> future.cancel(true));
+      log.warn("[AiService] AI grading failed or timed out: {}", e.getClass().getSimpleName());
+      return error(HttpStatus.SERVICE_UNAVAILABLE, "AI评分未完成，请稍后重试或人工阅卷；未生成评分建议。");
     }
 
     Map<String, Object> result = new LinkedHashMap<>();
     result.put("submissionId", str(submission, "id"));
-    result.put("aiScore", aiScore.get());
+    result.put("aiScore", aiScore);
     result.put("manualScore", asInt(submission.get("finalScore")));
     result.put("details", aiDetails);
     result.put("message", "AI评分完成（仅供参考），不影响教师手动阅卷分数。");
@@ -666,6 +605,8 @@ public class AiService {
       }
       circuitBreaker.recordSuccess("practice");
     } catch (Exception e) {
+      // Raw HTTP-200 text is cached before validation; a rejected candidate must not poison retries.
+      responseCache.remove(computeCacheKey(systemPrompt, userPrompt));
       circuitBreaker.recordFailure("practice");
       systemLogService.log(user, "AI助手失败", e.getMessage());
       return error(HttpStatus.SERVICE_UNAVAILABLE, "AI 服务暂时不可用：" + e.getMessage());
@@ -1670,9 +1611,9 @@ public class AiService {
     // 分批出题：当题目数量 > 20 时，自动拆分为多批，每批最多 20 道
     int totalCount = streamIntent != null ? streamIntent.count : 5;
     if (totalCount > 20) {
-      callAiApiStreamBatch(systemPrompt, userPrompt, deepThinking, 0.5, "practice", streamIntent, emitter, totalCount, 20);
+      callAiApiStreamBatch(systemPrompt, userPrompt, deepThinking, 0.3, "practice", streamIntent, emitter, totalCount, 20);
     } else {
-      callAiApiStream(systemPrompt, userPrompt, deepThinking, 0.5, false, "practice", streamIntent, emitter);
+      callAiApiStream(systemPrompt, userPrompt, deepThinking, 0.3, false, "practice", streamIntent, emitter);
     }
   }
 
@@ -1765,9 +1706,9 @@ public class AiService {
     // 分批出题：当题目数量 > 20 时，自动拆分为多批，每批最多 20 道
     int totalCount = streamIntent != null ? streamIntent.count : 5;
     if (totalCount > 20) {
-      callAiApiStreamBatch(systemPrompt, userPrompt, deepThinking, 0.7, "generate", streamIntent, emitter, totalCount, 20);
+      callAiApiStreamBatch(systemPrompt, userPrompt, deepThinking, 0.3, "generate", streamIntent, emitter, totalCount, 20);
     } else {
-      callAiApiStream(systemPrompt, userPrompt, deepThinking, 0.7, false, "generate", streamIntent, emitter);
+      callAiApiStream(systemPrompt, userPrompt, deepThinking, 0.3, false, "generate", streamIntent, emitter);
     }
   }
 
@@ -2323,13 +2264,9 @@ public class AiService {
    */
   private Map<String, Object> aiGradeAnswer(String questionTitle, String studentAnswer,
                                               String expectedAnswer, int fullScore) {
-    // 熔断器检查
+    // Admit exactly once per actual provider operation, including half-open probes.
     if (!circuitBreaker.allowRequest("grade")) {
-      Map<String, Object> result = new LinkedHashMap<>();
-      int score = fallbackKeywordScore(studentAnswer, expectedAnswer, fullScore);
-      result.put("score", score);
-      result.put("comment", "关键词匹配评分（AI服务熔断保护中）");
-      return result;
+      throw new IllegalStateException("AI grading circuit is unavailable");
     }
 
     // 检测是否为外语类题目，评分评语用中文（术语保留原文）
@@ -2350,15 +2287,32 @@ public class AiService {
 
     try {
       String response = callAiApi(systemPrompt, userPrompt);
+      String cleaned = response == null ? "" : response.trim();
+      if (cleaned.startsWith("```")) {
+        int firstNewline = cleaned.indexOf('\n');
+        if (firstNewline < 0 || !cleaned.endsWith("```")) {
+          throw new IllegalArgumentException("Invalid AI grading envelope");
+        }
+        cleaned = cleaned.substring(firstNewline + 1, cleaned.length() - 3).trim();
+      }
+      com.fasterxml.jackson.databind.JsonNode parsed = objectMapper.reader()
+          .with(com.fasterxml.jackson.databind.DeserializationFeature.FAIL_ON_TRAILING_TOKENS)
+          .with(com.fasterxml.jackson.core.JsonParser.Feature.STRICT_DUPLICATE_DETECTION)
+          .readTree(cleaned);
+      if (parsed == null || !parsed.isObject() || !parsed.path("score").isIntegralNumber()
+          || !parsed.path("score").canConvertToInt() || !parsed.path("comment").isTextual()
+          || parsed.path("comment").textValue().isBlank()) {
+        throw new IllegalArgumentException("Invalid AI grading result");
+      }
+      int score = parsed.path("score").intValue();
+      if (score < 0 || score > fullScore) throw new IllegalArgumentException("AI grade is outside score bounds");
+      Map<String, Object> result = Map.of("score", score, "comment", parsed.path("comment").textValue().trim());
       circuitBreaker.recordSuccess("grade");
-      return parseAiJson(response, new TypeReference<Map<String, Object>>() {});
-    } catch (Exception e) {
-      circuitBreaker.recordFailure("grade");
-      Map<String, Object> result = new LinkedHashMap<>();
-      int score = fallbackKeywordScore(studentAnswer, expectedAnswer, fullScore);
-      result.put("score", score);
-      result.put("comment", "关键词匹配评分");
       return result;
+    } catch (Exception e) {
+      responseCache.remove(computeCacheKey(systemPrompt, userPrompt));
+      circuitBreaker.recordFailure("grade");
+      throw new IllegalStateException("AI grading did not produce a valid recommendation", e);
     }
   }
 
@@ -2368,81 +2322,13 @@ public class AiService {
    * Parse AI response into question objects
    */
   private List<Map<String, Object>> parseAiQuestions(String aiResponse, String teacherId,
-                                                       String subject, String knowledgePoint,
-                                                       String difficulty, String type) {
-    String cleaned = aiResponse.trim();
-    if (cleaned.startsWith("```")) {
-      int firstNewline = cleaned.indexOf('\n');
-      if (firstNewline > 0) cleaned = cleaned.substring(firstNewline + 1);
-      if (cleaned.endsWith("```")) cleaned = cleaned.substring(0, cleaned.length() - 3);
-      cleaned = cleaned.trim();
+      String subject, String knowledgePoint, String difficulty, String type) {
+    List<Map<String, Object>> questions = AiQuestionPolicy.parsePreview(
+        aiResponse, objectMapper, subject, knowledgePoint, difficulty, type);
+    for (Map<String, Object> question : questions) {
+      question.put("id", createId("ai-question"));
+      question.put("teacherId", teacherId);
     }
-
-    String jsonArray = cleaned;
-    int arrStart = cleaned.indexOf('[');
-    int arrEnd = cleaned.lastIndexOf(']');
-    if (arrStart >= 0 && arrEnd > arrStart) {
-      jsonArray = cleaned.substring(arrStart, arrEnd + 1);
-    }
-
-    List<Map<String, Object>> questions = new ArrayList<>();
-    try {
-      List<Map<String, Object>> parsed = objectMapper.readValue(jsonArray, new TypeReference<>() {});
-      for (Map<String, Object> q : parsed) {
-        if (str(q, "title").isBlank()) continue;
-        Map<String, Object> question = new LinkedHashMap<>();
-        question.put("id", createId("ai-question"));
-        question.put("teacherId", teacherId);
-        // Priority: AI-identified subject > caller-provided subject > "AI生成"
-        String aiSubject = str(q, "subject");
-        String effectiveSubject = !aiSubject.isBlank() ? aiSubject : (!subject.isBlank() ? subject : "AI生成");
-        question.put("subject", effectiveSubject);
-        question.put("knowledgePoint", str(q, "knowledgePoint").isBlank() ? (knowledgePoint.isBlank() ? "综合" : knowledgePoint) : str(q, "knowledgePoint"));
-        question.put("difficulty", str(q, "difficulty").isBlank() ? difficulty : str(q, "difficulty"));
-        String qType = str(q, "type").isBlank() ? type : str(q, "type");
-        question.put("type", qType);
-        question.put("title", str(q, "title"));
-        List<Object> opts = normalizeList(q.get("options"));
-        if (qType.equals("judge") && opts.size() > 2) {
-          opts = new ArrayList<>(opts.subList(0, 2));
-        } else if (opts.size() > 4 && (qType.equals("single") || qType.equals("multiple"))) {
-          opts = new ArrayList<>(opts.subList(0, 4));
-        }
-        question.put("options", opts);
-        List<Object> rawAnswer = normalizeList(q.get("answer"));
-        if ("single".equals(qType) || "multiple".equals(qType) || "judge".equals(qType)) {
-          List<Object> cleanAnswer = new ArrayList<>();
-          for (Object a : rawAnswer) {
-            String s = String.valueOf(a);
-            java.util.regex.Matcher m = java.util.regex.Pattern.compile("([A-D])").matcher(s);
-            if (m.find()) cleanAnswer.add(m.group(1));
-          }
-          question.put("answer", cleanAnswer.isEmpty() ? rawAnswer : cleanAnswer);
-        } else {
-          question.put("answer", rawAnswer);
-        }
-        question.put("score", asInt(q.get("score")) > 0 ? asInt(q.get("score")) : 5);
-        question.put("explanation", str(q, "explanation").isBlank() ? "暂无解析" : str(q, "explanation"));
-        question.put("sourceTag", "ai-generated");
-        questions.add(question);
-      }
-    } catch (Exception e) {
-      Map<String, Object> fallback = new LinkedHashMap<>();
-      fallback.put("id", createId("ai-question"));
-      fallback.put("teacherId", teacherId);
-      fallback.put("subject", subject.isBlank() ? "AI生成" : subject);
-      fallback.put("knowledgePoint", knowledgePoint.isBlank() ? "综合" : knowledgePoint);
-      fallback.put("difficulty", difficulty);
-      fallback.put("type", type);
-      fallback.put("title", "【AI原始响应 - 请手动编辑】" + aiResponse.substring(0, Math.min(200, aiResponse.length())));
-      fallback.put("options", List.of());
-      fallback.put("answer", List.of());
-      fallback.put("score", 5);
-      fallback.put("explanation", "AI 返回格式异常，请手动编辑题目内容");
-      fallback.put("sourceTag", "ai-generated");
-      questions.add(fallback);
-    }
-
     return questions;
   }
 
@@ -2474,24 +2360,7 @@ public class AiService {
     }
   }
 
-  /**
-   * Fallback keyword matching score when AI is unavailable
-   */
-  private int fallbackKeywordScore(String givenText, String expectedText, int fullScore) {
-    String givenLower = givenText.toLowerCase();
-    String expectedLower = expectedText.toLowerCase();
 
-    Set<String> givenWords = new HashSet<>(List.of(givenLower.split("\\s+")));
-    Set<String> expectedWords = new HashSet<>(List.of(expectedLower.split("\\s+")));
-    givenWords.removeIf(w -> w.length() < 2);
-    expectedWords.removeIf(w -> w.length() < 2);
-
-    Set<String> common = new HashSet<>(givenWords);
-    common.retainAll(expectedWords);
-
-    double similarity = expectedWords.isEmpty() ? 0 : (double) common.size() / expectedWords.size();
-    return (int) Math.round(similarity * fullScore);
-  }
 
   // ========== Rate Limiting ==========
 
@@ -2634,12 +2503,49 @@ public class AiService {
     try { return Integer.parseInt(String.valueOf(value)); } catch (NumberFormatException e) { return 0; }
   }
 
+  private static final Set<String> NON_SUBJECT_WORDS = Set.of(
+    "单选", "多选", "判断", "填空", "简答", "编程", "选择", "代码", "综合", "问答", "论述",
+    "变式", "类似", "考", "考考", "真", "模拟", "练习", "测试", "期末", "期中", "随堂", "复习",
+    "例", "习", "题目", "原题", "错题", "分析", "解答", "这道", "那道", "如下", "以下",
+    "一道", "两道", "三道", "四道", "五道", "几道", "大题", "小题", "程序设计", "算法题", "试题"
+  );
+
+  private static final List<String> PREDEFINED_SUBJECTS = List.of(
+    "高等数学", "微积分", "线性代数", "概率论与数理统计", "概率论", "离散数学", "初等数学", "数学",
+    "大学物理", "理论力学", "材料力学", "电磁学", "量子力学", "光学", "物理",
+    "大学化学", "有机化学", "无机化学", "化学",
+    "大学英语", "英语", "CET-4", "CET-6", "日语", "法语", "德语", "俄语", "韩语",
+    "大学语文", "语文", "马克思主义基本原理", "马克思主义", "马原", "毛泽东思想", "毛概", "思想道德与法治", "思修",
+    "中国近现代史纲要", "中国近现代史", "近代史", "政治", "哲学", "心理学", "经济学", "法学",
+    "计算机网络", "操作系统", "数据结构", "计算机组成原理", "软件工程", "数据库", "计算机基础",
+    "人工智能", "编译原理", "信息安全", "网络安全", "计网", "计组",
+    "Java", "Python", "C++", "C语言", "C#", "JavaScript", "TypeScript", "Go", "Rust", "PHP",
+    "SQL", "MySQL", "Redis", "Spring Boot", "Spring", "Vue", "React", "Linux", "Git", "Docker", "Kubernetes",
+    "科目一", "科目二", "科目三", "科目四"
+  );
+
   /** Extract the requested question count from user text */
   private int extractCountFromText(String text) {
     if (text == null || text.isBlank()) return -1;
-    java.util.regex.Matcher m = java.util.regex.Pattern.compile("(\\d+)\\s*道").matcher(text);
+    java.util.regex.Matcher m = java.util.regex.Pattern.compile("(\\d+)\\s*(?:道|题|个)").matcher(text);
     if (m.find()) {
       try { return Integer.parseInt(m.group(1)); } catch (NumberFormatException e) { return -1; }
+    }
+    java.util.regex.Matcher mCn = java.util.regex.Pattern.compile("([一二两三四五六七八九十])\\s*(?:道|题|个)").matcher(text);
+    if (mCn.find()) {
+      return switch (mCn.group(1)) {
+        case "一" -> 1;
+        case "二", "两" -> 2;
+        case "三" -> 3;
+        case "四" -> 4;
+        case "五" -> 5;
+        case "六" -> 6;
+        case "七" -> 7;
+        case "八" -> 8;
+        case "九" -> 9;
+        case "十" -> 10;
+        default -> -1;
+      };
     }
     return -1;
   }
@@ -2651,8 +2557,9 @@ public class AiService {
     if (text.matches(".*单选.*")) return "single";
     if (text.matches(".*判断.*")) return "judge";
     if (text.matches(".*填空.*")) return "fill";
-    if (text.matches(".*简答.*")) return "short";
-    if (text.matches(".*编程.*") || text.matches(".*代码.*")) return "coding";
+    if (text.matches(".*(简答|问答|论述|主观).*")) return "short";
+    if (text.matches(".*(编程|代码|算法|程序设计).*")) return "coding";
+    if (text.matches(".*选择.*")) return "single";
     return "";
   }
 
@@ -2669,27 +2576,38 @@ public class AiService {
     };
   }
 
+  /** 优先在预定义标准学科词表中匹配，避免正则切词误差 */
+  private String matchPredefinedSubject(String text) {
+    if (text == null || text.isBlank()) return "";
+    for (String subj : PREDEFINED_SUBJECTS) {
+      if (text.contains(subj)) return subj;
+    }
+    return "";
+  }
+
   /**
-   * Dynamic subject extraction from user text - no predefined mapping required.
-   * Uses multiple strategies with aggressive noise stripping to isolate the subject noun.
-   * The AI model itself handles final subject identification via the prompt as a safety net.
+   * 智能学科提取：词表优先 -> 模式匹配 -> 过滤题型干扰
    */
   private String extractSubjectFromText(String text) {
     if (text == null || text.isBlank()) return "";
 
-    // Strategy 0: 科目X pattern (科目一, 科目二, 科目三, 科目四) - highest priority
+    // 优先：精确匹配已知标准学科与技术栈
+    String predefined = matchPredefinedSubject(text);
+    if (!predefined.isBlank()) return predefined;
+
+    // Strategy 0: 科目X pattern (科目一, 科目二, 科目三, 科目四)
     java.util.regex.Matcher m0 = java.util.regex.Pattern.compile(
       "(科目[一二三四五六七八九十])"
     ).matcher(text);
     if (m0.find()) return m0.group(1);
 
-    // Strategy 1: "X题" or "X练习" pattern - capture up to 10 Chinese chars before 题/练习, then strip noise
+    // Strategy 1: "X题" or "X练习" pattern - capture Chinese chars before 题/练习
     java.util.regex.Matcher m1 = java.util.regex.Pattern.compile(
-      "([\\u4e00-\\u9fa5]{1,10})(?:题|练习)"
+      "([\\u4e00-\\u9fa5]{2,10})(?:题|练习)"
     ).matcher(text);
-    if (m1.find()) {
+    while (m1.find()) {
       String cleaned = stripSubjectNoise(m1.group(1));
-      if (!cleaned.isBlank()) return cleaned;
+      if (!cleaned.isBlank() && !NON_SUBJECT_WORDS.contains(cleaned)) return cleaned;
     }
 
     // Strategy 1b: English subject + 题/练习 (e.g., "Python练习", "JavaScript题")
@@ -2706,27 +2624,27 @@ public class AiService {
       "关于([\\u4e00-\\u9fa5a-zA-Z0-9]+?)(?:的题|方面|相关|的|题)"
     ).matcher(text);
     if (m2.find()) {
-      String s = m2.group(1).trim();
-      while (s.endsWith("的") || s.endsWith("方") || s.endsWith("相")) {
-        s = s.substring(0, s.length() - 1);
-      }
-      if (!s.isBlank()) return s;
+      String s = stripSubjectNoise(m2.group(1).trim());
+      if (!s.isBlank() && !NON_SUBJECT_WORDS.contains(s)) return s;
     }
 
     // Strategy 3: "考我X", "出X的题", "练X", "练一练X"
     java.util.regex.Matcher m3 = java.util.regex.Pattern.compile(
-      "(?:考我|考考我|出|练一练|练练|复习|学习|测试|练习|练)([\\u4e00-\\u9fa5a-zA-Z0-9]{1,10}?)(?:的题|的练习|方面|相关|知识点|的|题|$)"
+      "(?:考我|考考我|出|练一练|练练|复习|学习|测试|练习|练)([\\u4e00-\\u9fa5a-zA-Z0-9]{2,10}?)(?:的题|的练习|方面|相关|知识点|的|题|$)"
     ).matcher(text);
     if (m3.find()) {
-      String kp = m3.group(1).trim();
-      if (!kp.matches(".*(几道|道|一些|点|个|那种|几|习).*")) return kp;
+      String kp = stripSubjectNoise(m3.group(1).trim());
+      if (!kp.isBlank() && !NON_SUBJECT_WORDS.contains(kp)) return kp;
     }
 
     // Strategy 4: "X知识", "X基础", "X入门"
     java.util.regex.Matcher m4 = java.util.regex.Pattern.compile(
-      "([\\u4e00-\\u9fa5a-zA-Z0-9]{1,10}?)(?:知识|基础|入门|概论|导论|原理)"
+      "([\\u4e00-\\u9fa5a-zA-Z0-9]{2,10}?)(?:知识|基础|入门|概论|导论|原理)"
     ).matcher(text);
-    if (m4.find()) return m4.group(1).trim();
+    if (m4.find()) {
+      String s = stripSubjectNoise(m4.group(1).trim());
+      if (!s.isBlank() && !NON_SUBJECT_WORDS.contains(s)) return s;
+    }
 
     // Strategy 5: English subject names in free text
     java.util.regex.Matcher m5 = java.util.regex.Pattern.compile(
@@ -2737,23 +2655,25 @@ public class AiService {
     return "";
   }
 
-  /** Strip action/quantity/modifier words from both ends of a raw subject extraction */
+  /** 清洗学科提取中的动作、量词、题型和修饰词噪音 */
   private String stripSubjectNoise(String raw) {
-    String cleaned = raw;
+    if (raw == null) return "";
+    String cleaned = raw.trim();
     for (int i = 0; i < 5; i++) {
       String prev = cleaned;
-      // Strip known noise prefixes
-      cleaned = cleaned.replaceAll("^(帮我|给我|请|关于|来|出|点|几道|\\d+道|几|道|练|考考|复习|测试|练习|学习|的|些|我|于|跟|和)", "");
-      // Strip known noise suffixes
-      cleaned = cleaned.replaceAll("(帮我|给我|请|关于|来|出|点|几道|\\d+道|几|道|练|考考|复习|测试|练习|学习|的|些|我|于|跟|和|方面|相关)$", "");
+      // 去除常见前缀噪音
+      cleaned = cleaned.replaceAll("^(帮我|给我|请|关于|来|出|点|几道|\\d+道|几|道|练|考考|复习|测试|练习|学习|的|些|我|于|跟|和|做|考|一些)", "");
+      // 去除常见后缀噪音（包含题型后缀，防止将“单选”、“多选”误识别为学科）
+      cleaned = cleaned.replaceAll("(帮我|给我|请|关于|来|出|点|几道|\\d+道|几|道|练|考考|复习|测试|练习|学习|的|些|我|于|跟|和|方面|相关|单选|多选|判断|填空|简答|编程|选择|代码|综合|问答|论述|变式|类似|真题|考题|习题|例题|原题|错题)$", "");
       if (cleaned.equals(prev)) break;
     }
-    // Strip standalone "考" at beginning (preserve 考古学, 考研 etc.)
+    // 单独去除前缀“考”
     if (cleaned.startsWith("考") && cleaned.length() > 1 && !cleaned.startsWith("考古") && !cleaned.startsWith("考研")) {
       cleaned = cleaned.substring(1);
     }
-    // Reject if only noise remains
-    if (!cleaned.isBlank() && !cleaned.matches("^(几|道|些|点|个|那种|什么|这|那|哪|多|少|出|来|练|考|给|帮|的|我|几道|点|于|习)$")) {
+    cleaned = cleaned.trim();
+    if (!cleaned.isBlank() && !NON_SUBJECT_WORDS.contains(cleaned)
+        && !cleaned.matches("^(几|道|些|点|个|那种|什么|这|那|哪|多|少|出|来|练|考|给|帮|的|我|几道|点|于|习)$")) {
       return cleaned;
     }
     return "";
@@ -2767,7 +2687,7 @@ public class AiService {
     return "";
   }
 
-  /** Extract knowledge point from user text (e.g., "考我闭包"→"闭包", "出TCP协议的题"→"TCP协议") */
+  /** Extract knowledge point from user text */
   private String extractKnowledgePointFromText(String text) {
     if (text == null || text.isBlank()) return "";
     java.util.regex.Matcher m = java.util.regex.Pattern.compile(
@@ -2775,10 +2695,20 @@ public class AiService {
     ).matcher(text);
     if (m.find()) {
       String kp = m.group(1).trim();
-      if (kp.matches(".*(几道|道|一些|点|个|那种).*")) return "";
+      kp = kp.replaceAll("(单选|多选|判断|填空|简答|编程|选择|代码|综合|问答|论述)$", "").trim();
+      if (kp.matches(".*(几道|道|一些|点|个|那种).*") || NON_SUBJECT_WORDS.contains(kp)) return "";
       return kp;
     }
     return "";
+  }
+
+  /** 检测用户输入是否包含具体的出题材料、代码或原题 */
+  private boolean detectMaterialOrProblem(String text) {
+    if (text == null || text.isBlank()) return false;
+    if (text.contains("```")) return true;
+    if (text.matches("(?s).*(材料|根据以下|基于以下|阅读以下|阅读下面|如下内容|如下所示|原题|这道题|变式题|类似题|已知|如下代码|代码如下|题目如下|下列代码|分析以下).*")) return true;
+    if (text.lines().count() >= 3 && (text.contains("?") || text.contains("？") || text.matches("(?s).*[A-D][.、].*"))) return true;
+    return false;
   }
 
   /**
@@ -2790,7 +2720,6 @@ public class AiService {
   }
 
   private String buildSmartUserPrompt(String userText, Map<String, Object> body, int maxCount, UserIntent intent) {
-
     int count = intent.count > 0 ? intent.count : Math.min(asInt(body.get("count")), maxCount);
     if (count <= 0) count = 5;
 
@@ -2799,28 +2728,45 @@ public class AiService {
     String effectiveDifficulty = !intent.difficulty.isBlank() ? intent.difficulty : str(body, "difficulty");
     String effectiveKp = !intent.knowledgePoint.isBlank() ? intent.knowledgePoint : str(body, "knowledgePoint");
 
+    boolean hasMaterial = detectMaterialOrProblem(userText);
+
     StringBuilder sb = new StringBuilder();
-    sb.append("严格生成恰好 ").append(count).append(" 道题目，不要多也不要少。\n");
+    if (hasMaterial) {
+      sb.append("【核心出题依据：严格基于用户提供的材料/代码/原题】\n");
+      sb.append("用户输入中包含了具体的出题背景材料、原始考题或知识细节。\n");
+      sb.append("你必须严格基于用户提供的材料、原题或问题出题：\n");
+      sb.append("1. 题目核心考点必须 100% 来源于该材料中的事实、定理、推导、代码或结论，严禁脱离材料任意生造与材料无关的问题！\n");
+      sb.append("2. 如果是针对原题出变式题/类似题，必须考查相同或相关的知识点与思维方法，通过改变数值、条件、反向设问或变更应用场景出题，保持逻辑严密。\n");
+      sb.append("3. 如果材料包含代码，题干中必须完整附带代码，考查代码执行过程、输出、异常或复杂度。\n");
+      sb.append("4. 题目、选项与解析中的专业术语必须与材料保持完全一致，严禁前后矛盾。\n\n");
+    }
+
+    sb.append("【题目生成要求】\n");
+    sb.append("- 题目数量：严格生成恰好 ").append(count).append(" 道题目，不要多也不要少。\n");
 
     String typeVal = effectiveType.isBlank() ? "single" : effectiveType;
-    sb.append("题型：").append(typeToChinese(typeVal))
+    sb.append("- 题型：").append(typeToChinese(typeVal))
       .append("（type字段必须为\"").append(typeVal).append("\"）\n");
 
     if (!effectiveSubject.isBlank()) {
-      sb.append("科目（AI已识别）：").append(effectiveSubject).append("\n");
+      sb.append("- 学科所属：").append(effectiveSubject).append("（所有题目必须严格属于该学科范畴，严禁跨学科混淆）\n");
+    } else {
+      sb.append("- 学科所属：必须从用户输入中准确识别所属标准学科，并在每道题的subject字段中填写\n");
     }
-    sb.append("【学科约束】你必须从用户需求中识别所属学科，在每道题的subject字段中填写，且所有题目内容必须严格属于该学科范畴，严禁跨学科混淆！\n");
     if (!effectiveDifficulty.isBlank()) {
       String diffChinese = switch (effectiveDifficulty) {
         case "easy" -> "简单"; case "hard" -> "困难"; default -> "中等";
       };
-      sb.append("难度：").append(diffChinese).append("\n");
+      sb.append("- 难度级别：").append(diffChinese).append("\n");
     }
     if (!effectiveKp.isBlank()) {
-      sb.append("知识点方向：").append(effectiveKp).append("\n");
+      sb.append("- 核心知识点：").append(effectiveKp).append("（题目必须精准考查该知识点，严禁偏离到其他无关概念）\n");
     }
 
-    sb.append("用户需求：").append(userText);
+    sb.append("- 格式规范：选择题必须有且仅有4个互不相同的选项（A/B/C/D），选项文本严禁重复添加字母前缀；判断题必须且仅有2个选项（A. 正确，B. 错误）。\n");
+    sb.append("- 解析规范：解析必须包含【答案】和【解析】两部分，逻辑严密，对每个选项进行清晰解析。\n\n");
+
+    sb.append("【用户需求与材料详情】\n").append(userText);
     sb.append(buildLanguageConstraint(effectiveSubject));
     return sb.toString();
   }
@@ -2954,12 +2900,12 @@ public class AiService {
       return defaultModel;
     }
 
-    /** 推断最优temperature */
+    /** 推断最优temperature - 出题与严谨评估采用0.2~0.3低温度，防止发散偏移 */
     double recommendTemperature() {
-      if ("high".equals(complexity)) return 0.3;     // 高复杂度：更精确
-      if ("low".equals(complexity)) return 0.7;       // 低复杂度：更多样
-      if (isForeignLanguageSubject(subject)) return 0.3; // 外语题：更精确
-      return 0.5; // 默认
+      if ("high".equals(complexity)) return 0.2;     // 高复杂度：更精确
+      if (isForeignLanguageSubject(subject)) return 0.2; // 外语题：更精确
+      if ("low".equals(complexity)) return 0.4;       // 简单题：适中
+      return 0.3; // 默认出题温度从0.5降至0.3，显著降低胡思乱想与偏离
     }
 
     /** 推断最优max_tokens - 根据题型和数量动态调整，避免过度分配导致生成缓慢 */

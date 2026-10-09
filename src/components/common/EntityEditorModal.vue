@@ -11,7 +11,7 @@
       <template v-if="kind === 'student' || kind === 'teacher'">
         <label><span>账号</span><input v-model.trim="form.username" required placeholder="请输入账号" /></label>
         <label><span>姓名</span><input v-model.trim="form.name" required placeholder="请输入姓名" /></label>
-        <label><span>密码</span><input v-model.trim="form.password" required placeholder="初始密码" /></label>
+        <label><span>密码</span><input v-model.trim="form.password" type="password" :required="!props.model" :placeholder="props.model ? '留空保留原密码' : '初始密码'" /></label>
         <label v-if="kind === 'student'">
           <span>班级</span>
           <select v-model="form.classId" required>
@@ -142,7 +142,7 @@ function resetForm() {
     id: props.model && "id" in props.model ? props.model.id : "",
     username: props.model && "username" in props.model ? props.model.username : "",
     name: props.model && "name" in props.model ? props.model.name : "",
-    password: props.model && "password" in props.model ? props.model.password || "123456" : "123456",
+    password: "",
     classId: props.model && "classId" in props.model ? props.model.classId || props.bootstrap.classes[0]?.id || "" : props.bootstrap.classes[0]?.id || "",
     major: props.model && "major" in props.model ? props.model.major || "" : "",
     departmentId:
@@ -175,7 +175,7 @@ function submitForm() {
       return
     }
     const passwordResult = validatePassword(form.password)
-    if (!passwordResult.valid) {
+    if ((!props.model || form.password) && !passwordResult.valid) {
       toast.warning(passwordResult.message)
       return
     }

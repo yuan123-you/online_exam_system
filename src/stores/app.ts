@@ -748,14 +748,16 @@ export const useAppStore = defineStore('app', () => {
   // Actions
   async function initAuth() {
     const savedToken = localStorage.getItem('auth_token')
-    if (savedToken) {
-      setCurrentAuthToken(savedToken)
+    const savedSession = localStorage.getItem('auth_session')
+    if (savedToken && savedSession) {
+      setCurrentAuthToken(savedToken, savedSession)
       try {
         const data = await apiLoadBootstrap()
         // 后端未登录时返回 200 + currentUser 为空字符串，需检测并清除 token
         if (!data.currentUser || !data.currentUser.id) {
           setCurrentAuthToken('')
           localStorage.removeItem('auth_token')
+          localStorage.removeItem('auth_session')
           bootstrap.value = null
         } else {
           bootstrap.value = data
@@ -771,6 +773,7 @@ export const useAppStore = defineStore('app', () => {
         if (err?.message?.includes('登录状态已失效') || err?.message?.includes('401')) {
           setCurrentAuthToken('')
           localStorage.removeItem('auth_token')
+          localStorage.removeItem('auth_session')
           bootstrap.value = null
         }
         // 其他错误（如 500）保留 token，用户刷新页面可重试
@@ -784,8 +787,9 @@ export const useAppStore = defineStore('app', () => {
     loginMessage.value = ''
     try {
       const result = await apiLogin(payload.username, payload.password)
-      setCurrentAuthToken(result.user.id)
+      setCurrentAuthToken(result.user.id, result.sessionToken)
       localStorage.setItem('auth_token', result.user.id)
+      localStorage.setItem('auth_session', result.sessionToken)
       bootstrap.value = null // clear stale data from previous user immediately
       try {
         await loadData()       // ensure fresh data before UI renders
@@ -794,6 +798,7 @@ export const useAppStore = defineStore('app', () => {
         // 必须清除 token 并报告登录失败，确保提示与实际状态一致
         setCurrentAuthToken('')
         localStorage.removeItem('auth_token')
+          localStorage.removeItem('auth_session')
         bootstrap.value = null
         loginMessage.value = loadErr?.message || '登录成功但加载用户数据失败，请稍后重试。'
         return false
@@ -817,6 +822,7 @@ export const useAppStore = defineStore('app', () => {
         // 仅 401 时清除 token
         setCurrentAuthToken('')
         localStorage.removeItem('auth_token')
+          localStorage.removeItem('auth_session')
         bootstrap.value = null
       }
       // 始终向上抛出异常，让调用方决定如何处理
@@ -909,6 +915,7 @@ export const useAppStore = defineStore('app', () => {
     closeAllModals()
     setCurrentAuthToken('')
     localStorage.removeItem('auth_token')
+          localStorage.removeItem('auth_session')
     bootstrap.value = null
     loginMessage.value = ''
     // Clear AI chat state so next user doesn't see previous user's conversations
@@ -2199,15 +2206,29 @@ export const useAppStore = defineStore('app', () => {
     const inferredType = /多选/.test(message) ? 'multiple'
       : /判断/.test(message) ? 'judge'
       : /填空/.test(message) ? 'fill'
-      : /简答/.test(message) ? 'short'
-      : /编程|代码/.test(message) ? 'coding'
-      : /单选/.test(message) ? 'single'
+      : /简答|问答|论述/.test(message) ? 'short'
+      : /编程|代码|算法|程序设计/.test(message) ? 'coding'
+      : /单选|选择/.test(message) ? 'single'
       : ''
-    const inferredDifficulty = /简单|基础|入门/.test(message) ? 'easy'
-      : /困难|较难|高难|挑战/.test(message) ? 'hard'
+    const inferredDifficulty = /简单|基础|入门|容易|送分/.test(message) ? 'easy'
+      : /困难|较难|高难|挑战|深奥|复杂/.test(message) ? 'hard'
       : ''
-    const countMatch = message.match(/(\d+)\s*道/)
-    const inferredCount = countMatch ? Math.min(parseInt(countMatch[1]), 200) : 0
+
+    let inferredCount = 0
+    const arabicMatch = message.match(/(\d+)\s*(?:道|题|个)/)
+    if (arabicMatch) {
+      inferredCount = Math.min(parseInt(arabicMatch[1], 10), 200)
+    } else {
+      const cnMap: Record<string, number> = {
+        '一': 1, '二': 2, '两': 2, '三': 3, '四': 4,
+        '五': 5, '六': 6, '七': 7, '八': 8, '九': 9, '十': 10
+      }
+      const cnMatch = message.match(/([一二两三四五六七八九十])\s*(?:道|题|个)/)
+      if (cnMatch && cnMap[cnMatch[1]]) {
+        inferredCount = cnMap[cnMatch[1]]
+      }
+    }
+
     // Extract subject from user message for practice session metadata
     const subjectPatterns: [RegExp, string][] = [
       [/高等数学|微积分|线性代数|高数/, '高等数学'],
@@ -2234,7 +2255,7 @@ export const useAppStore = defineStore('app', () => {
     practiceAbortController = aiPracticeQuestionsStream(
       {
         customPrompt: enrichedPrompt,
-        subject: '',
+        subject: inferredSubject || '',
         type: inferredType || 'single',
         difficulty: inferredDifficulty || 'medium',
         count: inferredCount || 5,

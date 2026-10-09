@@ -10,13 +10,13 @@
     </template>
 
     <div class="preview-item">
-      <h4>{{ entry.title }}</h4>
+      <h4 v-html="renderRichContent(entry.title)"></h4>
 
       <!-- 选择题：渲染交互式选项卡片 -->
       <template v-if="isChoice && options.length > 0">
         <div class="option-list" style="margin-top:12px;">
           <label
-            v-for="opt in options"
+            v-for="(opt, oi) in options"
             :key="opt"
             class="option-item"
             :class="optionClass(opt)"
@@ -36,8 +36,8 @@
               type="checkbox"
               :disabled="submitDisabled"
             />
-            <span class="option-letter">{{ extractKey(opt) }}</span>
-            <span class="option-text">{{ stripKey(opt) }}</span>
+            <span class="option-letter">{{ extractOptionKey(opt, oi) }}</span>
+            <span class="option-text" v-html="renderInlineRichContent(stripOptionPrefix(opt))"></span>
           </label>
         </div>
       </template>
@@ -93,6 +93,8 @@ import { ref, computed } from "vue";
 import BaseModal from "../common/BaseModal.vue";
 import type { WrongBookEntry } from "../../types";
 import { joinAnswer, typeLabel } from "../../utils/format";
+import { renderRichContent, renderInlineRichContent } from "../../utils/markdown";
+import { stripOptionPrefix, extractOptionKey } from "../../utils/questionFormat";
 
 interface RetryResult {
   status: 'idle' | 'submitting' | 'success' | 'error';
@@ -117,14 +119,12 @@ const isChoice = computed(() =>
   props.entry.type === 'single' || props.entry.type === 'multiple' || props.entry.type === 'judge'
 )
 
-// 提取选项字母键： "A. xxx" → "A"，"A、xxx" → "A"
-function extractKey(opt: string): string {
-  const m = opt.match(/^([A-Z])[.、\s]/)
-  return m ? m[1] : opt.charAt(0)
+// 提取选项字母键与去除前缀：委托给 questionFormat 工具
+function extractKey(opt: string, index?: number): string {
+  return extractOptionKey(opt, index)
 }
-// 去除选项字母前缀： "A. xxx" → "xxx"
 function stripKey(opt: string): string {
-  return opt.replace(/^[A-Z][.、\s]+/, '')
+  return stripOptionPrefix(opt)
 }
 
 // 初始作答：回显上次重做或最近一次答案

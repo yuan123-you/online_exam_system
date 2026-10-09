@@ -4,6 +4,7 @@ import com.onlineexam.service.AuthService;
 import java.util.Map;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -21,6 +22,12 @@ public class AuthController {
   public AuthController(AuthService authService) {
     this.authService = authService;
   }
+
+  @GetMapping("/registration-options")
+  public ResponseEntity<?> registrationOptions() { return authService.registrationOptions(); }
+
+  @PostMapping("/register")
+  public ResponseEntity<?> registerStudent(@RequestBody Map<String,Object> body) { return authService.registerStudent(body); }
 
   @PostMapping("/login")
   public ResponseEntity<?> login(@RequestBody Map<String, Object> body) {

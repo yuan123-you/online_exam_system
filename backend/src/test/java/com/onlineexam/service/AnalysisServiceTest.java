@@ -100,6 +100,31 @@ class AnalysisServiceTest {
         return q;
     }
 
+    private void freezeAnalysisFixtures(Store store) {
+        for (Map<String, Object> exam : store.exams) {
+            Map<String, Object> paper = store.papers.stream()
+                .filter(p -> p.get("id").equals(exam.get("paperId"))).findFirst().orElseThrow();
+            paper.put("teacherId", exam.get("teacherId"));
+            paper.put("name", "Fixture paper");
+            paper.put("durationMinutes", 60);
+            List<?> ids = (List<?>) paper.get("questionIds");
+            for (Object id : ids) {
+                Map<String, Object> question = store.questions.stream()
+                    .filter(q -> q.get("id").equals(id)).findFirst().orElse(null);
+                if (question == null) {
+                    question = makeQuestion(String.valueOf(id), "Fixture question", "single", "Math", "General");
+                    store.questions.add(question);
+                }
+                question.put("teacherId", exam.get("teacherId"));
+                question.put("score", ((Number) paper.get("totalScore")).intValue() / ids.size());
+                question.put("options", List.of("A", "B"));
+                question.put("answer", List.of("A"));
+            }
+            exam.put("published", true);
+            store.examSnapshots.put(String.valueOf(exam.get("id")), ExamContent.capture(store, exam));
+        }
+    }
+
     private Map<String, Object> makeAnswerDetail(String questionId, String subject,
                                                   String knowledgePoint, boolean correct) {
         Map<String, Object> detail = new LinkedHashMap<>();
@@ -124,8 +149,8 @@ class AnalysisServiceTest {
             store.exams.add(makeExam("e1", "t1", "p1", "Math Exam"));
             store.papers.add(makePaper("p1", 100, 60, List.of("q1")));
             store.submissions.add(makeSubmission("sub1", "s1", "e1", "已完成", 85, "2025-01-01T10:00:00Z", List.of()));
-            when(storeService.readStore()).thenReturn(store);
 
+            freezeAnalysisFixtures(store);
             ResponseEntity<?> response = analysisService.scoreTrend("s1", store);
 
             assertEquals(HttpStatus.OK, response.getStatusCode());
@@ -145,7 +170,6 @@ class AnalysisServiceTest {
         void nonStudent_returnsForbidden() {
             Store store = createEmptyStore();
             store.users.add(makeUser("t1", "teacher", "Teacher", null));
-            when(storeService.readStore()).thenReturn(store);
 
             ResponseEntity<?> response = analysisService.scoreTrend("t1", store);
 
@@ -162,8 +186,8 @@ class AnalysisServiceTest {
             store.papers.add(makePaper("p2", 100, 60, List.of("q2")));
             store.submissions.add(makeSubmission("sub1", "s1", "e1", "已完成", 85, "2025-01-01T10:00:00Z", List.of()));
             store.submissions.add(makeSubmission("sub2", "s1", "e2", "进行中", 0, null, List.of()));
-            when(storeService.readStore()).thenReturn(store);
 
+            freezeAnalysisFixtures(store);
             ResponseEntity<?> response = analysisService.scoreTrend("s1", store);
 
             assertEquals(HttpStatus.OK, response.getStatusCode());
@@ -193,7 +217,6 @@ class AnalysisServiceTest {
                 makeAnswerDetail("q3", "Math", "Geometry", true)
             );
             store.submissions.add(makeSubmission("sub1", "s1", "e1", "已完成", 80, "2025-01-01T10:00:00Z", details));
-            when(storeService.readStore()).thenReturn(store);
 
             ResponseEntity<?> response = analysisService.knowledgeRadar("s1", store);
 
@@ -231,7 +254,6 @@ class AnalysisServiceTest {
         void nonStudent_returnsForbidden() {
             Store store = createEmptyStore();
             store.users.add(makeUser("t1", "teacher", "Teacher", null));
-            when(storeService.readStore()).thenReturn(store);
 
             ResponseEntity<?> response = analysisService.knowledgeRadar("t1", store);
 
@@ -251,7 +273,6 @@ class AnalysisServiceTest {
                 makeAnswerDetail("q5", "Physics", "Optics", false)
             );
             store.submissions.add(makeSubmission("sub1", "s1", "e1", "已完成", 60, "2025-01-01T10:00:00Z", details));
-            when(storeService.readStore()).thenReturn(store);
 
             ResponseEntity<?> response = analysisService.knowledgeRadar("s1", store);
 
@@ -297,6 +318,7 @@ class AnalysisServiceTest {
             store.submissions.add(makeSubmission("sub2", "s2", "e1", "已完成", 90, "2025-01-01T11:00:00Z", details2));
             when(storeService.readStore()).thenReturn(store);
 
+            freezeAnalysisFixtures(store);
             ResponseEntity<?> response = analysisService.questionAnalysis("t1", "e1");
 
             assertEquals(HttpStatus.OK, response.getStatusCode());
@@ -362,6 +384,7 @@ class AnalysisServiceTest {
             store.submissions.add(makeSubmission("sub3", "s3", "e1", "已完成", 40, "2025-01-01T12:00:00Z", details3));
             when(storeService.readStore()).thenReturn(store);
 
+            freezeAnalysisFixtures(store);
             ResponseEntity<?> response = analysisService.questionAnalysis("t1", "e1");
 
             assertEquals(HttpStatus.OK, response.getStatusCode());

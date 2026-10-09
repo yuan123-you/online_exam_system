@@ -119,7 +119,7 @@
       <!-- Top bar -->
       <header class="top-bar">
         <div class="tb-left">
-          <span class="tb-title">AI 智能出题</span>
+          <span class="tb-title">{{ activeTab === 'generate' ? 'AI 智能出题' : 'AI 对话助手' }}</span>
           <span class="tb-quota">已用 {{ store.aiQuotaUsed }} / {{ store.aiQuotaUsed + store.aiQuotaRemaining }}</span>
         </div>
         <button class="ghost-btn" @click="$router.push(store.isAdmin ? '/overview' : '/questions')">返回</button>
@@ -129,13 +129,16 @@
       <div ref="msgList" class="msg-area">
         <!-- Welcome -->
         <div v-if="messages.length === 0 && !streamingActive" class="welcome">
-          <div class="welcome-icon">🤖</div>
-          <h3>AI 智能出题助手</h3>
-          <p class="welcome-sub">设置参数一键生成，或直接描述出题需求</p>
-          <div class="welcome-chips">
+          <div class="welcome-icon">{{ activeTab === 'generate' ? '📝' : '💬' }}</div>
+          <h3>{{ activeTab === 'generate' ? 'AI 智能出题' : 'AI 对话助手' }}</h3>
+          <p class="welcome-sub">{{ activeTab === 'generate' ? '设置参数一键生成，或直接描述出题需求' : '与 AI 对话，答疑解惑、讲解概念' }}</p>
+          <div class="welcome-chips" v-if="activeTab === 'generate'">
             <button v-for="c in quickChips" :key="c.label" class="wc-chip" @click="doSend(c.prompt)">
               {{ c.icon }} {{ c.label }}
             </button>
+          </div>
+          <div class="welcome-chips" v-else>
+            <button v-for="s in chatSuggestions" :key="s" class="wc-chip" @click="doSend(s)">{{ s }}</button>
           </div>
         </div>
 
@@ -145,7 +148,8 @@
           :streaming-reasoning="streamingReasoning"
           :streaming-content="streamingContent"
           :loading="false"
-          tab="chat"
+          :tab="activeTab === 'generate' ? 'practice' : 'chat'"
+          :is-question-gen="true"
           @regenerate="handleRegenerate"
         />
 
@@ -193,7 +197,7 @@
                 </button>
               </div>
               <div class="pc-card-body">
-                <p class="pc-title">{{ q.title }}</p>
+                <div class="pc-title" v-html="renderRichContent(q.title)"></div>
                 <!-- Options preview for single/multiple/judge -->
                 <div
                   v-if="(q.type === 'single' || q.type === 'multiple' || q.type === 'judge') && q.options?.length"
@@ -202,17 +206,17 @@
                   <div
                     v-for="(opt, oi) in q.options"
                     :key="oi"
-                    :class="['pc-opt', isCorrectOption(q, opt) ? 'pc-opt-correct' : '']"
+                    :class="['pc-opt', isOptionCorrect(q, opt, oi) ? 'pc-opt-correct' : '']"
                   >
                     <span class="pc-opt-letter">{{ ['A','B','C','D','E','F'][oi] || oi }}</span>
-                    <span class="pc-opt-text">{{ stripOptPrefix(opt) }}</span>
-                    <span v-if="isCorrectOption(q, opt)" class="pc-opt-mark">✓</span>
+                    <span class="pc-opt-text" v-html="renderInlineRichContent(stripOptionPrefix(opt))"></span>
+                    <span v-if="isOptionCorrect(q, opt, oi)" class="pc-opt-mark">✓</span>
                   </div>
                 </div>
                 <!-- Answer line -->
                 <div v-if="q.answer && q.answer.length > 0" class="pc-answer">
                   <span class="pc-answer-label">正确答案：</span>
-                  <span class="pc-answer-value">{{ formatAnswer(q) }}</span>
+                  <span class="pc-answer-value">{{ formatQuestionAnswer(q) }}</span>
                 </div>
                 <!-- Explanation (collapsible) -->
                 <div v-if="q.explanation" class="pc-explanation">
@@ -220,7 +224,7 @@
                     <span>💡 解析</span>
                     <span class="pc-expl-arrow">{{ expandedCards[qi] ? '▾' : '▸' }}</span>
                   </div>
-                  <div v-if="expandedCards[qi]" class="pc-expl-body">{{ q.explanation }}</div>
+                  <div v-if="expandedCards[qi]" class="pc-expl-body" v-html="renderRichContent(q.explanation)"></div>
                 </div>
               </div>
             </div>
@@ -239,6 +243,11 @@
 
       <!-- Input area -->
       <div class="bottom-area">
+        <!-- Mode switcher -->
+        <div class="mode-switcher">
+          <button :class="['mode-tab', { active: activeTab === 'generate' }]" @click="activeTab = 'generate'">📝 出题</button>
+          <button :class="['mode-tab', { active: activeTab === 'chat' }]" @click="activeTab = 'chat'">💬 对话</button>
+        </div>
         <div class="input-row">
           <div class="input-wrapper">
             <textarea
@@ -246,7 +255,7 @@
               v-model="inputText"
               class="msg-input"
               rows="1"
-              placeholder="描述出题需求，Enter 发送，Shift+Enter 换行"
+              :placeholder="activeTab === 'generate' ? '描述出题需求，Enter 发送，Shift+Enter 换行' : '输入消息，Enter 发送，Shift+Enter 换行'"
               :disabled="streamingActive"
               @keydown="onKeydown"
               @input="autoResize"
@@ -265,7 +274,8 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed, watch, onMounted } from 'vue'
+import { ref, reactive, computed, watch, onMounted, onBeforeUnmount } from 'vue'
+import { onBeforeRouteLeave } from 'vue-router'
 import { useAppStore } from '@/stores/app'
 import { typeLabel } from '@/utils/format'
 import { aiChatStream, aiGenerateQuestionsStream, aiImportQuestions } from '@/api/client'
@@ -273,11 +283,17 @@ import { useAutoScroll } from '@/composables/useAutoScroll'
 import { useToast } from '@/composables/useToast'
 import MessageBubbles from '@/views/student/AiPractice/MessageBubbles.vue'
 import type { AiQuestion } from '@/api/client'
+import { renderRichContent, renderInlineRichContent } from '@/utils/markdown'
+import { stripOptionPrefix, extractOptionKey, isOptionCorrect, formatQuestionAnswer } from '@/utils/questionFormat'
 
 defineOptions({ name: 'AiQuestionGen' })
 
 const store = useAppStore()
 const toast = useToast()
+
+// ---- Mode State ----
+type TabMode = 'chat' | 'generate'
+const activeTab = ref<TabMode>('generate')
 
 // ---- Settings State ----
 const mobileSettingsOpen = ref(false)
@@ -344,6 +360,13 @@ const quickChips = [
   { icon: '📜', label: '中国近现代史', prompt: '帮我出5道中国近现代史判断题，涵盖鸦片战争到改革开放，附详细解析' },
 ]
 
+const chatSuggestions = [
+  '请帮我讲解微积分的基本概念',
+  'TCP三次握手和四次挥手的区别是什么？',
+  '请解释Java中接口和抽象类的区别',
+  '如何理解马克思主义的唯物辩证法？',
+]
+
 // ---- Computed ----
 const selectedCount = computed(() => Object.values(selected).filter(Boolean).length)
 const allSelected = computed(() => {
@@ -388,38 +411,15 @@ function diffLabel(d: string) {
   return { easy: '简单', medium: '中等', hard: '困难' }[d] || d
 }
 
-/** Strip leading "A. " / "A、 " prefix from option text */
+/** Compatibility helpers delegating to questionFormat */
 function stripOptPrefix(opt: string): string {
-  return String(opt).replace(/^[A-D][.、)\s]+/, '').trim()
+  return stripOptionPrefix(opt)
 }
-
-/** Extract the option letter (A/B/C/D) from an option string like "A. xxx" */
-function extractOptLetter(opt: string): string {
-  const m = String(opt).match(/^([A-D])/)
-  return m ? m[1] : ''
+function extractOptLetter(opt: string, index?: number): string {
+  return extractOptionKey(opt, index)
 }
-
-/** Check if the given option is one of the correct answers */
-function isCorrectOption(q: AiQuestion, opt: string): boolean {
-  if (!q.answer || q.answer.length === 0) return false
-  const letter = extractOptLetter(opt)
-  if (!letter) return false
-  return q.answer.some((a) => String(a).includes(letter))
-}
-
-/** Format the answer array for display */
 function formatAnswer(q: AiQuestion): string {
-  if (!q.answer || q.answer.length === 0) return ''
-  if (q.type === 'fill' || q.type === 'short' || q.type === 'coding') {
-    return q.answer.join('，')
-  }
-  // For choice/judge: extract letters
-  const letters: string[] = []
-  for (const a of q.answer) {
-    const m = String(a).match(/([A-D])/)
-    if (m) letters.push(m[1])
-  }
-  return letters.length > 0 ? letters.join('，') : q.answer.join('，')
+  return formatQuestionAnswer(q)
 }
 
 /** Toggle explanation expansion for a card */
@@ -460,6 +460,8 @@ watch(() => messages.value.length, () => { onNewMessage() })
 // ---- Generate (structured) ----
 function handleGenerate() {
   if (genLoading.value) return
+  // Switch to generate mode when using structured generation
+  activeTab.value = 'generate'
   genLoading.value = true
   streamingActive.value = true
   streamingReasoning.value = ''
@@ -541,38 +543,86 @@ function sendMessage(prompt: string) {
   streamingReasoning.value = ''
   streamingContent.value = ''
 
-  abortCtrl = aiChatStream(
-    { message: prompt, deepThinking: deepThinking.value },
-    (chunk) => {
-      if (chunk.type === 'reasoning') {
-        streamingReasoning.value += chunk.text
-      } else {
-        streamingContent.value += chunk.text
-        messages.value[aiIdx].content = streamingContent.value
+  if (activeTab.value === 'generate') {
+    // 出题模式：使用 aiGenerateQuestionsStream 真正生成题目
+    abortCtrl = aiGenerateQuestionsStream(
+      {
+        customPrompt: prompt,
+        subject: params.subject,
+        knowledgePoint: params.knowledgePoint || undefined,
+        type: params.type,
+        difficulty: params.difficulty,
+        count: params.count,
+        deepThinking: deepThinking.value,
+      },
+      (chunk) => {
+        if (chunk.type === 'reasoning') {
+          streamingReasoning.value += chunk.text
+        } else {
+          streamingContent.value += chunk.text
+          messages.value[aiIdx].content = streamingContent.value
+        }
+        onStreamingUpdate()
+      },
+      (data) => {
+        streamingActive.value = false
+        if (data.content) {
+          messages.value[aiIdx].content = data.content
+        }
+        if (data.reasoning || streamingReasoning.value) {
+          messages.value[aiIdx].reasoning = data.reasoning || streamingReasoning.value
+        }
+        const msg = messages.value[aiIdx] as any
+        if (msg._startedAt) {
+          msg.duration = (Date.now() - msg._startedAt) / 1000
+          delete msg._startedAt
+        }
+        onNewMessage()
+      },
+      (err) => {
+        streamingActive.value = false
+        messages.value[aiIdx].content = '❌ ' + (err || '生成失败，请重试')
+        toast.error(err || '出题请求失败，请重试')
+      },
+      () => {
+        streamingActive.value = false
       }
-      onStreamingUpdate()
-    },
-    (data) => {
-      streamingActive.value = false
-      if (data.content) {
-        messages.value[aiIdx].content = data.content
-      }
-      if (data.reasoning || streamingReasoning.value) {
-        messages.value[aiIdx].reasoning = data.reasoning || streamingReasoning.value
-      }
-      const msg = messages.value[aiIdx] as any
-      if (msg._startedAt) {
-        msg.duration = (Date.now() - msg._startedAt) / 1000
-        delete msg._startedAt
-      }
-      onNewMessage()
-    },
-    (err) => {
-      streamingActive.value = false
-      messages.value[aiIdx].content = '❌ ' + (err || '生成失败，请重试')
-      toast.error(err || '对话请求失败，请重试')
-    },
-  )
+    )
+  } else {
+    // 对话模式：使用 aiChatStream 进行普通对话
+    abortCtrl = aiChatStream(
+      { message: prompt, deepThinking: deepThinking.value },
+      (chunk) => {
+        if (chunk.type === 'reasoning') {
+          streamingReasoning.value += chunk.text
+        } else {
+          streamingContent.value += chunk.text
+          messages.value[aiIdx].content = streamingContent.value
+        }
+        onStreamingUpdate()
+      },
+      (data) => {
+        streamingActive.value = false
+        if (data.content) {
+          messages.value[aiIdx].content = data.content
+        }
+        if (data.reasoning || streamingReasoning.value) {
+          messages.value[aiIdx].reasoning = data.reasoning || streamingReasoning.value
+        }
+        const msg = messages.value[aiIdx] as any
+        if (msg._startedAt) {
+          msg.duration = (Date.now() - msg._startedAt) / 1000
+          delete msg._startedAt
+        }
+        onNewMessage()
+      },
+      (err) => {
+        streamingActive.value = false
+        messages.value[aiIdx].content = '❌ ' + (err || '生成失败，请重试')
+        toast.error(err || '对话请求失败，请重试')
+      },
+    )
+  }
 }
 
 function stopStreaming() {
@@ -706,6 +756,54 @@ watch(deepThinking, saveDraft)
 
 onMounted(() => {
   restoreDraft()
+
+  // Warn user before closing tab during active streaming
+  const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+    if (streamingActive.value) {
+      e.preventDefault()
+      e.returnValue = ''
+    }
+  }
+  window.addEventListener('beforeunload', handleBeforeUnload)
+
+  // Store cleanup for unmount
+  ;(window as any).__aiQuestionGenBeforeUnload = handleBeforeUnload
+})
+
+onBeforeUnmount(() => {
+  // Abort any active streaming when component is destroyed
+  if (abortCtrl) {
+    abortCtrl.abort()
+    abortCtrl = null
+  }
+  streamingActive.value = false
+  genLoading.value = false
+
+  // Remove beforeunload listener
+  const handler = (window as any).__aiQuestionGenBeforeUnload
+  if (handler) {
+    window.removeEventListener('beforeunload', handler)
+    delete (window as any).__aiQuestionGenBeforeUnload
+  }
+})
+
+// Warn before navigating away during active streaming
+onBeforeRouteLeave((to, from, next) => {
+  if (streamingActive.value) {
+    const confirmed = window.confirm('AI 正在生成题目中，离开页面将中断生成。确定要离开吗？')
+    if (confirmed) {
+      // User confirmed, abort streaming and allow navigation
+      if (abortCtrl) {
+        abortCtrl.abort()
+        abortCtrl = null
+      }
+      streamingActive.value = false
+      genLoading.value = false
+    }
+    next(confirmed)
+  } else {
+    next()
+  }
 })
 </script>
 
@@ -1325,6 +1423,41 @@ onMounted(() => {
 
 /* Input area */
 .bottom-area { flex-shrink: 0; border-top: 1px solid #f3f4f6; background: #fff; }
+
+/* Mode switcher */
+.mode-switcher {
+  display: flex;
+  gap: 0;
+  padding: 6px 16px 0;
+}
+.mode-tab {
+  flex: 1;
+  padding: 8px 12px;
+  border: 1px solid #e5e7eb;
+  background: #f9fafb;
+  color: #6b7280;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.mode-tab:first-child {
+  border-radius: 8px 0 0 8px;
+  border-right: none;
+}
+.mode-tab:last-child {
+  border-radius: 0 8px 8px 0;
+}
+.mode-tab:hover {
+  background: #f3f4f6;
+  color: #374151;
+}
+.mode-tab.active {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: #fff;
+}
+
 .input-row { padding: 10px 16px; }
 .input-wrapper { position: relative; display: flex; align-items: flex-end; }
 .msg-input {
@@ -1414,6 +1547,8 @@ onMounted(() => {
   .pc-opt-text { font-size: 12px; }
   .pc-answer { padding: 6px 10px; font-size: 12px; }
   .pc-expl-body { font-size: 11px; padding: 8px 10px; }
+  .mode-switcher { padding: 4px 10px 0; }
+  .mode-tab { padding: 6px 8px; font-size: 12px; }
 }
 
 /* ===== Dark mode overrides ===== */
@@ -1571,6 +1706,23 @@ onMounted(() => {
 [data-theme="dark"] .bottom-area {
   border-top-color: var(--ai-border-soft);
   background: var(--ai-surface);
+}
+[data-theme="dark"] .mode-switcher {
+  /* no extra bg needed */
+}
+[data-theme="dark"] .mode-tab {
+  background: var(--ai-surface-hover);
+  border-color: var(--ai-border);
+  color: var(--ai-text-muted);
+}
+[data-theme="dark"] .mode-tab:hover {
+  background: var(--ai-border-soft);
+  color: var(--ai-text-secondary);
+}
+[data-theme="dark"] .mode-tab.active {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: #fff;
 }
 [data-theme="dark"] .msg-input {
   background: var(--ai-surface-hover);
@@ -1740,9 +1892,23 @@ onMounted(() => {
     border-color: var(--ai-border);
   }
   :root:not([data-theme="light"]) .bottom-area {
-    border-top-color: var(--ai-border-soft);
-    background: var(--ai-surface);
-  }
+  border-top-color: var(--ai-border-soft);
+  background: var(--ai-surface);
+}
+:root:not([data-theme="light"]) .mode-tab {
+  background: var(--ai-surface-hover);
+  border-color: var(--ai-border);
+  color: var(--ai-text-muted);
+}
+:root:not([data-theme="light"]) .mode-tab:hover {
+  background: var(--ai-border-soft);
+  color: var(--ai-text-secondary);
+}
+:root:not([data-theme="light"]) .mode-tab.active {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: #fff;
+}
   :root:not([data-theme="light"]) .msg-input {
     background: var(--ai-surface-hover);
     border-color: var(--ai-border);

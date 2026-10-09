@@ -40,8 +40,8 @@ public class AnalysisService {
       .sorted(Comparator.comparing(s -> str(s, "submittedAt"))).toList();
     List<Map<String, Object>> trend = new ArrayList<>();
     for (Map<String, Object> s : mySubmissions) {
-      Map<String, Object> exam = find(store.exams, str(s, "examId"));
-      Map<String, Object> paper = exam == null ? null : find(store.papers, str(exam, "paperId"));
+      Map<String, Object> exam = ExamContent.examForHistory(store,str(s,"examId"));
+      Map<String, Object> paper = exam == null ? null : ExamContent.displayPaper(store, exam);
       trend.add(mapOf("examName", exam == null ? "-" : str(exam, "name"),
         "score", asInt(s.get("finalScore")), "totalScore", asInt(paper == null ? 0 : paper.get("totalScore")),
         "passScore", asInt(paper == null ? 0 : paper.get("passScore")), "submittedAt", s.get("submittedAt")));
@@ -92,12 +92,13 @@ public class AnalysisService {
     if (!isRole(user, "teacher")) return error(HttpStatus.FORBIDDEN, "Forbidden.");
     Map<String, Object> exam = find(store.exams, examId);
     if (exam == null || !Objects.equals(str(exam, "teacherId"), userId)) return error(HttpStatus.FORBIDDEN, "Forbidden.");
-    Map<String, Object> paper = find(store.papers, str(exam, "paperId"));
+    Map<String, Object> paper = ExamContent.paper(store, exam);
+    List<Map<String, Object>> contentQuestions = ExamContent.questions(store, exam);
     List<Map<String, Object>> examSubmissions = store.submissions.stream()
       .filter(s -> Objects.equals(str(s, "examId"), examId) && COMPLETED.equals(str(s, "status"))).toList();
     List<Map<String, Object>> results = new ArrayList<>();
     for (Object rawId : asList(paper == null ? null : paper.get("questionIds"))) {
-      Map<String, Object> q = find(store.questions, String.valueOf(rawId));
+      Map<String, Object> q = find(contentQuestions, String.valueOf(rawId));
       if (q == null) continue;
       int totalAttempts = 0;
       int correctCount = 0;

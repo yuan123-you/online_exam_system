@@ -383,11 +383,22 @@ class SubmissionServiceTest {
 
     @Nested
     class BuildSubmissionReviewTests {
+        private void freezeReviewPublication(Store store, Map<String, Object> exam) {
+            exam.put("published", true);
+            exam.put("teacherId", "t1");
+            store.papers.getFirst().put("teacherId", "t1");
+            Map<String, Object> question = makeQuestion("q1", "single", List.of("A"), 100);
+            question.put("teacherId", "t1");
+            question.put("options", List.of("A", "B"));
+            store.questions.add(question);
+            store.examSnapshots.put("e1", ExamContent.capture(store, exam));
+        }
+
 
         @Test
         void buildSubmissionReview_scoreAbovePassScore_returnsPassed() {
             Store store = createEmptyStore();
-            Map<String, Object> paper = makePaper("p1", 100, 60, List.of());
+            Map<String, Object> paper = makePaper("p1", 100, 60, List.of("q1"));
             store.papers.add(paper);
 
             Map<String, Object> exam = makeExam("e1", "p1");
@@ -400,6 +411,7 @@ class SubmissionServiceTest {
             submission.put("finalScore", 80);
             store.submissions.add(submission);
 
+            freezeReviewPublication(store, exam);
             Map<String, Object> review = submissionService.buildSubmissionReview(store, submission);
 
             assertEquals("已及格", review.get("passStatus"));
@@ -413,7 +425,7 @@ class SubmissionServiceTest {
         @Test
         void buildSubmissionReview_scoreBelowPassScore_returnsFailed() {
             Store store = createEmptyStore();
-            Map<String, Object> paper = makePaper("p1", 100, 60, List.of());
+            Map<String, Object> paper = makePaper("p1", 100, 60, List.of("q1"));
             store.papers.add(paper);
 
             Map<String, Object> exam = makeExam("e1", "p1");
@@ -426,6 +438,7 @@ class SubmissionServiceTest {
             submission.put("finalScore", 40);
             store.submissions.add(submission);
 
+            freezeReviewPublication(store, exam);
             Map<String, Object> review = submissionService.buildSubmissionReview(store, submission);
 
             assertEquals("未及格", review.get("passStatus"));
@@ -434,7 +447,7 @@ class SubmissionServiceTest {
         @Test
         void buildSubmissionReview_pendingStatus_returnsPending() {
             Store store = createEmptyStore();
-            Map<String, Object> paper = makePaper("p1", 100, 60, List.of());
+            Map<String, Object> paper = makePaper("p1", 100, 60, List.of("q1"));
             store.papers.add(paper);
 
             Map<String, Object> exam = makeExam("e1", "p1");
@@ -447,6 +460,7 @@ class SubmissionServiceTest {
             submission.put("finalScore", 50);
             store.submissions.add(submission);
 
+            freezeReviewPublication(store, exam);
             Map<String, Object> review = submissionService.buildSubmissionReview(store, submission);
 
             assertEquals("待定", review.get("passStatus"));

@@ -48,9 +48,10 @@ public class ExamService {
    * 装饰考试信息（添加状态和试卷信息）
    */
   public Map<String, Object> decorateExam(Store store, Map<String, Object> exam) {
-    Map<String, Object> paper = find(store.papers, str(exam, "paperId"));
+    Map<String, Object> paper = ExamContent.displayPaper(store, exam);
     Map<String, Object> next = new LinkedHashMap<>(exam);
     next.put("statusText", examStatus(exam));
+    next.put("contentVersionStatus", ExamContent.status(store, exam));
     next.put("durationMinutes", paper == null ? 0 : asInt(paper.get("durationMinutes")));
     next.put("totalScore", paper == null ? 0 : asInt(paper.get("totalScore")));
     next.put("passScore", paper == null ? 0 : asInt(paper.get("passScore")));
@@ -72,12 +73,13 @@ public class ExamService {
     String status = examStatus(exam);
     if (UPCOMING.equals(status)) return mapOf("error", "Exam has not started.");
     if (ENDED.equals(status)) return mapOf("error", ENDED);
-    Map<String, Object> paper = find(store.papers, str(exam, "paperId"));
-    if (paper == null) return mapOf("error", "Paper not found.");
     Map<String, Object> existing = studentSubmission(store, str(exam, "id"), str(user, "id"));
     if (existing != null && (PENDING.equals(str(existing, "status")) || COMPLETED.equals(str(existing, "status")))) {
       return mapOf("error", "Submission already finished.");
     }
+    Map<String, Object> paper = ExamContent.paper(store, exam);
+    if (paper == null) return mapOf("error", "Paper not found.");
+    List<Map<String, Object>> contentQuestions = ExamContent.questions(store, exam);
     Map<String, Object> session = existing == null ? new LinkedHashMap<>() : new LinkedHashMap<>(existing);
     session.putIfAbsent("id", createId("submission"));
     session.put("examId", str(exam, "id"));
@@ -93,7 +95,7 @@ public class ExamService {
     if (!session.containsKey("optionOrder")) {
       Map<String, Object> optionOrder = new LinkedHashMap<>();
       for (Object qIdObj : asList(paper.get("questionIds"))) {
-        Map<String, Object> q = find(store.questions, String.valueOf(qIdObj));
+        Map<String, Object> q = find(contentQuestions, String.valueOf(qIdObj));
         if (q != null) {
           List<Object> options = asList(q.get("options"));
           if (options.size() > 1) {
@@ -109,7 +111,8 @@ public class ExamService {
     session.put("status", RUNNING);
     session.putIfAbsent("startedAt", now());
     // Only set deadline if not already manually extended by teacher
-    if (!session.containsKey("deadlineAt") || !Boolean.TRUE.equals(session.get("manualExtended"))) {
+    if (!session.containsKey("deadlineAt")
+        || (asInt(session.get("manualExtendedMinutes")) <= 0 && !Boolean.TRUE.equals(session.get("manualExtended")))) {
       session.put("deadlineAt", computeDeadline(exam, paper, str(session, "startedAt")));
     }
     session.put("updatedAt", now());
@@ -120,14 +123,15 @@ public class ExamService {
    * 构建考试快照
    */
   public Map<String, Object> buildExamSnapshot(Store store, Map<String, Object> exam, boolean hideAnswers, List<String> questionOrder, Map<String, Object> optionOrder) {
-    Map<String, Object> paper = find(store.papers, str(exam, "paperId"));
+    Map<String, Object> paper = ExamContent.paper(store, exam);
     List<Object> questionIds = questionOrder != null
       ? new ArrayList<>(questionOrder)
       : asList(paper == null ? null : paper.get("questionIds"));
+    List<Map<String, Object>> contentQuestions = ExamContent.questions(store, exam);
     List<Map<String, Object>> questions = new ArrayList<>();
     int order = 1;
     for (Object id : questionIds) {
-      Map<String, Object> q = find(store.questions, String.valueOf(id));
+      Map<String, Object> q = find(contentQuestions, String.valueOf(id));
       if (q != null) {
         Map<String, Object> next = hideAnswers ? sanitizeQuestion(q) : new LinkedHashMap<>(q);
         if (optionOrder != null && !optionOrder.isEmpty()) {
@@ -184,6 +188,7 @@ public class ExamService {
   private Map<String, Object> sanitizeQuestion(Map<String, Object> question) {
     Map<String, Object> safe = new LinkedHashMap<>(question);
     safe.remove("answer");
+    safe.remove("explanation");
     return safe;
   }
 

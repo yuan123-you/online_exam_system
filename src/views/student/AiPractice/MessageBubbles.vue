@@ -64,11 +64,17 @@
           </details>
         </div>
 
-        <!-- Streaming content: typewriter effect for chat, generating hint for practice -->
+        <!-- Streaming content: typewriter effect for chat, interactive question cards for practice -->
         <div
           v-if="msg.role === 'assistant' && isLast(idx) && streamingActive && (streamingContent || streamingHint)"
           :ref="(el: any) => setStreamingEl(idx, el as HTMLElement | null)"
           class="message-content streaming"
+        ></div>
+        <!-- Fallback: display streaming content if streaming stopped but msg.content not yet set -->
+        <div
+          v-else-if="msg.role === 'assistant' && isLast(idx) && !streamingActive && !msg.content && streamingContent"
+          class="message-content fade-in"
+          v-html="renderStreamingContent(streamingContent)"
         ></div>
         <!-- Stable content: rendered once after streaming completes -->
         <div
@@ -79,6 +85,74 @@
           }"
           v-html="renderContent(msg.content, msg.role, idx)"
         ></div>
+      </div>
+
+      <!-- Interactive streaming question cards — practice tab only, during streaming -->
+      <div
+        v-if="tab === 'practice' && msg.role === 'assistant' && isLast(idx) && streamingActive && streamingQuestions && streamingQuestions.length > 0"
+        class="exam-paper streaming-exam"
+      >
+        <div class="exam-header">
+          <span class="exam-title">📋 练习题（已生成 {{ streamingQuestions.length }} 题，继续中...）</span>
+        </div>
+
+        <div v-for="(q, qi) in streamingQuestions" :key="'sq-'+qi" class="exam-question" :class="{ 'sq-new-card': (q as any)._isNew }">
+          <!-- Question number + type badge -->
+          <div class="eq-head">
+            <span class="eq-num">{{ qi + 1 }}.</span>
+            <span class="eq-type">{{ typeLabel((q.type as any) || 'single') }}</span>
+            <span class="eq-score">{{ (q.score as any) || 5 }}分</span>
+          </div>
+
+          <!-- Question text -->
+          <div class="eq-body" v-html="renderRichContent(q.title)"></div>
+
+          <!-- Single choice / Judge: radio buttons -->
+          <div v-if="(q.type === 'single' || q.type === 'judge') && (q.options as any[])?.length" class="eq-options">
+            <label
+              v-for="(opt, oi) in (q.options as string[])"
+              :key="oi"
+              :class="['eq-opt', streamingOptionClass(idx, qi, opt)]"
+            >
+              <span class="eo-letter">{{ extractOptionKey(opt, oi) }}</span>
+              <input
+                type="radio"
+                :name="'sq-' + idx + '-' + qi"
+                :value="extractOptionKey(opt, oi)"
+                :checked="streamingAnswers[idx]?.[qi]?.includes(extractOptionKey(opt, oi))"
+                @change="setStreamingSingle(idx, qi, extractOptionKey(opt, oi))"
+              />
+              <span class="eo-text" v-html="renderInlineRichContent(stripOptionPrefix(opt))"></span>
+            </label>
+          </div>
+
+          <!-- Multiple choice: checkboxes -->
+          <div v-if="q.type === 'multiple' && (q.options as any[])?.length" class="eq-options">
+            <label
+              v-for="(opt, oi) in (q.options as string[])"
+              :key="oi"
+              :class="['eq-opt', streamingOptionClass(idx, qi, opt)]"
+            >
+              <span class="eo-letter">{{ extractOptionKey(opt, oi) }}</span>
+              <input
+                type="checkbox"
+                :value="extractOptionKey(opt, oi)"
+                :checked="streamingAnswers[idx]?.[qi]?.includes(extractOptionKey(opt, oi))"
+                @change="toggleStreamingMulti(idx, qi, extractOptionKey(opt, oi))"
+              />
+              <span class="eo-text" v-html="renderInlineRichContent(stripOptionPrefix(opt))"></span>
+            </label>
+          </div>
+
+          <!-- Fill / Short answer / Coding: textarea -->
+          <div v-if="q.type === 'fill' || q.type === 'short' || q.type === 'coding'" class="eq-textarea">
+            <textarea
+              v-model="streamingTextAnswers[idx][qi]"
+              placeholder="请输入答案..."
+              rows="3"
+            ></textarea>
+          </div>
+        </div>
       </div>
 
       <!-- Duration + Copy row (AI only) — show during and after streaming -->
@@ -136,7 +210,7 @@
           </div>
 
           <!-- Question text -->
-          <div class="eq-body">{{ q.title }}</div>
+          <div class="eq-body" v-html="renderRichContent(q.title)"></div>
 
           <!-- Single choice / Judge: radio buttons with A/B/C/D labels -->
           <div v-if="(q.type === 'single' || q.type === 'judge') && q.options?.length" class="eq-options">
@@ -145,16 +219,16 @@
               :key="oi"
               :class="['eq-opt', optionClass(idx, qi, opt)]"
             >
-              <span class="eo-letter">{{ ['A','B','C','D','E','F'][oi] || oi }}</span>
+              <span class="eo-letter">{{ extractOptionKey(opt, oi) }}</span>
               <input
                 type="radio"
                 :name="'pq-' + idx + '-' + qi"
-                :value="extractKey(opt)"
-                :checked="answers[idx]?.[qi]?.includes(extractKey(opt))"
+                :value="extractOptionKey(opt, oi)"
+                :checked="answers[idx]?.[qi]?.includes(extractOptionKey(opt, oi))"
                 :disabled="submitted[idx]"
-                @change="setSingle(idx, qi, extractKey(opt))"
+                @change="setSingle(idx, qi, extractOptionKey(opt, oi))"
               />
-              <span class="eo-text">{{ opt.replace(/^[A-D][.、\s]+/, '') }}</span>
+              <span class="eo-text" v-html="renderInlineRichContent(stripOptionPrefix(opt))"></span>
             </label>
           </div>
 
@@ -165,15 +239,15 @@
               :key="oi"
               :class="['eq-opt', optionClass(idx, qi, opt)]"
             >
-              <span class="eo-letter">{{ ['A','B','C','D','E','F'][oi] || oi }}</span>
+              <span class="eo-letter">{{ extractOptionKey(opt, oi) }}</span>
               <input
                 type="checkbox"
-                :value="extractKey(opt)"
-                :checked="answers[idx]?.[qi]?.includes(extractKey(opt))"
+                :value="extractOptionKey(opt, oi)"
+                :checked="answers[idx]?.[qi]?.includes(extractOptionKey(opt, oi))"
                 :disabled="submitted[idx]"
-                @change="toggleMulti(idx, qi, extractKey(opt))"
+                @change="toggleMulti(idx, qi, extractOptionKey(opt, oi))"
               />
-              <span class="eo-text">{{ opt.replace(/^[A-D][.、\s]+/, '') }}</span>
+              <span class="eo-text" v-html="renderInlineRichContent(stripOptionPrefix(opt))"></span>
             </label>
           </div>
 
@@ -232,6 +306,8 @@ import type { PracticeSession } from '@/api/client'
 import katex from 'katex'
 import 'katex/dist/katex.min.css'
 import { savePracticeRecords } from '@/api/client'
+import { renderRichContent, renderInlineRichContent } from '@/utils/markdown'
+import { stripOptionPrefix, extractOptionKey, isOptionCorrect, formatQuestionAnswer } from '@/utils/questionFormat'
 import LiveTimer from './LiveTimer.vue'
 
 const props = defineProps<{
@@ -246,6 +322,7 @@ const props = defineProps<{
   streamingQuestions?: Array<Record<string, unknown>>
   loading: boolean
   tab?: 'chat' | 'practice'
+  isQuestionGen?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -267,35 +344,22 @@ function renderStreamingContent(text: string): string {
   if (!text) return ''
   const isPractice = props.tab === 'practice'
   if (isPractice) {
-    // Practice mode: show question-by-question cards during streaming
+    // Practice mode: interactive question cards are rendered via Vue template above
+    // This function only provides a fallback when streamingQuestions is empty
     const sq = props.streamingQuestions
     if (sq && sq.length > 0) {
-      let html = '<div class="streaming-questions">'
-      html += `<div class="sq-header">📝 已生成 ${sq.length} 道题，继续生成中...</div>`
-      for (let i = 0; i < sq.length; i++) {
-        const q = sq[i]
-        const typeStr = (q.type as string) || 'single'
-        const title = (q.title as string) || ''
-        const options = (q.options as string[]) || []
-        const isNew = (q as any)._isNew
-        html += `<div class="sq-card${isNew ? ' sq-new' : ''}">`
-        html += `<div class="sq-card-head"><span class="sq-num">${i + 1}.</span><span class="sq-type">${typeLabel(typeStr as any)}</span></div>`
-        html += `<div class="sq-card-title">${escapeHtml(title)}</div>`
-        if (options.length > 0) {
-          html += '<div class="sq-options">'
-          for (let oi = 0; oi < options.length; oi++) {
-            const optText = String(options[oi]).replace(/^[A-D][.、\s]+/, '')
-            const letter = ['A','B','C','D','E','F'][oi] || oi
-            html += `<div class="sq-opt"><span class="sq-opt-letter">${letter}</span><span class="sq-opt-text">${escapeHtml(optText)}</span></div>`
-          }
-          html += '</div>'
-        }
-        html += '</div>'
-      }
-      html += '</div>'
-      return html
+      return '' // Cards rendered by Vue template, no innerHTML needed
     }
     return '<div class="generating-hint">📝 正在生成题目<span class="gen-dots">...</span></div>'
+  }
+  // Question generation mode (teacher/admin): show indicator during streaming
+  if (props.isQuestionGen) {
+    // If the content looks like JSON question data, show a generating hint
+    if (/[\{\[]/.test(text) && (text.includes('"title"') || text.includes('"type"'))) {
+      return '<div class="generating-hint">📝 正在生成题目<span class="gen-dots">...</span></div>'
+    }
+    // Otherwise render as markdown (free-form chat responses)
+    return renderMarkdown(text)
   }
   // Chat mode: use typewriter content for character-by-character display
   const tw = props.typewriterContent
@@ -325,13 +389,13 @@ function updateStreamingDOM() {
   }
 }
 
-/** Schedule a streaming DOM update on the next animation frame */
+/** Schedule a streaming DOM update — uses setTimeout instead of RAF for background tab support */
 function scheduleStreamingUpdate() {
   if (streamingRafId) return
-  streamingRafId = requestAnimationFrame(() => {
+  streamingRafId = setTimeout(() => {
     streamingRafId = 0
     updateStreamingDOM()
-  })
+  }, 16) as unknown as number
 }
 
 /** Set the streaming element ref for a given message index */
@@ -367,15 +431,45 @@ watch(() => props.streamingActive, (active, wasActive) => {
     nextTick(() => updateStreamingDOM())
   }
   if (!active && wasActive) {
-    // Streaming completed — cancel pending RAF, clear streaming state
-    if (streamingRafId) { cancelAnimationFrame(streamingRafId); streamingRafId = 0 }
+    // Streaming completed — cancel pending timer, clear streaming state
+    if (streamingRafId) { clearTimeout(streamingRafId); streamingRafId = 0 }
+    // Ensure final content is rendered before clearing
+    updateStreamingDOM()
     lastStreamingHtml = ''
     streamingContentEls.clear()
+    // Migrate streaming answers to final answers so user selections are preserved
+    migrateStreamingAnswers()
   }
 })
 
+/** 将流式阶段的用户作答迁移到正式答案状态，确保流式结束后选项不丢失 */
+function migrateStreamingAnswers() {
+  for (const msgIdx of Object.keys(streamingAnswers)) {
+    const mi = Number(msgIdx)
+    for (const qi of Object.keys(streamingAnswers[mi])) {
+      const qIdx = Number(qi)
+      ensure(mi, qIdx)
+      const sel = streamingAnswers[mi][qIdx]
+      if (sel && sel.length > 0) {
+        answers[mi][qIdx] = [...sel]
+      }
+    }
+  }
+  for (const msgIdx of Object.keys(streamingTextAnswers)) {
+    const mi = Number(msgIdx)
+    for (const qi of Object.keys(streamingTextAnswers[mi])) {
+      const qIdx = Number(qi)
+      ensure(mi, qIdx)
+      const val = streamingTextAnswers[mi][qIdx]
+      if (val) {
+        textAnswers[mi][qIdx] = val
+      }
+    }
+  }
+}
+
 onBeforeUnmount(() => {
-  if (streamingRafId) { cancelAnimationFrame(streamingRafId); streamingRafId = 0 }
+  if (streamingRafId) { clearTimeout(streamingRafId); streamingRafId = 0 }
   streamingContentEls.clear()
 })
 
@@ -384,9 +478,9 @@ const currentStreamStartTime = computed(() =>
   props.tab === 'practice' ? store.practiceStreamStartTime : store.chatStreamStartTime
 )
 
-// 监听练习会话恢复，自动加载已保存的答案
+// 监听练习会话恢复，自动加载已保存的答案（包括已提交的会话，确保刷新后保留作答记录和结果）
 watch(() => store.activePracticeSession, (session) => {
-  if (session && session.status !== 'submitted') {
+  if (session) {
     nextTick(() => loadAnswersFromSession(session))
   }
 }, { immediate: true })
@@ -473,6 +567,30 @@ const textAnswers = reactive<Record<number, Record<number, string>>>({})
 const results = reactive<Record<number, Record<number, boolean>>>({})
 const submitted = reactive<Record<number, boolean>>({})
 const explanationsOpen = reactive<Record<number, Record<number, boolean>>>({})
+
+// Streaming answer state — allows user interaction during AI generation
+const streamingAnswers = reactive<Record<number, Record<number, string[]>>>({})
+const streamingTextAnswers = reactive<Record<number, Record<number, string>>>({})
+
+function streamingOptionClass(msgIdx: number, qi: number, opt: string): string {
+  const key = extractKey(opt)
+  const sel = streamingAnswers[msgIdx]?.[qi]?.includes(key)
+  return sel ? 'selected' : ''
+}
+
+function setStreamingSingle(msgIdx: number, qi: number, key: string) {
+  if (!streamingAnswers[msgIdx]) streamingAnswers[msgIdx] = {}
+  streamingAnswers[msgIdx][qi] = [key]
+}
+
+function toggleStreamingMulti(msgIdx: number, qi: number, key: string) {
+  if (!streamingAnswers[msgIdx]) streamingAnswers[msgIdx] = {}
+  if (!streamingAnswers[msgIdx][qi]) streamingAnswers[msgIdx][qi] = []
+  const arr = streamingAnswers[msgIdx][qi]
+  const pos = arr.indexOf(key)
+  if (pos >= 0) arr.splice(pos, 1)
+  else arr.push(key)
+}
 
 function isLast(idx: number) {
   return idx === props.messages.length - 1
@@ -1021,8 +1139,7 @@ function tryParseJson(raw: string): unknown {
 }
 
 function extractKey(opt: string): string {
-  const m = opt.match(/^([A-D])(?:\.\s*|$)/)
-  return m ? m[1] : opt
+  return extractOptionKey(opt)
 }
 
 /** Normalize answer array: extract only valid answer letters for choice/judge, keep text for fill/short */
@@ -1030,11 +1147,19 @@ function normalizeAnswers(answer: string[], type: string): string[] {
   if (type === 'fill' || type === 'short' || type === 'coding') {
     return answer.filter(a => a && a.trim())
   }
-  // For choice/judge: extract letter from each answer item
   const letters: string[] = []
   for (const a of answer) {
-    const m = String(a).match(/([A-D])/)
-    if (m) letters.push(m[1])
+    const str = String(a).trim()
+    const key = extractOptionKey(str)
+    if (key && /[A-Z]/.test(key)) {
+      letters.push(key)
+    } else if (type === 'judge') {
+      if (/^(对|正确|true|t|√)$/i.test(str)) letters.push('A')
+      else if (/^(错|错误|false|f|×)$/i.test(str)) letters.push('B')
+      else letters.push(str)
+    } else {
+      letters.push(str)
+    }
   }
   return letters
 }
@@ -1253,7 +1378,8 @@ function renderContent(text: string, role: string, idx: number): string {
   const isStreaming = isLast(idx) && props.streamingActive
 
   // --- Chat mode: hide raw JSON question data, show friendly hint ---
-  if (!isPractice) {
+  // But NOT in teacher/admin question generation view (isQuestionGen)
+  if (!isPractice && !props.isQuestionGen) {
     // If the content looks like structured question JSON, hide it and suggest switching to practice tab
     if (/[\{\[]/.test(text) && (text.includes('"title"') || text.includes('"type"')) && (text.includes('"options"') || text.includes('"answer"'))) {
       return '<p style="color:var(--muted);">💡 如需练习题目，请切换到「📝 练题」模式</p>'
@@ -1747,6 +1873,23 @@ function escapeHtml(s: string) {
   border-radius: 10px;
   overflow: hidden;
   background: var(--ai-surface);
+}
+
+/* Streaming exam paper — animated header */
+.streaming-exam .exam-header {
+  background: linear-gradient(135deg, var(--ai-accent-soft) 0%, var(--ai-surface-soft) 100%);
+}
+.streaming-exam .exam-title {
+  animation: progress-pulse 2s ease-in-out infinite;
+}
+
+/* New question card appear animation */
+.exam-question.sq-new-card {
+  animation: sq-card-slide-in 0.4s ease-out both;
+}
+@keyframes sq-card-slide-in {
+  from { opacity: 0; transform: translateY(12px); }
+  to { opacity: 1; transform: translateY(0); }
 }
 
 .exam-header {

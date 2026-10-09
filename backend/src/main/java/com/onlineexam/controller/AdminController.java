@@ -59,7 +59,11 @@ public class AdminController {
     for (int i = 0; i < asList(body.get("records")).size(); i++) {
       Map<String, Object> record = new LinkedHashMap<>(asMap(asList(body.get("records")).get(i)));
       record.put("id", createId(str(record, "role").isBlank() ? "user" : str(record, "role")));
-      String rawPw = str(record, "password").isBlank() ? "123456" : str(record, "password");
+      String rawPw = str(record, "password");
+      if (rawPw.isBlank()) {
+        errors.add(mapOf("index", i, "title", str(record, "username"), "message", "An explicit initial password is required."));
+        continue;
+      }
       record.put("password", authService.hashPassword(rawPw));
       String validation = entityCrudService.validate(store, "users", record, null);
       if (!validation.isBlank()) {

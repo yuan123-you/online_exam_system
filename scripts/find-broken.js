@@ -1,3 +1,4 @@
+if (!process.env.MYSQL_PASSWORD) throw new Error("MYSQL_PASSWORD must be provided through the environment");
 const http = require("http");
 
 function apiCall(method, path, body, headers = {}) {
@@ -19,7 +20,7 @@ function apiCall(method, path, body, headers = {}) {
 }
 
 (async () => {
-  const loginRes = await apiCall("POST", "/api/login", JSON.stringify({ username: "teacher", password: "123456" }));
+  const loginRes = await apiCall("POST", "/api/login", JSON.stringify({ username: "teacher", password: process.env.MYSQL_PASSWORD }));
   const userId = loginRes.user.id;
   const bs = await apiCall("GET", "/api/bootstrap", null, { "X-User-Id": userId });
   const questions = bs.questions || [];

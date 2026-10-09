@@ -35,6 +35,7 @@ public class EntityCrudService {
   /**
    * 创建实体
    */
+  @org.springframework.transaction.annotation.Transactional
   public ResponseEntity<?> createEntity(String userId, Map<String, Object> body) {
     Store store = storeService.readStore();
     Map<String, Object> user = find(store.users, userId);
@@ -43,10 +44,11 @@ public class EntityCrudService {
     Map<String, Object> record = asMap(body.get("record"));
     if (record.isEmpty()) return error(HttpStatus.BAD_REQUEST, "Record is required.");
     record = new LinkedHashMap<>(record);
-    record.putIfAbsent("id", createId(entity.endsWith("s") ? entity.substring(0, entity.length() - 1) : entity));
-    if ("users".equals(entity) && record.containsKey("password")) {
+    record.put("id", createId(entity.endsWith("s") ? entity.substring(0, entity.length() - 1) : entity));
+    if ("users".equals(entity)) {
       String rawPw = str(record, "password");
-      record.put("password", authService.hashPassword(rawPw.isBlank() ? "123456" : rawPw));
+      if (rawPw.isBlank()) return error(HttpStatus.BAD_REQUEST, "An explicit initial password is required.");
+      record.put("password", authService.hashPassword(rawPw));
     }
     if (isRole(user, "teacher") && Set.of("questions", "papers", "exams").contains(entity)) {
       record.put("teacherId", userId);
@@ -61,7 +63,7 @@ public class EntityCrudService {
     }
     String validation = validate(store, entity, record, null);
     if (!validation.isBlank()) return error(HttpStatus.BAD_REQUEST, validation);
-    storeService.saveRecord(entity, record);
+    storeService.createRecord(entity, record);
     systemLogService.log(user, "create " + entity, str(record, "id"));
     Map<String, Object> safeRecord = new LinkedHashMap<>(record);
     if ("users".equals(entity)) safeRecord.remove("password");
@@ -88,21 +90,21 @@ public class EntityCrudService {
       next.put("teacherId", userId);
     }
     if ("users".equals(entity)) {
-      if (record.containsKey("password")) {
-        String rawPw = str(record, "password");
-        if (!rawPw.isBlank()) next.put("password", authService.hashPassword(rawPw));
-        else next.put("password", str(existing, "password"));
-      }
-      if (!next.containsKey("password") || str(next, "password").isBlank()) {
-        Map<String, Object> dbRecord = find(storeService.readStore().users, str(record, "id"));
-        if (dbRecord != null && dbRecord.containsKey("password")) {
-          next.put("password", str(dbRecord, "password"));
-        }
-      }
+      // The shared Store is password-free. A profile patch must not fetch or copy credentials from it.
+      next.remove("password");
+      if (!str(record,"password").isBlank()) next.put("password",authService.hashPassword(str(record,"password")));
     }
     String validation = validate(store, entity, next, str(existing, "id"));
     if (!validation.isBlank()) return error(HttpStatus.BAD_REQUEST, validation);
-    storeService.saveRecord(entity, next);
+    if ("users".equals(entity)) {
+      Map<String,Object> patch = new LinkedHashMap<>(record);
+      patch.put("id",str(existing,"id"));
+      patch.remove("password");
+      if (next.containsKey("password")) patch.put("password",next.get("password"));
+      storeService.updateUserRecord(patch, existing);
+    } else {
+      storeService.saveRecord(entity, next);
+    }
     systemLogService.log(user, "update " + entity, str(next, "id"));
     Map<String, Object> safeNext = new LinkedHashMap<>(next);
     if ("users".equals(entity)) safeNext.remove("password");
@@ -112,18 +114,23 @@ public class EntityCrudService {
   /**
    * 删除实体
    */
+  @org.springframework.transaction.annotation.Transactional
   public ResponseEntity<?> deleteEntity(String userId, String entity, String id) {
     Store store = storeService.readStore();
     Map<String, Object> user = find(store.users, userId);
     if (!canManage(user, entity)) return error(HttpStatus.FORBIDDEN, "Forbidden.");
     List<Map<String, Object>> records = store.entity(entity);
-    if (records == null || find(records, id) == null) return error(HttpStatus.NOT_FOUND, "Record not found.");
-    if ("classes".equals(entity)) {
-      clearExamClassReferences(store, id);
+    Map<String,Object> existing = records == null ? null : find(records,id);
+    if (existing == null) return error(HttpStatus.NOT_FOUND, "Record not found.");
+    if (isRole(user,"teacher") && !Objects.equals(str(existing,"teacherId"),userId)) {
+      return error(HttpStatus.FORBIDDEN, "Forbidden.");
     }
     String block = deleteBlocker(store, entity, id);
     if (!block.isBlank()) return error(HttpStatus.BAD_REQUEST, block);
-    storeService.deleteRecord(entity, id);
+    if ("classes".equals(entity)) storeService.deleteClassAndReferences(id);
+    else if ("departments".equals(entity)) storeService.deleteDepartmentIfUnreferenced(id);
+    else if (isRole(user,"teacher")) storeService.deleteOwnedResource(entity,id,userId);
+    else storeService.deleteRecord(entity, id);
     systemLogService.log(user, "delete " + entity, id);
     return ResponseEntity.ok(mapOf("success", true));
   }
@@ -133,7 +140,8 @@ public class EntityCrudService {
    */
   public String validate(Store store, String entity, Map<String, Object> record, String currentId) {
     if ("users".equals(entity)) {
-      if (str(record, "username").isBlank() || str(record, "password").isBlank() || str(record, "name").isBlank()) return "User fields are incomplete.";
+      if (str(record, "username").isBlank() || str(record, "name").isBlank()
+          || ((currentId == null || record.containsKey("password")) && str(record,"password").isBlank())) return "User fields are incomplete.";
       if (!Set.of("admin", "teacher", "student").contains(str(record, "role"))) return "Invalid role.";
       if (store.users.stream().anyMatch(u -> Objects.equals(str(u, "username"), str(record, "username")) && !Objects.equals(str(u, "id"), currentId))) return "Username already exists.";
       if ("student".equals(str(record, "role"))) {
@@ -147,17 +155,61 @@ public class EntityCrudService {
     if ("questions".equals(entity)) {
       if (str(record, "title").isBlank() || str(record, "subject").isBlank() || str(record, "type").isBlank()) return "Question fields are incomplete.";
       if (!OBJECTIVE_TYPES.contains(str(record, "type")) && !SUBJECTIVE_TYPES.contains(str(record, "type"))) return "Invalid question type.";
-      if (asInt(record.get("score")) <= 0) return "Question score must be greater than zero.";
+      if (positiveInteger(record.get("score")) == null) return "Question score must be greater than zero and an exact integer.";
     }
     if ("papers".equals(entity)) {
       if (str(record, "name").isBlank() || asList(record.get("questionIds")).isEmpty()) return "Paper needs questions.";
-      int total = asList(record.get("questionIds")).stream().mapToInt(id -> asInt(java.util.Optional.ofNullable(find(store.questions, String.valueOf(id))).map(q -> q.get("score")).orElse(0))).sum();
-      record.put("totalScore", total);
+      String references = validatePaperReferences(store,record,str(record,"teacherId"));
+      if (!references.isBlank()) return references;
+      String configuration = ExamConfigurationPolicy.paper(record);
+      if (!configuration.isBlank()) return configuration;
     }
     if ("exams".equals(entity)) {
       if (str(record, "name").isBlank() || str(record, "paperId").isBlank() || asList(record.get("targetClassIds")).isEmpty()) return "Exam fields are incomplete.";
+      String configuration = ExamConfigurationPolicy.exam(record);
+      if (!configuration.isBlank()) return configuration;
+      boolean frozen = store.examSnapshots.containsKey(str(record,"id"));
+      Map<String,Object> paper = frozen ? ExamContent.paper(store,record) : find(store.papers,str(record,"paperId"));
+      if (paper == null || (!str(record,"teacherId").isBlank() && !Objects.equals(str(paper,"teacherId"),str(record,"teacherId")))) {
+        return "Paper is unavailable for this exam.";
+      }
+      if (!frozen) {
+        String references = validatePaperReferences(store,new LinkedHashMap<>(paper),str(record,"teacherId"));
+        if (!references.isBlank()) return references;
+      }
     }
     return "";
+  }
+
+  private String validatePaperReferences(Store store,Map<String,Object> record,String teacherId) {
+    Set<String> seen = new HashSet<>();
+    int total = 0;
+    List<Object> ids = asList(record.get("questionIds"));
+    if (ids.isEmpty()) return "Paper needs questions.";
+    for (Object rawId : ids) {
+      String id = String.valueOf(rawId);
+      if (!seen.add(id)) return "Paper contains duplicated questions.";
+      Map<String,Object> question = find(store.questions,id);
+      if (question == null || (!teacherId.isBlank() && !Objects.equals(str(question,"teacherId"),teacherId))) {
+        return "Paper references unavailable questions.";
+      }
+      Integer score = positiveInteger(question.get("score"));
+      if (score == null) return "Paper references an invalid question score.";
+      try { total = Math.addExact(total,score); }
+      catch (ArithmeticException overflow) { return "Paper total score is outside the supported integer range."; }
+    }
+    record.put("totalScore",total);
+    return "";
+  }
+
+  private Integer positiveInteger(Object raw) {
+    try {
+      int value;
+      if (raw instanceof Number) value = new java.math.BigDecimal(raw.toString()).intValueExact();
+      else if (raw instanceof String text) value = Integer.parseInt(text);
+      else return null;
+      return value > 0 ? value : null;
+    } catch (ArithmeticException | NumberFormatException invalid) { return null; }
   }
 
   /**
@@ -179,6 +231,15 @@ public class EntityCrudService {
         return "该班级下还有 " + studentCount + " 名学生，请先移除或转移学生后再删除。";
       }
     }
+    if ("questions".equals(entity) && store.papers.stream().anyMatch(p -> asList(p.get("questionIds")).contains(id))) {
+      return "该题目已被试卷引用，无法删除。";
+    }
+    if ("papers".equals(entity) && store.exams.stream().anyMatch(e -> Objects.equals(str(e, "paperId"), id))) {
+      return "该试卷已被考试引用，无法删除。";
+    }
+    if ("exams".equals(entity) && store.submissions.stream().anyMatch(s -> Objects.equals(str(s, "examId"), id))) {
+      return "该考试已有提交记录，无法删除。";
+    }
     return "";
   }
 
@@ -186,15 +247,8 @@ public class EntityCrudService {
    * 清理考试中的班级引用
    */
   public void clearExamClassReferences(Store store, String classId) {
-    for (Map<String, Object> exam : store.exams) {
-      List<Object> targetClassIds = asList(exam.get("targetClassIds"));
-      if (targetClassIds.contains(classId)) {
-        List<Object> filtered = new ArrayList<>(targetClassIds);
-        filtered.remove(classId);
-        exam.put("targetClassIds", filtered);
-        storeService.saveRecord("exams", exam);
-      }
-    }
+    // The shared Store is a read view, never the authority for roster cleanup writes.
+    storeService.removeExamClassReferences(classId);
   }
 
   private boolean canManage(Map<String, Object> user, String entity) {

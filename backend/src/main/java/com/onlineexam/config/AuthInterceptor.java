@@ -1,6 +1,7 @@
 package com.onlineexam.config;
 
 import jakarta.servlet.http.HttpServletRequest;
+import com.onlineexam.service.SessionTokenService;
 import jakarta.servlet.http.HttpServletResponse;
 import java.util.concurrent.ConcurrentHashMap;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -19,13 +20,15 @@ import org.springframework.web.servlet.HandlerInterceptor;
 public class AuthInterceptor implements HandlerInterceptor {
 
   private final JdbcTemplate jdbc;
+  private final SessionTokenService sessions;
 
   /** Cache: userId -> expiry timestamp (ms).  Entries are valid for 30 seconds. */
   private final ConcurrentHashMap<String, Long> validUserCache = new ConcurrentHashMap<>();
   private static final long CACHE_TTL_MS = 30_000; // 30 seconds
 
-  public AuthInterceptor(JdbcTemplate jdbc) {
+  public AuthInterceptor(JdbcTemplate jdbc, SessionTokenService sessions) {
     this.jdbc = jdbc;
+    this.sessions = sessions;
   }
 
   @Override
@@ -36,6 +39,11 @@ public class AuthInterceptor implements HandlerInterceptor {
     }
     String userId = request.getHeader("X-User-Id");
     if (userId == null || userId.isBlank()) {
+      response.setStatus(401);
+      return false;
+    }
+
+    if (!sessions.validate(request.getHeader("X-Session-Token"), userId)) {
       response.setStatus(401);
       return false;
     }

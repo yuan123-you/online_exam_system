@@ -1,6 +1,7 @@
 package com.onlineexam.controller;
 
 import com.onlineexam.StoreService;
+import com.onlineexam.service.ExamContent;
 import com.onlineexam.StoreService.Store;
 import java.util.*;
 import java.util.stream.Collectors;
@@ -33,7 +34,8 @@ public class ClassAnalysisController {
     if (exam == null || !Objects.equals(str(exam, "teacherId"), userId))
       return error(HttpStatus.FORBIDDEN, "Forbidden.");
 
-    Map<String, Object> paper = findById(store.papers, str(exam, "paperId"));
+    Map<String, Object> paper = ExamContent.paper(store, exam);
+    List<Map<String, Object>> contentQuestions = ExamContent.questions(store, exam);
     int passScore = paper != null ? asInt(paper.get("passScore")) : 60;
     int totalScore = paper != null ? asInt(paper.get("totalScore")) : 100;
 
@@ -123,7 +125,7 @@ public class ClassAnalysisController {
         List<Map<String, Object>> questionStats = new ArrayList<>();
         for (Object qid : questionIds) {
           String questionId = String.valueOf(qid);
-          Map<String, Object> question = findById(store.questions, questionId);
+          Map<String, Object> question = findById(contentQuestions, questionId);
           if (question == null) continue;
 
           int correctCount = 0;

@@ -21,7 +21,7 @@ public class WebConfig implements WebMvcConfigurer {
   private final List<String> corsOrigins;
 
   public WebConfig(AuthInterceptor authInterceptor,
-                   @Value("${cors.allowed-origins:http://localhost:*,http://127.0.0.1:*,https://web.novo.ccwu.cc,http://web.novo.ccwu.cc}") String corsOriginsStr) {
+                   @Value("${cors.allowed-origins:http://localhost:*,http://127.0.0.1:*,https://web.novo.ccwu.cc,http://web.novo.ccwu.cc,https://129.151.25.15}") String corsOriginsStr) {
     this.authInterceptor = authInterceptor;
     this.corsOrigins = List.of(corsOriginsStr.split(","));
   }
@@ -31,7 +31,7 @@ public class WebConfig implements WebMvcConfigurer {
     registry.addMapping("/api/**")
         .allowedOriginPatterns(corsOrigins.toArray(new String[0]))
         .allowedMethods("GET", "POST", "PUT", "DELETE", "OPTIONS")
-        .allowedHeaders("Content-Type", "X-User-Id", "Authorization")
+        .allowedHeaders("Content-Type", "X-User-Id", "X-Session-Token", "Authorization")
         .exposedHeaders("X-RateLimit-Remaining")
         .allowCredentials(true)
         .maxAge(3600);
@@ -41,7 +41,7 @@ public class WebConfig implements WebMvcConfigurer {
   public void addInterceptors(InterceptorRegistry registry) {
     registry.addInterceptor(authInterceptor)
         .addPathPatterns("/api/**")
-        .excludePathPatterns("/api/login", "/api/health", "/api/bootstrap", "/api/ai/health");
+        .excludePathPatterns("/api/login", "/api/register", "/api/registration-options", "/api/health", "/api/ai/health");
   }
 
 }

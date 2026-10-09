@@ -1,6 +1,7 @@
 package com.onlineexam.controller;
 
 import com.onlineexam.StoreService;
+import com.onlineexam.service.ExamContent;
 import com.onlineexam.StoreService.Store;
 import com.onlineexam.service.ExamService;
 import com.onlineexam.service.SubmissionService;
@@ -152,7 +153,7 @@ public class ExamController {
     if (!isRole(user, "teacher")) return error(HttpStatus.FORBIDDEN, "Forbidden.");
     Map<String, Object> exam = find(store.exams, examId);
     if (exam == null || !Objects.equals(str(exam, "teacherId"), userId)) return error(HttpStatus.FORBIDDEN, "Forbidden.");
-    Map<String, Object> paper = find(store.papers, str(exam, "paperId"));
+    Map<String, Object> paper = ExamContent.displayPaper(store, exam);
     Set<String> targetClassIds = new HashSet<>(asList(exam.get("targetClassIds")).stream().map(String::valueOf).toList());
     List<Map<String, Object>> targetStudents = store.users.stream()
       .filter(u -> isRole(u, "student") && targetClassIds.contains(str(u, "classId"))).toList();
@@ -168,6 +169,7 @@ public class ExamController {
       row.put("className", str(find(store.classes, str(student, "classId")), "name"));
       row.put("status", submission == null ? "未开始" : str(submission, "status"));
       row.put("score", submission == null ? null : asInt(submission.get("finalScore")));
+      row.put("contentVersionStatus", ExamContent.status(store, exam));
       row.put("totalScore", asInt(paper == null ? 0 : paper.get("totalScore")));
       row.put("passScore", asInt(paper == null ? 0 : paper.get("passScore")));
       row.put("rank", null);
@@ -178,7 +180,7 @@ public class ExamController {
       .sorted(Comparator.comparingInt((Map<String, Object> r) -> asInt(r.get("score"))).reversed()).toList();
     for (int i = 0; i < sorted.size(); i++) sorted.get(i).put("rank", i + 1);
     systemLogService.log(user, "export scores", examId);
-    return ResponseEntity.ok(mapOf("examName", str(exam, "name"), "rows", rows));
+    return ResponseEntity.ok(mapOf("examName", str(exam, "name"), "contentVersionStatus", ExamContent.status(store, exam), "rows", rows));
   }
 
   @GetMapping("/exams/{examId}/export-excel")
@@ -190,7 +192,7 @@ public class ExamController {
     Map<String, Object> exam = find(store.exams, examId);
     if (exam == null || !Objects.equals(str(exam, "teacherId"), userId))
       return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
-    Map<String, Object> paper = find(store.papers, str(exam, "paperId"));
+    Map<String, Object> paper = ExamContent.displayPaper(store, exam);
     Set<String> targetClassIds = new HashSet<>(asList(exam.get("targetClassIds")).stream().map(String::valueOf).toList());
     List<Map<String, Object>> targetStudents = store.users.stream()
       .filter(u -> isRole(u, "student") && targetClassIds.contains(str(u, "classId"))).toList();
@@ -206,6 +208,7 @@ public class ExamController {
       row.put("className", str(find(store.classes, str(student, "classId")), "name"));
       row.put("status", submission == null ? "未开始" : str(submission, "status"));
       row.put("score", submission == null ? null : asInt(submission.get("finalScore")));
+      row.put("contentVersionStatus", ExamContent.status(store, exam));
       row.put("totalScore", asInt(paper == null ? 0 : paper.get("totalScore")));
       row.put("passScore", asInt(paper == null ? 0 : paper.get("passScore")));
       row.put("rank", null);
@@ -240,6 +243,7 @@ public class ExamController {
     if (submission == null || !RUNNING.equals(str(submission, "status"))) return error(HttpStatus.BAD_REQUEST, "Only running submissions can be extended.");
     int minutes = asInt(body.get("extraMinutes"));
     if (minutes <= 0) return error(HttpStatus.BAD_REQUEST, "Extra minutes must be greater than zero.");
+    submission = new LinkedHashMap<>(submission);
     Instant base = Instant.parse(str(submission, "deadlineAt"));
     submission.put("deadlineAt", base.plusSeconds(minutes * 60L).toString());
     submission.put("manualExtended", true);

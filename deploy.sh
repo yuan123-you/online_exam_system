@@ -23,7 +23,8 @@ APP_DIR="/opt/online-exam"
 BACKUP_DIR="/opt/online-exam-backups"
 REPO_URL="https://github.com/yuan123-you/online_exam_system.git"
 REPO_BRANCH="master"
-MYSQL_ROOT_PASS="123456"
+MYSQL_ROOT_PASS="${MYSQL_ROOT_PASSWORD:?Set MYSQL_ROOT_PASSWORD through the environment}"
+: "${AI_API_KEY:?Set AI_API_KEY through the environment}"
 MYSQL_DB="online_exam_system"
 JAR_NAME="online-exam-backend-1.0.0.jar"
 HEALTH_URL="http://localhost:8080/api/health"
@@ -364,7 +365,7 @@ MYSQL_USER=root
 MYSQL_PASSWORD=${MYSQL_ROOT_PASS}
 PORT=8080
 AI_CONCURRENT_LIMIT=10
-AI_API_KEY=82f20bac24a545c595dc30f7eee3dfd1.eJmxuTgiNAxaDNEX
+AI_API_KEY=${AI_API_KEY}
 ENV_EOF
 sudo chmod 600 /opt/online-exam/env.conf
 

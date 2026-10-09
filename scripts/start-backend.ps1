@@ -1,4 +1,4 @@
-$env:AI_API_KEY='82f20bac24a545c595dc30f7eee3dfd1.eJmxuTgiNAxaDNEX'
+if ([string]::IsNullOrWhiteSpace($env:AI_API_KEY)) { throw "AI_API_KEY must be provided through the environment." }
 $cp = Get-Content -Raw 'backend/target/cp.txt'
 $cp = $cp.Trim()
 $fullCp = "backend/target/classes;$cp"

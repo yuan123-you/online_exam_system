@@ -64,13 +64,13 @@
 
         <div class="exam-question-body">
           <h3 style="display:none;"></h3>
-          <p style="font-size:15px;line-height:1.7;margin:0 0 20px;color:var(--ink);">{{ currentQuestion.title }}</p>
+          <div class="exam-question-title" style="font-size:15px;line-height:1.7;margin:0 0 20px;color:var(--ink);" v-html="renderRichContent(currentQuestion.title)"></div>
 
           <div v-if="currentQuestion.type === 'single' || currentQuestion.type === 'judge'" class="option-list">
             <label v-for="(option, oi) in currentQuestion.options" :key="option" class="option-item">
               <input v-model="singleAnswer" :value="option" name="singleAnswer" type="radio" />
               <span class="option-letter">{{ String.fromCharCode(65 + oi) }}</span>
-              <span class="option-text">{{ option }}</span>
+              <span class="option-text" v-html="renderInlineRichContent(stripOptionPrefix(option))"></span>
             </label>
           </div>
 
@@ -78,7 +78,7 @@
             <label v-for="(option, oi) in currentQuestion.options" :key="option" class="option-item">
               <input v-model="multipleAnswer" :value="option" type="checkbox" />
               <span class="option-letter">{{ String.fromCharCode(65 + oi) }}</span>
-              <span class="option-text">{{ option }}</span>
+              <span class="option-text" v-html="renderInlineRichContent(stripOptionPrefix(option))"></span>
             </label>
           </div>
 
@@ -105,6 +105,8 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import BaseModal from "../common/BaseModal.vue";
 import type { AnswerPayload, ExamDetail } from "../../types";
 import { formatDuration, typeLabel } from "../../utils/format";
+import { renderRichContent, renderInlineRichContent } from "../../utils/markdown";
+import { stripOptionPrefix } from "../../utils/questionFormat";
 import { saveSubmission, submitSubmission } from "../../api/client";
 
 const props = defineProps<{

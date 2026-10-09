@@ -2,9 +2,11 @@ import type { BootstrapData, ExamDetail, SubmissionReview, User, WrongBookEntry 
 import { normalizeApiData } from "../utils/text";
 
 let currentAuthToken = "";
+let currentSignedSession = "";
 
-export function setCurrentAuthToken(token?: string) {
+export function setCurrentAuthToken(token?: string, sessionToken?: string) {
   currentAuthToken = token || "";
+  currentSignedSession = token ? sessionToken || "" : "";
 }
 
 async function request<T>(url: string, options: RequestInit = {}): Promise<T> {
@@ -12,6 +14,7 @@ async function request<T>(url: string, options: RequestInit = {}): Promise<T> {
   headers.set("Content-Type", "application/json");
   if (currentAuthToken) {
     headers.set("X-User-Id", currentAuthToken);
+    if (currentSignedSession) headers.set("X-Session-Token", currentSignedSession);
   }
   const response = await fetch(url, { ...options, headers });
   const raw = await response.text();
@@ -42,10 +45,25 @@ async function request<T>(url: string, options: RequestInit = {}): Promise<T> {
 }
 
 export function login(username: string, password: string) {
-  return request<{ user: User }>("/api/login", {
+  return request<{ user: User; sessionToken: string }>("/api/login", {
     method: "POST",
     body: JSON.stringify({ username, password }),
   });
+}
+
+export interface StudentRegistrationInput {
+  username: string; name: string; password?: string; departmentId?: string; classId?: string;
+}
+export interface RegistrationOptions {
+  defaultClassId: string;
+  departments: Array<{id: string; name: string}>;
+  classes: Array<{id: string; name: string; major: string; departmentId: string}>;
+}
+export function getRegistrationOptions() {
+  return request<RegistrationOptions>("/api/registration-options");
+}
+export function registerStudent(payload: StudentRegistrationInput) {
+  return request<{user: User; message: string}>("/api/register",{method:"POST",body:JSON.stringify(payload)});
 }
 
 export function loadBootstrap() {
@@ -223,6 +241,7 @@ export function exportExcelScores(examId: string): Promise<void> {
   const headers = new Headers();
   if (currentAuthToken) {
     headers.set("X-User-Id", currentAuthToken);
+    if (currentSignedSession) headers.set("X-Session-Token", currentSignedSession);
   }
   return fetch(`/api/exams/${examId}/export-excel`, { headers })
     .then(async (response) => {
@@ -492,6 +511,7 @@ function sseStream(
   const controller = new AbortController();
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
   if (currentAuthToken) headers['X-User-Id'] = currentAuthToken;
+  if (currentSignedSession) headers['X-Session-Token'] = currentSignedSession;
 
   // 增加心跳超时时间至300秒，匹配后端SseEmitter超时时间（600秒）
   // 防止AI深度思考或慢速生成时前端过早中断连接

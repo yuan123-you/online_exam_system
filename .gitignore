@@ -29,3 +29,18 @@ desktop.ini
 # Secrets & IDE
 .ssh_key
 .trae/
+
+# Sensitive local credentials and handoff material
+.env.*
+!.env.example
+!.env.production.example
+.ssh_key*
+*.pem
+*.key
+id_rsa*
+id_ed25519*
+.deployment-private/
+.codex-deploy/
+.tmp_ssh/
+*-data-export.sql
+*data-dump*.sql

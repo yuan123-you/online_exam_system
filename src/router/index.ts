@@ -33,6 +33,7 @@ const LoginView = () => import('@/views/LoginView.vue')
 const router = createRouter({
   history: createWebHistory(),
   routes: [
+    { path: '/register', redirect: { path: '/login', query: { tab: 'register' } } },
     {
       path: '/login',
       name: 'login',

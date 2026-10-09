@@ -39,14 +39,14 @@ public class QuestionRepository {
   /** 保存或更新题目记录 */
   public void save(Map<String, Object> r) {
     jdbc.update("""
-      insert into question(id,teacher_id,subject,knowledge_point,difficulty,type,title,options_json,answer_json,score,source_tag,deleted)
-      values(?,?,?,?,?,?,?,?,?,?,?,?)
+      insert into question(id,teacher_id,subject,knowledge_point,difficulty,type,title,options_json,answer_json,score,source_tag,deleted,explanation)
+      values(?,?,?,?,?,?,?,?,?,?,?,?,?)
       on duplicate key update teacher_id=values(teacher_id),subject=values(subject),knowledge_point=values(knowledge_point),
       difficulty=values(difficulty),type=values(type),title=values(title),options_json=values(options_json),
-      answer_json=values(answer_json),score=values(score),source_tag=values(source_tag),deleted=values(deleted)
+      answer_json=values(answer_json),score=values(score),source_tag=values(source_tag),deleted=values(deleted),explanation=values(explanation)
       """, str(r, "id"), str(r, "teacherId"), str(r, "subject"), str(r, "knowledgePoint"), str(r, "difficulty"),
       str(r, "type"), str(r, "title"), json.json(r.get("options")), json.json(r.get("answer")),
-      asInt(r.get("score")), nullableStr(r, "sourceTag"), asBool(r, "deleted") ? 1 : 0);
+      asInt(r.get("score")), nullableStr(r, "sourceTag"), asBool(r, "deleted") ? 1 : 0, nullableStr(r, "explanation"));
   }
 
   /** 软删除题目 */
@@ -97,7 +97,7 @@ public class QuestionRepository {
     return compact(mapOf(
       "id", row.get("id"), "teacherId", row.get("teacher_id"), "subject", row.get("subject"),
       "knowledgePoint", row.get("knowledge_point"), "difficulty", row.get("difficulty"), "type", row.get("type"),
-      "title", row.get("title"), "options", json.readList(row.get("options_json")), "answer", json.readList(row.get("answer_json")),
+      "title", row.get("title"), "explanation", row.get("explanation"), "options", json.readList(row.get("options_json")), "answer", json.readList(row.get("answer_json")),
       "score", asInt(row.get("score")), "sourceTag", row.get("source_tag"),
       "deleted", asBool(row.get("deleted"))
     ));

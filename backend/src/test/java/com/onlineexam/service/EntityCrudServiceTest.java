@@ -80,6 +80,10 @@ class EntityCrudServiceTest {
 
     @Nested
     class CreateEntityTests {
+        @org.junit.jupiter.api.AfterEach void createsNeverUseImplicitUpsert() {
+            verify(storeService, never()).saveRecord(anyString(), anyMap());
+        }
+
 
         @Test
         void createEntity_adminCreatesStudent_returnsOk() {
@@ -110,7 +114,7 @@ class EntityCrudServiceTest {
             assertNotNull(created);
             assertEquals("newstudent", created.get("username"));
             assertNull(created.get("password"), "Password should be stripped from response for users");
-            verify(storeService).saveRecord(eq("users"), any());
+            verify(storeService).createRecord(eq("users"), any());
         }
 
         @Test
@@ -134,7 +138,7 @@ class EntityCrudServiceTest {
             ResponseEntity<?> response = entityCrudService.createEntity("t1", body);
 
             assertEquals(HttpStatus.OK, response.getStatusCode());
-            verify(storeService).saveRecord(eq("questions"), argThat(saved -> {
+            verify(storeService).createRecord(eq("questions"), argThat(saved -> {
                 return "t1".equals(String.valueOf(saved.get("teacherId")))
                         && "t1".equals(String.valueOf(saved.get("createdBy")));
             }));
@@ -233,7 +237,7 @@ class EntityCrudServiceTest {
             ResponseEntity<?> response = entityCrudService.createEntity("admin1", body);
 
             assertEquals(HttpStatus.OK, response.getStatusCode());
-            verify(storeService).saveRecord(eq("users"), argThat(saved ->
+            verify(storeService).createRecord(eq("users"), argThat(saved ->
                     "$2a$10$hashedpw".equals(String.valueOf(saved.get("password")))
             ));
         }
@@ -252,13 +256,13 @@ class EntityCrudServiceTest {
             Map<String, Object> admin = makeUser("admin1", "admin", "admin", "Admin");
             Map<String, Object> target = makeUser("u2", "student", "student1", "Old Name");
             store.users.addAll(List.of(admin, target));
+            store.classes.add(Map.of("id","c1","name","Class"));
             when(storeService.readStore()).thenReturn(store);
 
             Map<String, Object> record = new LinkedHashMap<>();
             record.put("id", "u2");
             record.put("name", "New Name");
             record.put("username", "student1");
-            record.put("password", "hashed");
             record.put("role", "student");
             record.put("classId", "c1");
 
@@ -391,12 +395,13 @@ class EntityCrudServiceTest {
             ResponseEntity<?> response = entityCrudService.deleteEntity("admin1", "classes", "c1");
 
             assertEquals(HttpStatus.OK, response.getStatusCode());
-            verify(storeService).deleteRecord("classes", "c1");
+            verify(storeService).deleteClassAndReferences("c1");
+            verify(storeService, never()).deleteRecord("classes", "c1");
 
-            // Exam's targetClassIds should have "c1" removed
+            // Persisted cleanup is tested with real SQL; the cached read view stays unchanged.
             @SuppressWarnings("unchecked")
             List<Object> remaining = (List<Object>) exam.get("targetClassIds");
-            assertFalse(remaining.contains("c1"));
+            assertTrue(remaining.contains("c1"));
             assertTrue(remaining.contains("c2"));
         }
 
@@ -729,7 +734,7 @@ class EntityCrudServiceTest {
     class ClearReferencesTests {
 
         @Test
-        void clearExamClassReferences_removesClassIdFromMatchingExams() {
+        void clearExamClassReferences_delegatesToCurrentRowsWithoutMutatingReadView() {
             Store store = createEmptyStore();
 
             Map<String, Object> exam1 = new LinkedHashMap<>();
@@ -746,7 +751,7 @@ class EntityCrudServiceTest {
 
             @SuppressWarnings("unchecked")
             List<Object> e1Classes = (List<Object>) exam1.get("targetClassIds");
-            assertFalse(e1Classes.contains("c1"));
+            assertTrue(e1Classes.contains("c1"), "The cached read view is not rewritten by cleanup");
             assertTrue(e1Classes.contains("c2"));
             assertTrue(e1Classes.contains("c3"));
 
@@ -755,8 +760,9 @@ class EntityCrudServiceTest {
             List<Object> e2Classes = (List<Object>) exam2.get("targetClassIds");
             assertEquals(2, e2Classes.size());
 
-            // saveRecord should only be called for exam1
-            verify(storeService, times(1)).saveRecord(eq("exams"), any());
+            // Actual selective persisted cleanup is covered by the real transaction suite.
+            verify(storeService).removeExamClassReferences("c1");
+            verify(storeService, never()).saveRecord(eq("exams"), any());
         }
     }
 }

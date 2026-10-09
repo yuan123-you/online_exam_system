@@ -229,19 +229,19 @@ public class PracticeSessionService {
     }
   }
 
-  /** 获取用户当前活跃的练习会话（用于页面刷新恢复） */
+  /** 获取用户最近的练习会话（用于页面刷新恢复，包含已提交的会话） */
   public ResponseEntity<?> getActiveSession(String userId) {
     if (userId == null || userId.isBlank()) return error(HttpStatus.UNAUTHORIZED, "Not authenticated.");
 
     try {
       List<Map<String, Object>> rows = jdbc.queryForList(
-        "SELECT id FROM practice_session WHERE user_id = ? AND status = 'active' ORDER BY updated_at DESC LIMIT 1",
+        "SELECT id FROM practice_session WHERE user_id = ? ORDER BY updated_at DESC LIMIT 1",
         userId
       );
       if (rows.isEmpty()) {
         return ResponseEntity.ok(mapOf("session", null));
       }
-      // 返回完整的会话数据
+      // 返回完整的会话数据（包括已提交的会话，以便用户刷新后查看作答结果）
       return getSession(userId, str(rows.get(0).get("id")));
     } catch (Exception e) {
       log.error("Failed to get active session: {}", e.getMessage());
@@ -497,7 +497,7 @@ public class PracticeSessionService {
           }
         }
 
-        boolean isCorrect = compareAnswers(userAnswer, correctAnswer, str(questionData, "type"));
+        boolean isCorrect = compareAnswers(userAnswer, correctAnswer, str(questionData, "type"), questionData.get("options"));
         if (isCorrect) {
           correctCount++;
           earnedScore += score;
@@ -577,35 +577,29 @@ public class PracticeSessionService {
   }
 
   /** 比较用户答案和正确答案 */
-  private boolean compareAnswers(List<Object> userAnswer, List<Object> correctAnswer, String type) {
-    if (userAnswer == null || correctAnswer == null) return false;
-    if (userAnswer.isEmpty() && correctAnswer.isEmpty()) return true;
-    if (userAnswer.isEmpty()) return false;
+  private boolean compareAnswers(List<Object> userAnswer, List<Object> correctAnswer, String type, Object rawOptions) {
+    if (userAnswer == null || correctAnswer == null || userAnswer.isEmpty() || correctAnswer.isEmpty()) return false;
+    List<String> userNorm = userAnswer.stream().filter(Objects::nonNull)
+        .map(a -> String.valueOf(a).trim()).filter(s -> !s.isEmpty()).toList();
+    List<String> correctNorm = correctAnswer.stream().filter(Objects::nonNull)
+        .map(a -> String.valueOf(a).trim()).filter(s -> !s.isEmpty()).toList();
+    if (userNorm.isEmpty() || correctNorm.isEmpty()) return false;
 
-    // 选择题/判断题：忽略大小写和格式，只比较字母
     if ("single".equals(type) || "multiple".equals(type) || "judge".equals(type)) {
-      List<String> userLetters = extractLetters(userAnswer);
-      List<String> correctLetters = extractLetters(correctAnswer);
-      if (userLetters.size() != correctLetters.size()) return false;
-      userLetters.sort(String::compareTo);
-      correctLetters.sort(String::compareTo);
-      return userLetters.equals(correctLetters);
+      if (!(rawOptions instanceof List<?> options) || options.stream().anyMatch(option -> !(option instanceof String))) return false;
+      List<String> optionValues = options.stream().map(String::valueOf).map(String::trim).toList();
+      if (!ChoiceAnswers.hasUniquePracticeKeys(optionValues)) return false;
+      try {
+        List<String> expected = ChoiceAnswers.validate(optionValues, correctNorm, type);
+        List<String> given = ChoiceAnswers.forScoring(rawOptions, userNorm);
+        given.sort(String::compareTo);
+        expected.sort(String::compareTo);
+        return given.equals(expected);
+      } catch (IllegalArgumentException e) {
+        return false; // Invalid reference data cannot award marks through an empty-letter-list match.
+      }
     }
-
-    // 填空题/简答题：忽略首尾空白后比较
-    List<String> userNorm = userAnswer.stream().map(a -> String.valueOf(a).trim()).filter(s -> !s.isEmpty()).sorted().toList();
-    List<String> correctNorm = correctAnswer.stream().map(a -> String.valueOf(a).trim()).filter(s -> !s.isEmpty()).sorted().toList();
-    return userNorm.equals(correctNorm);
-  }
-
-  private List<String> extractLetters(List<Object> answers) {
-    List<String> letters = new ArrayList<>();
-    for (Object a : answers) {
-      String s = String.valueOf(a);
-      java.util.regex.Matcher m = java.util.regex.Pattern.compile("([A-D])").matcher(s);
-      if (m.find()) letters.add(m.group(1));
-    }
-    return letters;
+    return userNorm.stream().sorted().toList().equals(correctNorm.stream().sorted().toList());
   }
 
   private void enforceSessionLimit(String userId) {

@@ -4869,3 +4869,63 @@ button:active:not(:disabled),
     flex-shrink: 0;
   }
 }
+
+/* ===== Global Markdown & Math Rendering Styles ===== */
+.md-code {
+  background: var(--ai-code-bg, #1a1a2e);
+  color: var(--ai-code-text, #cdd6f4);
+  border: 1px solid var(--ai-code-border, #2a2a3e);
+  border-radius: 8px;
+  padding: 10px 14px;
+  margin: 8px 0;
+  overflow-x: auto;
+  font-family: 'SF Mono', 'Cascadia Code', 'Fira Code', Consolas, monospace;
+  font-size: 13px;
+  line-height: 1.55;
+  box-sizing: border-box;
+  max-width: 100%;
+}
+.md-code code {
+  background: transparent !important;
+  padding: 0 !important;
+  border-radius: 0 !important;
+  color: inherit !important;
+  font-size: inherit !important;
+  font-family: inherit !important;
+}
+.md-inline {
+  background: var(--ai-inline-code-bg, #f3f3f5);
+  color: var(--ai-inline-code-text, #d9466c);
+  border: 1px solid var(--ai-border-soft, #e5e7eb);
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-family: 'SF Mono', 'Cascadia Code', 'Fira Code', Consolas, monospace;
+  font-size: 12.5px;
+  word-break: break-word;
+}
+[data-theme="dark"] .md-inline {
+  background: var(--ai-surface-hover, #2a2e40);
+  border-color: var(--ai-border, #2e3346);
+  color: #f472b6;
+}
+.md-math-block {
+  margin: 10px 0;
+  overflow-x: auto;
+  text-align: center;
+  max-width: 100%;
+}
+.md-math-block .katex-display {
+  margin: 6px 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 4px 0;
+}
+.md-li-num, .md-li-bullet {
+  margin: 4px 0;
+  line-height: 1.6;
+}
+.md-num, .md-bullet {
+  font-weight: 600;
+  color: var(--ai-accent, #6366f1);
+  margin-right: 6px;
+}

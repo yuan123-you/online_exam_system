@@ -2,6 +2,9 @@ package com.onlineexam;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.onlineexam.service.ExamContent;
+import com.onlineexam.common.JsonHelper;
+import com.onlineexam.repository.SubmissionWrites;
 import java.sql.Timestamp;
 import java.time.Instant;
 import java.time.LocalDateTime;
@@ -12,44 +15,62 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Objects;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 @Service
 public class StoreService {
   private static final Logger log = LoggerFactory.getLogger(StoreService.class);
   private final JdbcTemplate jdbc;
   private final ObjectMapper mapper;
+  private final JsonHelper submissionJson;
   private final ZoneId zone = ZoneId.systemDefault();
 
   /** 缓存全量 Store，避免每次请求都执行 10+ SQL 查询 */
   private volatile Store cachedStore;
   private volatile long cachedStoreTimestamp = 0;
+  private final Object cacheMonitor = new Object();
+  private long cacheGeneration;
   /** 缓存有效期 3 秒，写操作后立即失效 */
   private static final long CACHE_TTL_MS = 3000;
 
   public StoreService(JdbcTemplate jdbc, ObjectMapper mapper) {
     this.jdbc = jdbc;
     this.mapper = mapper;
+    this.submissionJson = new JsonHelper(mapper);
   }
 
   /** 使缓存失效（写操作后调用） */
   public void invalidateCache() {
-    cachedStore = null;
-    cachedStoreTimestamp = 0;
+    synchronized (cacheMonitor) {
+      cacheGeneration++;
+      cachedStore = null;
+      cachedStoreTimestamp = 0;
+    }
   }
 
   public Store readStore() {
-    long now = System.currentTimeMillis();
-    if (cachedStore != null && (now - cachedStoreTimestamp) < CACHE_TTL_MS) {
-      return cachedStore;
+    long generation;
+    synchronized (cacheMonitor) {
+      if (cachedStore != null && (System.currentTimeMillis() - cachedStoreTimestamp) < CACHE_TTL_MS) {
+        return cachedStore;
+      }
+      generation = cacheGeneration;
     }
+    // Never hold the cache monitor while loading JDBC sections or waiting on database locks.
     Store store = loadStoreFromDb();
-    cachedStore = store;
-    cachedStoreTimestamp = System.currentTimeMillis();
+    synchronized (cacheMonitor) {
+      if (generation == cacheGeneration) {
+        cachedStore = store;
+        cachedStoreTimestamp = System.currentTimeMillis();
+      }
+    }
     return store;
   }
 
@@ -81,23 +102,13 @@ public class StoreService {
       store.users = new ArrayList<>();
     }
     try {
-      store.questions = jdbc.queryForList("select * from question where deleted=0").stream().map(row -> compact(mapOf(
-        "id", row.get("id"), "teacherId", row.get("teacher_id"), "subject", row.get("subject"),
-        "knowledgePoint", row.get("knowledge_point"), "difficulty", row.get("difficulty"), "type", row.get("type"),
-        "title", row.get("title"), "options", readList(row.get("options_json")), "answer", readList(row.get("answer_json")),
-        "score", asInt(row.get("score")), "sourceTag", row.get("source_tag"), "deleted", asBool(row.get("deleted"))
-      ))).toList();
+      store.questions = jdbc.queryForList("select * from question where deleted=0").stream().map(this::questionRow).toList();
     } catch (Exception e) {
       log.error("Failed to load questions from database", e);
       store.questions = new ArrayList<>();
     }
     try {
-      store.papers = jdbc.queryForList("select * from paper where deleted=0").stream().map(row -> compact(mapOf(
-        "id", row.get("id"), "teacherId", row.get("teacher_id"), "name", row.get("name"),
-        "durationMinutes", asInt(row.get("duration_minutes")), "totalScore", asInt(row.get("total_score")),
-        "passScore", asInt(row.get("pass_score")), "questionIds", readList(row.get("question_ids_json")),
-        "paperType", row.get("paper_type"), "sourceTag", row.get("source_tag"), "deleted", asBool(row.get("deleted"))
-      ))).toList();
+      store.papers = jdbc.queryForList("select * from paper where deleted=0").stream().map(this::paperRow).toList();
     } catch (Exception e) {
       log.error("Failed to load papers from database", e);
       store.papers = new ArrayList<>();
@@ -120,6 +131,7 @@ public class StoreService {
         "switchCount", asInt(row.get("switch_count")), "suspicious", asBool(row.get("suspicious")),
         "suspiciousReasons", readList(row.get("suspicious_reasons_json")), "autoScore", asInt(row.get("auto_score")),
         "finalScore", asInt(row.get("final_score")), "status", normalizeStatus(str(row.get("status"))),
+        "revision", SubmissionWrites.readRevision(row.get("revision")),
         "startedAt", asIso(row.get("started_at")), "deadlineAt", asIso(row.get("deadline_at")),
         "submittedAt", asIso(row.get("submitted_at")), "updatedAt", asIso(row.get("updated_at")),
         "manualExtendedMinutes", asInt(row.get("manual_extended_minutes")), "gradedBy", row.get("graded_by"),
@@ -129,6 +141,19 @@ public class StoreService {
     } catch (Exception e) {
       log.error("Failed to load submissions from database", e);
       store.submissions = new ArrayList<>();
+    }
+    try {
+      // History needs original headers, but deleted exams must never join the active exam/entity lists.
+      for (Map<String,Object> row : jdbc.queryForList("select e.* from exam e where e.deleted=1 "
+          + "and exists (select 1 from submission s where s.exam_id=e.id) order by e.start_time desc,e.id")) {
+        Map<String,Object> header = compact(mapOf("id",row.get("id"),"teacherId",row.get("teacher_id"),"paperId",row.get("paper_id"),
+            "name",row.get("name"),"targetClassIds",readList(row.get("target_class_ids_json")),"startTime",asIso(row.get("start_time")),
+            "endTime",asIso(row.get("end_time")),"antiCheatLimit",asInt(row.get("anti_cheat_limit")),"published",asBool(row.get("published")),"deleted",true));
+        store.archivedExams.put(String.valueOf(row.get("id")),header);
+      }
+    } catch (Exception e) {
+      log.error("Failed to load archived exam metadata",e);
+      throw new org.springframework.web.server.ResponseStatusException(org.springframework.http.HttpStatus.SERVICE_UNAVAILABLE,"历史考试元数据暂时无法读取，请稍后重试。");
     }
     try {
       store.wrongBookEntries = jdbc.queryForList("select * from wrong_book_entry").stream().map(row -> compact(mapOf(
@@ -187,25 +212,169 @@ public class StoreService {
       log.error("Failed to load notifications from database", e);
       store.notifications = new ArrayList<>();
     }
+    // Private content is deliberately not embedded in store.exams / bootstrap exam responses.
+    for (Map<String, Object> row : jdbc.queryForList("select exam_id,content_json from exam_snapshot")) {
+      store.examSnapshots.put(String.valueOf(row.get("exam_id")), readExamSnapshot(row.get("content_json")));
+    }
     return store;
+  }
+
+  private Map<String, Object> questionRow(Map<String, Object> row) {
+    return compact(mapOf(
+        "id", row.get("id"), "teacherId", row.get("teacher_id"), "subject", row.get("subject"),
+        "knowledgePoint", row.get("knowledge_point"), "difficulty", row.get("difficulty"), "type", row.get("type"),
+        "title", row.get("title"), "explanation", row.get("explanation"), "options", readList(row.get("options_json")), "answer", readList(row.get("answer_json")),
+        "score", asInt(row.get("score")), "sourceTag", row.get("source_tag"), "deleted", asBool(row.get("deleted"))
+    ));
+  }
+
+  private Map<String, Object> paperRow(Map<String, Object> row) {
+    return compact(mapOf(
+        "id", row.get("id"), "teacherId", row.get("teacher_id"), "name", row.get("name"),
+        "durationMinutes", asInt(row.get("duration_minutes")), "totalScore", asInt(row.get("total_score")),
+        "passScore", asInt(row.get("pass_score")), "questionIds", readList(row.get("question_ids_json")),
+        "paperType", row.get("paper_type"), "sourceTag", row.get("source_tag"), "deleted", asBool(row.get("deleted"))
+    ));
+  }
+
+  private Map<String, Object> readExamSnapshot(Object raw) {
+    try {
+      return mapper.readValue(String.valueOf(raw), new TypeReference<Map<String, Object>>() {});
+    } catch (Exception e) {
+      throw ExamContent.unavailable("考试发布版本无法读取，请联系管理员恢复");
+    }
   }
 
   @Transactional
   public void saveRecord(String entity, Map<String, Object> record) {
     invalidateCache();
     switch (entity) {
-      case "departments" -> upsertDepartment(record);
-      case "classes" -> upsertClass(record);
-      case "users" -> upsertUser(record);
-      case "questions" -> upsertQuestion(record);
-      case "papers" -> upsertPaper(record);
-      case "exams" -> upsertExam(record);
+      case "departments" -> upsertDepartment(record, false);
+      case "classes" -> upsertClass(record, false);
+      case "users" -> insertUser(record);
+      case "questions" -> upsertQuestion(record, false);
+      case "papers" -> upsertPaper(record, false);
+      case "exams" -> saveExamWithSnapshot(record, false);
       case "submissions" -> upsertSubmission(record);
       case "wrongBookEntries" -> upsertWrongBook(record);
       case "logs" -> upsertLog(record);
       case "backups" -> upsertBackup(record);
       case "notifications" -> upsertNotification(record);
       default -> throw new IllegalArgumentException("Unknown entity: " + entity);
+    }
+  }
+
+  /** Creation has an explicit insert-only authority, never an implicit update on a key collision. */
+  @Transactional
+  public void createRecord(String entity, Map<String,Object> record) {
+    invalidateCacheAtCompletion();
+    switch (entity) {
+      case "departments" -> upsertDepartment(record, true);
+      case "classes" -> upsertClass(record, true);
+      case "users" -> insertUser(record);
+      case "questions" -> upsertQuestion(record, true);
+      case "papers" -> upsertPaper(record, true);
+      case "exams" -> saveExamWithSnapshot(record, true);
+      default -> throw new IllegalArgumentException("Unsupported resource creation: " + entity);
+    }
+  }
+
+  private void invalidateCacheAtCompletion() {
+    invalidateCache();
+    if (TransactionSynchronizationManager.isSynchronizationActive()) {
+      TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+        @Override public void afterCompletion(int status) { invalidateCache(); }
+      });
+    }
+  }
+
+  private void writeResource(boolean insertOnly, String sql, Object... arguments) {
+    if (!insertOnly) {
+      jdbc.update(sql, arguments);
+      return;
+    }
+    // The SQL is an internal literal; parameters never participate in this INSERT-clause selection.
+    int duplicateClause = sql.toLowerCase(java.util.Locale.ROOT).indexOf("on duplicate key update");
+    String insert = duplicateClause < 0 ? sql : sql.substring(0,duplicateClause);
+    try {
+      if (jdbc.update(insert,arguments) != 1) throw ExamContent.unavailable("资源创建未完成，本次未覆盖已有数据。");
+    } catch (org.springframework.dao.DuplicateKeyException e) {
+      throw ExamContent.unavailable("资源ID或唯一字段已存在，请重试创建；原记录未被覆盖。");
+    }
+  }
+
+  /** Lock the current class before checking references; SET NULL foreign keys are not a business blocker. */
+  @Transactional
+  public void deleteClassAndReferences(String classId) {
+    invalidateCacheAtCompletion();
+    if (jdbc.queryForList("select id from class_info where id=? for update",classId).isEmpty()) {
+      throw new org.springframework.web.server.ResponseStatusException(org.springframework.http.HttpStatus.NOT_FOUND,"班级不存在。");
+    }
+    if (!jdbc.queryForList("select id from user_account where class_id=? for update",classId).isEmpty()) {
+      throw ExamContent.unavailable("班级仍有绑定用户，当前数据已变化，请刷新并先转移用户。");
+    }
+    removeExamClassReferences(classId);
+    // Recheck in the final write too: engines can admit a new FK child after the earlier locking read.
+    if (jdbc.update("delete from class_info where id=? and not exists (select 1 from user_account where class_id=?)",classId,classId) != 1) {
+      throw ExamContent.unavailable("班级删除未完成，考试班级引用未提交。");
+    }
+  }
+
+  /** A cached organization view cannot authorize SET NULL detachment of bound users. */
+  @Transactional
+  public void deleteDepartmentIfUnreferenced(String departmentId) {
+    invalidateCacheAtCompletion();
+    if (jdbc.queryForList("select id from department where id=? for update",departmentId).isEmpty()) {
+      throw new org.springframework.web.server.ResponseStatusException(org.springframework.http.HttpStatus.NOT_FOUND,"院系不存在。");
+    }
+    if (!jdbc.queryForList("select id from class_info where department_id=? for update",departmentId).isEmpty()
+        || !jdbc.queryForList("select id from user_account where department_id=? for update",departmentId).isEmpty()) {
+      throw ExamContent.unavailable("院系仍有班级或绑定用户，当前数据已变化，请刷新并先转移相关数据。");
+    }
+    // Repeat both reference predicates atomically; FK SET NULL is not an acceptable business outcome.
+    if (jdbc.update("delete from department where id=? and not exists (select 1 from class_info where department_id=?) "
+        + "and not exists (select 1 from user_account where department_id=?)",departmentId,departmentId,departmentId) != 1) {
+      throw ExamContent.unavailable("院系删除未完成，原绑定关系未提交改变。");
+    }
+  }
+
+  /** Remove only roster references from locked current rows; content versions/status/times/owners are untouched. */
+  @Transactional
+  public void removeExamClassReferences(String classId) {
+    invalidateCacheAtCompletion();
+    for (Map<String,Object> row : jdbc.queryForList("select id,target_class_ids_json from exam where deleted=0 order by id for update")) {
+      List<?> ids;
+      try {
+        Object raw = row.get("target_class_ids_json");
+        Object parsed = raw == null ? null : mapper.readValue(String.valueOf(raw),Object.class);
+        if (!(parsed instanceof List<?> list) || list.stream().anyMatch(id -> !(id instanceof String))) {
+          throw new IllegalArgumentException("Invalid roster");
+        }
+        ids = list;
+      } catch (Exception e) {
+        throw ExamContent.unavailable("考试目标班级无法校验，请修复元数据后再删除班级。");
+      }
+      if (ids.contains(classId)) {
+        List<?> remaining = ids.stream().filter(id -> !classId.equals(id)).toList();
+        if (jdbc.update("update exam set target_class_ids_json=? where id=? and deleted=0",json(remaining),row.get("id")) != 1) {
+          throw ExamContent.unavailable("考试班级引用已变化，本次删除未提交。");
+        }
+      }
+    }
+  }
+
+  /** Teacher deletion binds ownership and active state in the final write, not only a cached permission read. */
+  @Transactional
+  public void deleteOwnedResource(String entity,String id,String teacherId) {
+    String table = switch (entity) {
+      case "questions" -> "question";
+      case "papers" -> "paper";
+      case "exams" -> "exam";
+      default -> throw new IllegalArgumentException("Unsupported teacher-owned resource: " + entity);
+    };
+    invalidateCacheAtCompletion();
+    if (jdbc.update("update " + table + " set deleted=1 where id=? and teacher_id=? and deleted=0",id,teacherId) != 1) {
+      throw ExamContent.unavailable("资源已变化或不属于当前教师，请刷新后重试；本次未删除其他资源。");
     }
   }
 
@@ -244,40 +413,95 @@ public class StoreService {
     }
   }
 
-  private void upsertDepartment(Map<String, Object> r) {
-    jdbc.update("insert into department(id,name) values(?,?) on duplicate key update name=values(name)", str(r, "id"), str(r, "name"));
+  private void upsertDepartment(Map<String, Object> r, boolean insertOnly) {
+    writeResource(insertOnly, "insert into department(id,name) values(?,?) on duplicate key update name=values(name)", str(r, "id"), str(r, "name"));
   }
 
-  private void upsertClass(Map<String, Object> r) {
-    jdbc.update("""
+  private void upsertClass(Map<String, Object> r, boolean insertOnly) {
+    writeResource(insertOnly, """
       insert into class_info(id,name,major,department_id) values(?,?,?,?)
       on duplicate key update name=values(name),major=values(major),department_id=values(department_id)
       """, str(r, "id"), str(r, "name"), str(r, "major"), str(r, "departmentId"));
   }
 
-  private void upsertUser(Map<String, Object> r) {
-    jdbc.update("""
-      insert into user_account(id,role,username,password,name,department_id,class_id,major) values(?,?,?,?,?,?,?,?)
-      on duplicate key update role=values(role),username=values(username),password=values(password),name=values(name),
-      department_id=values(department_id),class_id=values(class_id),major=values(major)
-      """, str(r, "id"), str(r, "role"), str(r, "username"), str(r, "password"), str(r, "name"),
-      nullableStr(r, "departmentId"), nullableStr(r, "classId"), nullableStr(r, "major"));
+  /** User creation is not permission to replace another account on an ID/username collision. */
+  private void insertUser(Map<String, Object> record) {
+    try {
+      int affected = jdbc.update("""
+          insert into user_account(id,role,username,password,name,department_id,class_id,major) values(?,?,?,?,?,?,?,?)
+          """, str(record,"id"), str(record,"role"), str(record,"username"), str(record,"password"), str(record,"name"),
+          nullableStr(record,"departmentId"), nullableStr(record,"classId"), nullableStr(record,"major"));
+      if (affected != 1) throw new org.springframework.web.server.ResponseStatusException(org.springframework.http.HttpStatus.CONFLICT,"账号创建未完成。");
+    } catch (org.springframework.dao.DuplicateKeyException e) {
+      throw new org.springframework.web.server.ResponseStatusException(org.springframework.http.HttpStatus.CONFLICT,"账号ID或用户名已存在，本次未覆盖原账号。");
+    }
   }
 
-  private void upsertQuestion(Map<String, Object> r) {
-    jdbc.update("""
-      insert into question(id,teacher_id,subject,knowledge_point,difficulty,type,title,options_json,answer_json,score,source_tag,deleted)
-      values(?,?,?,?,?,?,?,?,?,?,?,?)
+  /** Update existing accounts using only caller-validated, explicitly supplied profile fields. */
+  @Transactional
+  public void updateUserRecord(Map<String,Object> patch, Map<String,Object> expectedProfile) {
+    invalidateCache();
+    if (TransactionSynchronizationManager.isSynchronizationActive()) {
+      TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+        @Override public void afterCompletion(int status) { invalidateCache(); }
+      });
+    }
+    Map<String,String> columns = Map.of("role","role", "username","username", "name","name", "password","password",
+        "departmentId","department_id", "classId","class_id", "major","major");
+    List<String> assignments = new ArrayList<>();
+    List<Object> arguments = new ArrayList<>();
+    for (String key : List.of("role","username","name","departmentId","classId","major","password")) {
+      if (patch.containsKey(key)) {
+        assignments.add(columns.get(key) + "=?");
+        arguments.add(nullableStr(patch,key));
+      }
+    }
+    String id = str(patch,"id");
+    if (expectedProfile == null || !id.equals(str(expectedProfile,"id"))) {
+      throw new org.springframework.web.server.ResponseStatusException(org.springframework.http.HttpStatus.CONFLICT,"账号校验依据已变化，请刷新后重试。");
+    }
+    // Role and bindings are coupled validation inputs. Do not merge a stale student patch into a newer teacher/admin.
+    String guard = " where id=? and COALESCE(role,'')=? and COALESCE(department_id,'')=? and COALESCE(class_id,'')=?";
+    List<Object> guards = List.of(id,str(expectedProfile,"role"),str(expectedProfile,"departmentId"),str(expectedProfile,"classId"));
+    List<Object> requestedValues = new ArrayList<>(arguments);
+    int affected = 0;
+    if (!assignments.isEmpty()) {
+      arguments.addAll(guards);
+      try {
+        affected = jdbc.update("update user_account set " + String.join(",",assignments) + guard,arguments.toArray());
+      } catch (org.springframework.dao.DuplicateKeyException e) {
+        throw new org.springframework.web.server.ResponseStatusException(org.springframework.http.HttpStatus.CONFLICT,"用户名已被占用，本次未覆盖其他账号。");
+      }
+    }
+    if (affected == 0) {
+      Integer count = jdbc.queryForObject("select count(*) from user_account where id=?",Integer.class,id);
+      if (count == null || count == 0) throw new org.springframework.web.server.ResponseStatusException(org.springframework.http.HttpStatus.NOT_FOUND,"账号不存在，本次未重建账号。");
+      // Distinguish an existing no-op from a stale validation tuple or an unapplied requested value.
+      StringBuilder desired = new StringBuilder(guard);
+      for (String assignment : assignments) {
+        String column = assignment.substring(0,assignment.indexOf('='));
+        desired.append(" and COALESCE(").append(column).append(",'')=COALESCE(?,'')");
+      }
+      List<Object> checks = new ArrayList<>(guards); checks.addAll(requestedValues);
+      Integer matches = jdbc.queryForObject("select count(*) from user_account" + desired,Integer.class,checks.toArray());
+      if (matches == null || matches == 0) throw new org.springframework.web.server.ResponseStatusException(org.springframework.http.HttpStatus.CONFLICT,"账号角色或归属已变化，请刷新后重试；本次未覆盖新资料。");
+    }
+  }
+
+  private void upsertQuestion(Map<String, Object> r, boolean insertOnly) {
+    writeResource(insertOnly, """
+      insert into question(id,teacher_id,subject,knowledge_point,difficulty,type,title,options_json,answer_json,score,source_tag,deleted,explanation)
+      values(?,?,?,?,?,?,?,?,?,?,?,?,?)
       on duplicate key update teacher_id=values(teacher_id),subject=values(subject),knowledge_point=values(knowledge_point),
       difficulty=values(difficulty),type=values(type),title=values(title),options_json=values(options_json),
-      answer_json=values(answer_json),score=values(score),source_tag=values(source_tag),deleted=values(deleted)
+      answer_json=values(answer_json),score=values(score),source_tag=values(source_tag),deleted=values(deleted),explanation=values(explanation)
       """, str(r, "id"), str(r, "teacherId"), str(r, "subject"), str(r, "knowledgePoint"), str(r, "difficulty"),
       str(r, "type"), str(r, "title"), json(r.get("options")), json(r.get("answer")), number(r, "score"), nullableStr(r, "sourceTag"),
-      bool(r, "deleted") ? 1 : 0);
+      bool(r, "deleted") ? 1 : 0, nullableStr(r, "explanation"));
   }
 
-  private void upsertPaper(Map<String, Object> r) {
-    jdbc.update("""
+  private void upsertPaper(Map<String, Object> r, boolean insertOnly) {
+    writeResource(insertOnly, """
       insert into paper(id,teacher_id,name,duration_minutes,total_score,pass_score,question_ids_json,paper_type,source_tag,deleted)
       values(?,?,?,?,?,?,?,?,?,?)
       on duplicate key update teacher_id=values(teacher_id),name=values(name),duration_minutes=values(duration_minutes),
@@ -288,8 +512,65 @@ public class StoreService {
       bool(r, "deleted") ? 1 : 0);
   }
 
-  private void upsertExam(Map<String, Object> r) {
-    jdbc.update("""
+  private void saveExamWithSnapshot(Map<String, Object> record, boolean insertOnly) {
+    if (TransactionSynchronizationManager.isSynchronizationActive()) {
+      // A concurrent reader may refill the cache before publication commits or rolls back.
+      TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+        @Override public void afterCompletion(int status) { invalidateCache(); }
+      });
+    }
+    String id = str(record, "id");
+    List<Map<String, Object>> existing = jdbc.queryForList("select * from exam where id=? for update", id);
+    if (insertOnly && !existing.isEmpty()) throw ExamContent.unavailable("考试ID已存在，本次创建未更新原考试。");
+    List<Map<String, Object>> snapshots = jdbc.queryForList(
+        "select content_json from exam_snapshot where exam_id=? for update", id);
+    if (insertOnly && !snapshots.isEmpty()) throw ExamContent.unavailable("考试ID已有历史版本，本次创建不会认领或改写该版本。");
+    if (!snapshots.isEmpty()) {
+      Map<String, Object> content = readExamSnapshot(snapshots.getFirst().get("content_json"));
+      Object rawPaper = content.get("paper");
+      if (!(rawPaper instanceof Map<?, ?> paper) || !Objects.equals(paper.get("id"), str(record, "paperId"))) {
+        throw ExamContent.unavailable("已冻结的考试不能更换试卷；请创建新的考试");
+      }
+      upsertExam(record, insertOnly);
+      return;
+    }
+    boolean hasSubmissions = !jdbc.queryForList("select id from submission where exam_id=? limit 1", id).isEmpty();
+    if ((!existing.isEmpty() && asBool(existing.getFirst().get("published")))
+        || (hasSubmissions && asBool(record.get("published")))) {
+      throw ExamContent.unavailable("历史考试缺少原始发布版本，禁止自动使用当前题库回填");
+    }
+    Map<String, Object> content = null;
+    if (asBool(record.get("published"))) {
+      Store source = new Store();
+      source.papers = jdbc.queryForList("select * from paper where id=? and deleted=0 for update", str(record, "paperId"))
+          .stream().map(this::paperRow).toList();
+      if (!source.papers.isEmpty()) {
+        // Deterministic lock order avoids opposite question-order lock acquisition.
+        List<String> ids = readListFromValue(source.papers.getFirst().get("questionIds")).stream()
+            .map(String::valueOf).distinct().sorted().toList();
+        for (String questionId : ids) {
+          source.questions.addAll(jdbc.queryForList("select * from question where id=? and deleted=0 for update", questionId)
+              .stream().map(this::questionRow).toList());
+        }
+      }
+      content = ExamContent.capture(source, record);
+    }
+    upsertExam(record, insertOnly);
+    if (content != null) {
+      try {
+        jdbc.update("insert into exam_snapshot(exam_id,content_json) values(?,?)", id, mapper.writeValueAsString(content));
+      } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+        throw new IllegalStateException("考试发布版本序列化失败", e);
+      }
+    }
+  }
+
+  private List<?> readListFromValue(Object value) {
+    return value instanceof List<?> list ? list : List.of();
+  }
+
+  private void upsertExam(Map<String, Object> r, boolean insertOnly) {
+    writeResource(insertOnly, """
       insert into exam(id,teacher_id,paper_id,name,target_class_ids_json,start_time,end_time,anti_cheat_limit,published,deleted)
       values(?,?,?,?,?,?,?,?,?,?)
       on duplicate key update teacher_id=values(teacher_id),paper_id=values(paper_id),name=values(name),
@@ -300,22 +581,14 @@ public class StoreService {
       bool(r, "deleted") ? 1 : 0);
   }
 
-  private void upsertSubmission(Map<String, Object> r) {
-    jdbc.update("""
-      insert into submission(id,exam_id,student_id,student_name,answers_json,answer_detail_json,switch_count,suspicious,
-      suspicious_reasons_json,auto_score,final_score,status,started_at,deadline_at,submitted_at,updated_at,manual_extended_minutes,graded_by,question_order_json,option_order_json)
-      values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-      on duplicate key update student_name=values(student_name),answers_json=values(answers_json),
-      answer_detail_json=values(answer_detail_json),switch_count=values(switch_count),suspicious=values(suspicious),
-      suspicious_reasons_json=values(suspicious_reasons_json),auto_score=values(auto_score),final_score=values(final_score),
-      status=values(status),started_at=values(started_at),deadline_at=values(deadline_at),submitted_at=values(submitted_at),
-      updated_at=values(updated_at),manual_extended_minutes=values(manual_extended_minutes),graded_by=values(graded_by),
-      question_order_json=values(question_order_json),option_order_json=values(option_order_json)
-      """, str(r, "id"), str(r, "examId"), str(r, "studentId"), str(r, "studentName"), json(r.get("answers")),
-      json(r.get("answerDetail")), number(r, "switchCount"), bool(r, "suspicious"), json(r.get("suspiciousReasons")),
-      number(r, "autoScore"), number(r, "finalScore"), normalizeStatus(str(r, "status")), timestamp(r.get("startedAt")),
-      timestamp(r.get("deadlineAt")), timestamp(r.get("submittedAt")), timestamp(r.get("updatedAt")),
-      number(r, "manualExtendedMinutes"), nullableStr(r, "gradedBy"), json(r.get("questionOrder")), json(r.get("optionOrder")));
+  private void upsertSubmission(Map<String, Object> record) {
+    if (TransactionSynchronizationManager.isSynchronizationActive()) {
+      // A reader may refill the shared cache while this transaction has not committed yet.
+      TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+        @Override public void afterCompletion(int status) { invalidateCache(); }
+      });
+    }
+    SubmissionWrites.save(jdbc, submissionJson, record);
   }
 
   private void upsertWrongBook(Map<String, Object> r) {
@@ -514,7 +787,7 @@ public class StoreService {
       .map(row -> compact(mapOf(
         "id", row.get("id"), "teacherId", row.get("teacher_id"), "subject", row.get("subject"),
         "knowledgePoint", row.get("knowledge_point"), "difficulty", row.get("difficulty"), "type", row.get("type"),
-        "title", row.get("title"), "options", readList(row.get("options_json")), "answer", readList(row.get("answer_json")),
+        "title", row.get("title"), "explanation", row.get("explanation"), "options", readList(row.get("options_json")), "answer", readList(row.get("answer_json")),
         "score", asInt(row.get("score")), "sourceTag", row.get("source_tag")
       ))).toList();
     return mapOf("rows", rows, "total", total, "page", page, "pageSize", pageSize);
@@ -707,6 +980,10 @@ public class StoreService {
     public List<Map<String, Object>> questions = new ArrayList<>();
     public List<Map<String, Object>> papers = new ArrayList<>();
     public List<Map<String, Object>> exams = new ArrayList<>();
+    @com.fasterxml.jackson.annotation.JsonIgnore
+    public Map<String, Map<String,Object>> archivedExams = new LinkedHashMap<>();
+    @com.fasterxml.jackson.annotation.JsonIgnore
+    public Map<String, Map<String, Object>> examSnapshots = new LinkedHashMap<>();
     public List<Map<String, Object>> submissions = new ArrayList<>();
     public List<Map<String, Object>> wrongBookEntries = new ArrayList<>();
     public List<Map<String, Object>> logs = new ArrayList<>();

@@ -14,6 +14,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.ControllerAdvice;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.servlet.resource.NoResourceFoundException;
+import org.springframework.web.server.ResponseStatusException;
 
 /**
  * 全局异常处理器
@@ -41,6 +42,12 @@ public class GlobalExceptionHandler {
             }
         }
         return StoreHelper.error(HttpStatus.NOT_FOUND, "资源未找到");
+    }
+
+    @ExceptionHandler(ResponseStatusException.class)
+    public ResponseEntity<Map<String, Object>> handleResponseStatus(ResponseStatusException e) {
+        return ResponseEntity.status(e.getStatusCode())
+            .body(Map.of("message", e.getReason() == null ? "请求无法处理" : e.getReason()));
     }
 
     @ExceptionHandler(IllegalArgumentException.class)

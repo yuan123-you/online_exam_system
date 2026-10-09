@@ -1,5 +1,6 @@
+if (!process.env.MYSQL_PASSWORD) throw new Error("MYSQL_PASSWORD must be provided through the environment");
 const http = require("http");
-const data = JSON.stringify({ username: "teacher", password: "123456" });
+const data = JSON.stringify({ username: "teacher", password: process.env.MYSQL_PASSWORD });
 const req = http.request({ hostname: "localhost", port: 8080, path: "/api/login", method: "POST", headers: { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(data) } }, (res) => {
   let body = "";
   res.on("data", (chunk) => body += chunk);

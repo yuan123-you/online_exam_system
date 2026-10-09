@@ -176,14 +176,17 @@ class AuthServiceTest {
             Map<String, Object> dbUser = userRow("u1", "teacher", "teacher1", "plaintext");
             when(jdbc.queryForList(anyString(), eq("teacher1"))).thenReturn(List.of(dbUser));
 
+            when(jdbc.update(eq("update user_account set password=? where id=? and password=?"),
+                anyString(), eq("u1"), eq("plaintext"))).thenReturn(1);
+
             ResponseEntity<?> response = authService.login(loginBody("teacher1", "plaintext"));
 
             assertEquals(HttpStatus.OK, response.getStatusCode());
-            // Should save the upgraded (BCrypt hashed) password
-            verify(storeService).saveRecord(eq("users"), argThat(record -> {
-                String pw = String.valueOf(record.get("password"));
-                return pw.startsWith("$2a$") || pw.startsWith("$2b$");
-            }));
+            // Login upgrades only the password column, not a cached user record.
+            verify(jdbc).update(eq("update user_account set password=? where id=? and password=?"),
+                argThat((String hash) -> authService.matchesPassword("plaintext", hash)
+                    && !authService.needsPasswordUpgrade(hash)), eq("u1"), eq("plaintext"));
+            verifyNoInteractions(storeService);
         }
     }
 
@@ -200,11 +203,16 @@ class AuthServiceTest {
             Map<String, Object> user = new LinkedHashMap<>();
             user.put("id", "u1");
             user.put("username", "user1");
-            user.put("password", hashed);
+            // StoreService intentionally excludes credentials from its cached users.
+            when(jdbc.queryForList(eq("select password from user_account where id=? limit 1"), eq("u1")))
+                .thenReturn(List.of(Map.of("password", hashed)));
             user.put("role", "student");
             user.put("name", "User One");
             Store store = createStore(user);
             when(storeService.readStore()).thenReturn(store);
+
+            when(jdbc.update(eq("update user_account set password=? where id=? and password=?"),
+                anyString(), eq("u1"), eq(hashed))).thenReturn(1);
 
             Map<String, Object> body = new LinkedHashMap<>();
             body.put("oldPassword", "oldPass123");
@@ -213,7 +221,12 @@ class AuthServiceTest {
             ResponseEntity<?> response = authService.changePassword("u1", body);
 
             assertEquals(HttpStatus.OK, response.getStatusCode());
-            verify(storeService).saveRecord(eq("users"), any());
+            verify(jdbc).update(eq("update user_account set password=? where id=? and password=?"),
+                argThat((String hash) -> authService.matchesPassword("newPass456", hash)
+                    && !authService.needsPasswordUpgrade(hash)), eq("u1"), eq(hashed));
+            verify(storeService).invalidateCache();
+            verify(storeService, never()).saveRecord(anyString(), any());
+            assertFalse(user.containsKey("password"));
             verify(systemLogService).log(any(), eq("change password"), anyString());
         }
 
@@ -223,7 +236,9 @@ class AuthServiceTest {
             Map<String, Object> user = new LinkedHashMap<>();
             user.put("id", "u1");
             user.put("username", "user1");
-            user.put("password", hashed);
+            // StoreService intentionally excludes credentials from its cached users.
+            when(jdbc.queryForList(eq("select password from user_account where id=? limit 1"), eq("u1")))
+                .thenReturn(List.of(Map.of("password", hashed)));
             Store store = createStore(user);
             when(storeService.readStore()).thenReturn(store);
 
@@ -231,6 +246,10 @@ class AuthServiceTest {
             ResponseEntity<?> response = authService.changePassword("u1", body);
 
             assertEquals(HttpStatus.BAD_REQUEST, response.getStatusCode());
+            verify(jdbc, never()).update(anyString(), any(Object[].class));
+            verify(storeService, never()).saveRecord(anyString(), any());
+            verify(storeService, never()).invalidateCache();
+            verifyNoInteractions(systemLogService);
         }
 
         @Test
@@ -250,7 +269,9 @@ class AuthServiceTest {
             Map<String, Object> user = new LinkedHashMap<>();
             user.put("id", "u1");
             user.put("username", "user1");
-            user.put("password", hashed);
+            // StoreService intentionally excludes credentials from its cached users.
+            when(jdbc.queryForList(eq("select password from user_account where id=? limit 1"), eq("u1")))
+                .thenReturn(List.of(Map.of("password", hashed)));
             Store store = createStore(user);
             when(storeService.readStore()).thenReturn(store);
 
@@ -258,6 +279,10 @@ class AuthServiceTest {
             ResponseEntity<?> response = authService.changePassword("u1", body);
 
             assertEquals(HttpStatus.BAD_REQUEST, response.getStatusCode());
+            verify(jdbc, never()).update(anyString(), any(Object[].class));
+            verify(storeService, never()).saveRecord(anyString(), any());
+            verify(storeService, never()).invalidateCache();
+            verifyNoInteractions(systemLogService);
         }
 
         @Test
@@ -266,7 +291,9 @@ class AuthServiceTest {
             Map<String, Object> user = new LinkedHashMap<>();
             user.put("id", "u1");
             user.put("username", "user1");
-            user.put("password", hashed);
+            // StoreService intentionally excludes credentials from its cached users.
+            when(jdbc.queryForList(eq("select password from user_account where id=? limit 1"), eq("u1")))
+                .thenReturn(List.of(Map.of("password", hashed)));
             Store store = createStore(user);
             when(storeService.readStore()).thenReturn(store);
 
@@ -275,6 +302,10 @@ class AuthServiceTest {
             ResponseEntity<?> response = authService.changePassword("u1", body);
 
             assertEquals(HttpStatus.BAD_REQUEST, response.getStatusCode());
+            verify(jdbc, never()).update(anyString(), any(Object[].class));
+            verify(storeService, never()).saveRecord(anyString(), any());
+            verify(storeService, never()).invalidateCache();
+            verifyNoInteractions(systemLogService);
         }
     }
 
@@ -291,27 +322,31 @@ class AuthServiceTest {
             admin.put("id", "a1");
             admin.put("username", "admin1");
             admin.put("role", "admin");
-            admin.put("password", "hashed");
             admin.put("name", "Admin");
 
             Map<String, Object> target = new LinkedHashMap<>();
             target.put("id", "t1");
             target.put("username", "target1");
             target.put("role", "student");
-            target.put("password", "oldHash");
             target.put("name", "Target");
 
             Store store = createStore(admin, target);
             when(storeService.readStore()).thenReturn(store);
 
+            when(jdbc.update(eq("update user_account set password=? where id=?"),
+                anyString(), eq("t1"))).thenReturn(1);
+
             Map<String, Object> body = Map.of("userId", "t1", "newPassword", "newPass123");
             ResponseEntity<?> response = authService.resetPassword("a1", body);
 
             assertEquals(HttpStatus.OK, response.getStatusCode());
-            verify(storeService).saveRecord(eq("users"), argThat(record -> {
-                String pw = String.valueOf(record.get("password"));
-                return pw.startsWith("$2a$") || pw.startsWith("$2b$");
-            }));
+            verify(jdbc).update(eq("update user_account set password=? where id=?"),
+                argThat((String hash) -> authService.matchesPassword("newPass123", hash)
+                    && !authService.needsPasswordUpgrade(hash)), eq("t1"));
+            assertFalse(target.containsKey("password"));
+            verify(storeService).invalidateCache();
+            verify(storeService, never()).saveRecord(anyString(), any());
+            verify(systemLogService).log(eq(admin), eq("reset password"), eq("target1"));
         }
 
         @Test
@@ -332,13 +367,18 @@ class AuthServiceTest {
 
             Store store = createStore(admin, target);
             when(storeService.readStore()).thenReturn(store);
+            when(jdbc.update(eq("update user_account set password=? where id=?"), anyString(), eq("t1"))).thenReturn(1);
 
             Map<String, Object> body = Map.of("userId", "t1", "newPassword", "");
             ResponseEntity<?> response = authService.resetPassword("a1", body);
 
             assertEquals(HttpStatus.OK, response.getStatusCode());
-            // Default password "123456" should be hashed and saved
-            verify(storeService).saveRecord(eq("users"), any());
+            // Default password "123456" should be hashed and saved via JDBC
+            verify(jdbc).update(eq("update user_account set password=? where id=?"),
+                argThat((String hash) -> authService.matchesPassword("123456", hash)
+                    && !authService.needsPasswordUpgrade(hash)), eq("t1"));
+            verify(storeService).invalidateCache();
+            verify(storeService, never()).saveRecord(anyString(), any());
         }
 
         @Test

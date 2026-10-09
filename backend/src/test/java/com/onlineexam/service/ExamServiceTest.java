@@ -88,6 +88,13 @@ class ExamServiceTest {
         return user;
     }
 
+    private void freezePublication(Store store, Map<String, Object> exam) {
+        exam.put("teacherId", "t1");
+        store.papers.forEach(p -> p.put("teacherId", "t1"));
+        store.questions.forEach(q -> q.put("teacherId", "t1"));
+        store.examSnapshots.put(String.valueOf(exam.get("id")), ExamContent.capture(store, exam));
+    }
+
     // ================================================================
     // Exam Status tests
     // ================================================================
@@ -138,12 +145,15 @@ class ExamServiceTest {
             Store store = createEmptyStore();
             Map<String, Object> paper = makePaper("p1", 90, 100, 60, List.of("q1", "q2"));
             store.papers.add(paper);
+            store.questions.add(makeQuestion("q1", "Q1", List.of("A", "B"), List.of("A"), 50));
+            store.questions.add(makeQuestion("q2", "Q2", List.of("A", "B"), List.of("B"), 50));
 
             Map<String, Object> exam = makeExam("e1", "p1",
                     Instant.now().minus(1, ChronoUnit.HOURS),
                     Instant.now().plus(1, ChronoUnit.HOURS),
                     true, List.of());
 
+            freezePublication(store, exam);
             Map<String, Object> result = examService.decorateExam(store, exam);
 
             assertEquals("进行中", result.get("statusText"));
@@ -300,7 +310,7 @@ class ExamServiceTest {
             Instant start = Instant.now().minus(10, ChronoUnit.MINUTES);
             Instant end = Instant.now().plus(2, ChronoUnit.HOURS);
             Map<String, Object> exam = makeExam("e1", "p1", start, end, true, List.of("c1"));
-            Map<String, Object> paper = makePaper("p1", 90, 100, 60, List.of("q1", "q2", "q3"));
+            Map<String, Object> paper = makePaper("p1", 90, 30, 18, List.of("q1", "q2", "q3"));
             store.papers.add(paper);
 
             Map<String, Object> q1 = makeQuestion("q1", "Question 1", List.of("A", "B", "C"), List.of("A"), 10);
@@ -310,6 +320,7 @@ class ExamServiceTest {
 
             Map<String, Object> student = makeUser("s1", "student", "Alice", "c1");
 
+            freezePublication(store, exam);
             Map<String, Object> session = examService.ensureStudentSession(store, exam, student);
 
             assertNull(session.get("error"));
@@ -404,7 +415,7 @@ class ExamServiceTest {
         }
 
         @Test
-        void ensureStudentSession_paperNotFound_returnsError() {
+        void ensureStudentSession_publishedVersionMissing_returnsConflict() {
             Store store = createEmptyStore();
 
             Instant start = Instant.now().minus(10, ChronoUnit.MINUTES);
@@ -414,10 +425,10 @@ class ExamServiceTest {
 
             Map<String, Object> student = makeUser("s1", "student", "Alice", "c1");
 
-            Map<String, Object> session = examService.ensureStudentSession(store, exam, student);
-
-            assertNotNull(session.get("error"));
-            assertEquals("Paper not found.", session.get("error"));
+            org.springframework.web.server.ResponseStatusException error = assertThrows(
+                    org.springframework.web.server.ResponseStatusException.class,
+                    () -> examService.ensureStudentSession(store, exam, student));
+            assertEquals(409, error.getStatusCode().value());
         }
     }
 
@@ -443,6 +454,7 @@ class ExamServiceTest {
                     Instant.now().plus(1, ChronoUnit.HOURS),
                     true, List.of());
 
+            freezePublication(store, exam);
             Map<String, Object> snapshot = examService.buildExamSnapshot(store, exam, true, null, null);
 
             assertNotNull(snapshot.get("paper"));
@@ -473,6 +485,7 @@ class ExamServiceTest {
                     Instant.now().plus(1, ChronoUnit.HOURS),
                     true, List.of());
 
+            freezePublication(store, exam);
             Map<String, Object> snapshot = examService.buildExamSnapshot(store, exam, false, null, null);
 
             @SuppressWarnings("unchecked")
@@ -484,7 +497,7 @@ class ExamServiceTest {
         @Test
         void buildExamSnapshot_withCustomQuestionOrder_usesProvidedOrder() {
             Store store = createEmptyStore();
-            Map<String, Object> paper = makePaper("p1", 90, 100, 60, List.of("q1", "q2", "q3"));
+            Map<String, Object> paper = makePaper("p1", 90, 30, 18, List.of("q1", "q2", "q3"));
             store.papers.add(paper);
 
             store.questions.add(makeQuestion("q1", "Q1", List.of("A"), List.of("A"), 10));
@@ -499,6 +512,7 @@ class ExamServiceTest {
             // Custom order: q3, q1, q2
             List<String> customOrder = List.of("q3", "q1", "q2");
 
+            freezePublication(store, exam);
             Map<String, Object> snapshot = examService.buildExamSnapshot(store, exam, true, customOrder, null);
 
             @SuppressWarnings("unchecked")
@@ -527,6 +541,7 @@ class ExamServiceTest {
             Map<String, Object> optionOrder = new LinkedHashMap<>();
             optionOrder.put("q1", List.of(3, 1, 0, 2));
 
+            freezePublication(store, exam);
             Map<String, Object> snapshot = examService.buildExamSnapshot(store, exam, false, null, optionOrder);
 
             @SuppressWarnings("unchecked")

@@ -1,21 +1,4 @@
-/**
- * 账号密码校验工具
- *
- * 规则定义（2025-09 修订）：
- *
- * ┌────────────┬──────────────────────────────────────────────┐
- * │  字段       │  规则                                         │
- * ├────────────┼──────────────────────────────────────────────┤
- * │  账号       │  4-20 位，字母 + 数字，允许纯数字               │
- * │            │  不区分大小写（校验时自动转小写）                │
- * │            │  禁止空格、下划线及任何特殊符号                  │
- * ├────────────┼──────────────────────────────────────────────┤
- * │  密码       │  6-18 位，仅允许字母 + 数字                    │
- * │            │  区分大小写、不强制特殊符号                     │
- * │            │  无复杂度分级、无黑名单、无键盘序检测            │
- * │            │  允许纯数字密码（适配低年级学生）                │
- * └────────────┴──────────────────────────────────────────────┘
- */
+/** Credential validation shared by login and student registration. */
 
 /** 校验结果 */
 export interface ValidationResult {
@@ -27,7 +10,7 @@ export interface ValidationResult {
 // ===================== 账号校验 =====================
 
 /** 账号规则：4-20 位字母数字，允许纯数字，不含特殊符号 */
-const USERNAME_REGEX = /^[a-zA-Z0-9]{4,20}$/
+const USERNAME_REGEX = /^[A-Za-z0-9_][A-Za-z0-9_.-]{3,31}$/
 
 /**
  * 校验账号格式
@@ -54,7 +37,7 @@ export function validateUsername(username: unknown): ValidationResult {
   }
 
   if (!USERNAME_REGEX.test(str)) {
-    return { valid: false, message: '账号仅支持 4-20 位字母和数字，不能包含空格、下划线及任何特殊符号' }
+    return { valid: false, message: '账号需为4至32位字母、数字或下划线，可包含点和短横线' }
   }
 
   return { valid: true, message: '' }
@@ -87,7 +70,7 @@ const PASSWORD_REGEX = /^[a-zA-Z0-9]{6,18}$/
  * validatePassword('pass word') // { valid: false, message: '密码仅支持…' }
  * validatePassword('pass@123')  // { valid: false, message: '密码仅支持…' }
  */
-export function validatePassword(password: unknown): ValidationResult {
+export function validatePassword(password: unknown, minimumLength = 6): ValidationResult {
   if (password == null || (typeof password !== 'string' && typeof password !== 'number')) {
     return { valid: false, message: '密码不能为空' }
   }
@@ -98,8 +81,8 @@ export function validatePassword(password: unknown): ValidationResult {
     return { valid: false, message: '密码不能为空' }
   }
 
-  if (!PASSWORD_REGEX.test(str)) {
-    return { valid: false, message: '密码仅支持 6-18 位字母和数字，不能包含特殊符号' }
+  if (str.length < minimumLength || str.length > 64 || new TextEncoder().encode(str).length > 72) {
+    return { valid: false, message: `密码需为${minimumLength}至64个字符，且不能超过72个UTF-8字节` }
   }
 
   return { valid: true, message: '' }

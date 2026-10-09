@@ -96,11 +96,12 @@ public class ExcelExportService {
         Object score = row.get("score");
         int totalScore = asInt(row.get("totalScore"));
         int passScore = asInt(row.get("passScore"));
+        boolean missingVersion = "MISSING".equals(str(row, "contentVersionStatus"));
         if (score != null) {
           int scoreVal = ((Number) score).intValue();
           scoreCell.setCellValue(scoreVal);
           // 根据是否及格设置样式
-          scoreCell.setCellStyle(scoreVal >= passScore ? passStyle : failStyle);
+          scoreCell.setCellStyle(missingVersion ? dataStyle : scoreVal >= passScore ? passStyle : failStyle);
         } else {
           scoreCell.setCellValue("-");
           scoreCell.setCellStyle(dataStyle);
@@ -108,17 +109,19 @@ public class ExcelExportService {
 
         // 总分
         Cell totalCell = dataRow.createCell(6);
-        totalCell.setCellValue(totalScore);
+        if (missingVersion) totalCell.setCellValue("版本待恢复");
+        else totalCell.setCellValue(totalScore);
         totalCell.setCellStyle(dataStyle);
 
         // 及格线
         Cell passCell = dataRow.createCell(7);
-        passCell.setCellValue(passScore);
+        if (missingVersion) passCell.setCellValue("版本待恢复");
+        else passCell.setCellValue(passScore);
         passCell.setCellStyle(dataStyle);
 
         // 得分率
         Cell rateCell = dataRow.createCell(8);
-        if (score != null && totalScore > 0) {
+        if (!missingVersion && score != null && totalScore > 0) {
           double rate = ((Number) score).doubleValue() / totalScore * 100;
           rateCell.setCellValue(Math.round(rate * 10.0) / 10.0 + "%");
         } else {

@@ -1,5 +1,6 @@
+if (!process.env.MYSQL_PASSWORD) throw new Error("MYSQL_PASSWORD must be provided through the environment");
 const http = require("http");
-const data = JSON.stringify({ username: "teacher", password: "123456" });
+const data = JSON.stringify({ username: "teacher", password: process.env.MYSQL_PASSWORD });
 
 function apiCall(method, path, body, headers = {}) {
   return new Promise((resolve, reject) => {

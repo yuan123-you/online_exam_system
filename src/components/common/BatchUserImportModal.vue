@@ -33,7 +33,7 @@
             </article>
             <article class="mini-item">
               <h4>导入说明</h4>
-              <p>{{ isStudent ? "班级列支持填写班级 ID 或班级名称。" : "院系列支持填写院系 ID 或院系名称。" }}密码为空时默认使用 123456。</p>
+              <p>{{ isStudent ? "班级列支持填写班级 ID 或班级名称。" : "院系列支持填写院系 ID 或院系名称。" }}密码为空时默认使用 。</p>
             </article>
           </div>
           <template v-if="parsedErrors.length > 0">
@@ -86,8 +86,8 @@ const templateHeaderText = computed(() =>
 
 const placeholderText = computed(() =>
   isStudent.value
-    ? "2023003|王五|2310|软件工程|123456\n2023004|赵六|class-1|软件工程|123456"
-    : "t1001|李老师|计算机学院|123456\nt1002|周老师|dept-1|123456"
+    ? "2023003|王五|2310|软件工程|\n2023004|赵六|class-1|软件工程|"
+    : "t1001|李老师|计算机学院|\nt1002|周老师|dept-1|"
 );
 
 const payload = ref("");
@@ -167,9 +167,13 @@ function parseRows(): { records: Array<Record<string, unknown>>; errors: ImportE
       }
       const classRecord = props.bootstrap.classes.find((item) => item.id === classId);
       const major = (secondIsClass ? cells[2] : cells[3]) || classRecord?.major || "";
-      const password = (secondIsClass ? cells[3] : cells[4]) || "123456";
+      const password = (secondIsClass ? cells[3] : cells[4]) || "";
       if (!username || !classText) {
         errors.push({ lineNumber, message: "学号、班级不能为空" });
+        return;
+      }
+      if (!password) {
+        errors.push({ lineNumber, message: "必须显式填写初始密码" });
         return;
       }
       records.push({ role: "student", username, name, classId, major, password });
@@ -182,7 +186,7 @@ function parseRows(): { records: Array<Record<string, unknown>>; errors: ImportE
       const secondIsDepartment = departmentMap.value.has(normalizeKey(cells[1]));
       const name = secondIsDepartment ? username : cells[1] || username;
       const departmentText = secondIsDepartment ? cells[1] : cells[2];
-      const password = (secondIsDepartment ? cells[2] : cells[3]) || "123456";
+      const password = (secondIsDepartment ? cells[2] : cells[3]) || "";
       const departmentId = departmentMap.value.get(normalizeKey(departmentText));
       if (!username || !departmentText) {
         errors.push({ lineNumber, message: "账号、院系不能为空" });
@@ -192,7 +196,11 @@ function parseRows(): { records: Array<Record<string, unknown>>; errors: ImportE
         errors.push({ lineNumber, message: `未找到院系：${departmentText}` });
         return;
       }
-      records.push({ role: "teacher", username, name, departmentId, password: password || "123456" });
+      if (!password) {
+        errors.push({ lineNumber, message: "必须显式填写初始密码" });
+        return;
+      }
+      records.push({ role: "teacher", username, name, departmentId, password });
     }
   });
 
@@ -396,8 +404,8 @@ function columnNameToIndex(name: string): number {
 
 function downloadTemplate() {
   const template = isStudent.value
-    ? ["学号|姓名|班级|专业|密码", "2023003|王五|2310|软件工程|123456", "2023004|赵六|class-1|软件工程|123456"].join("\n")
-    : ["账号|姓名|院系|密码", "t1001|李老师|dept-1|123456", "t1002|周老师|计算机学院|123456"].join("\n");
+    ? ["学号|姓名|班级|专业|密码", "2023003|王五|2310|软件工程|", "2023004|赵六|class-1|软件工程|"].join("\n")
+    : ["账号|姓名|院系|密码", "t1001|李老师|dept-1|", "t1002|周老师|计算机学院|"].join("\n");
   const now = new Date();
   const pad = (n: number) => String(n).padStart(2, "0");
   const timestamp = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;

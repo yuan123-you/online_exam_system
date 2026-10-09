@@ -41,13 +41,10 @@ public class BootstrapService {
     Store store;
     try {
       store = storeService.readStore();
+    } catch (org.springframework.web.server.ResponseStatusException e) {
+      return ResponseEntity.status(e.getStatusCode()).body(mapOf("message",e.getReason()==null?"数据无法读取":e.getReason()));
     } catch (Exception e) {
-      // readStore 失败时（如表不存在），返回 200 + 空数据，避免浏览器控制台报 401 错误
-      return ResponseEntity.ok(mapOf(
-        "currentUser", "", "departments", List.of(), "classes", List.of(), "users", List.of(),
-        "questions", List.of(), "papers", List.of(), "exams", List.of(),
-        "submissions", List.of(), "wrongBookEntries", List.of(), "logs", List.of()
-      ));
+      return error(HttpStatus.SERVICE_UNAVAILABLE,"数据暂时无法读取，请稍后重试；未返回伪造的空数据。");
     }
     Map<String, Object> user = find(store.users, userId);
     if (user == null) return ResponseEntity.ok(mapOf(
@@ -57,14 +54,10 @@ public class BootstrapService {
     ));
     try {
       return ResponseEntity.ok(buildBootstrap(store, user));
+    } catch (org.springframework.web.server.ResponseStatusException e) {
+      return ResponseEntity.status(e.getStatusCode()).body(mapOf("message",e.getReason()==null?"数据无法读取":e.getReason()));
     } catch (Exception e) {
-      // 如果构建失败，返回最小化数据避免前端完全不可用
-      return ResponseEntity.ok(mapOf(
-        "currentUser", sanitizeUser(user),
-        "departments", List.of(), "classes", List.of(), "users", List.of(sanitizeUser(user)),
-        "questions", List.of(), "papers", List.of(), "exams", List.of(),
-        "submissions", List.of(), "wrongBookEntries", List.of(), "logs", List.of()
-      ));
+      return error(HttpStatus.SERVICE_UNAVAILABLE,"数据暂时无法构建，请稍后重试；历史记录未被清空。");
     }
   }
 
@@ -76,9 +69,10 @@ public class BootstrapService {
     Map<String, Object> user = find(store.users, userId);
     if (!hasRole(user, "admin", "teacher")) return error(HttpStatus.FORBIDDEN, "Forbidden.");
     Set<String> teacherExamIds = ids(store.exams.stream().filter(e -> Objects.equals(str(e, "teacherId"), userId)).toList());
+    Set<String> historyExamIds = isRole(user,"teacher") ? ExamContent.ownedHistoryExamIds(store,userId) : Set.of();
     List<Map<String, Object>> scope = isRole(user, "admin")
       ? store.submissions
-      : store.submissions.stream().filter(s -> teacherExamIds.contains(str(s, "examId"))).toList();
+      : store.submissions.stream().filter(s -> historyExamIds.contains(str(s, "examId"))).toList();
     long finished = scope.stream().filter(s -> COMPLETED.equals(str(s, "status"))).count();
     int totalUsers = isRole(user, "admin") ? store.users.size() : (int) store.users.stream().filter(u -> isRole(u, "student")).count();
     int totalExams = isRole(user, "admin") ? store.exams.size() : teacherExamIds.size();
@@ -95,11 +89,12 @@ public class BootstrapService {
     }
     if (isRole(user, "teacher")) {
       Set<String> ownExamIds = ids(store.exams.stream().filter(e -> Objects.equals(str(e, "teacherId"), str(user, "id"))).toList());
+      Set<String> historyExamIds = ExamContent.ownedHistoryExamIds(store,str(user,"id"));
       return mapOf("currentUser", sanitizeUser(user), "departments", store.departments, "classes", store.classes, "users", safeUsers,
         "questions", store.questions.stream().filter(q -> Objects.equals(str(q, "teacherId"), str(user, "id"))).toList(),
         "papers", store.papers.stream().filter(p -> Objects.equals(str(p, "teacherId"), str(user, "id"))).toList(),
         "exams", store.exams.stream().filter(e -> ownExamIds.contains(str(e, "id"))).map(e -> examService.decorateExam(store, e)).toList(),
-        "submissions", store.submissions.stream().filter(s -> ownExamIds.contains(str(s, "examId"))).map(s -> submissionService.buildSubmissionReview(store, s)).toList(),
+        "submissions", store.submissions.stream().filter(s -> historyExamIds.contains(str(s, "examId"))).map(s -> submissionService.buildSubmissionReview(store, s)).toList(),
         "wrongBookEntries", List.of(), "logs", List.of());
     }
     return mapOf("currentUser", sanitizeUser(user), "departments", store.departments, "classes", store.classes, "users", List.of(sanitizeUser(user)),

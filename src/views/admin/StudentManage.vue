@@ -75,6 +75,15 @@
       @page-size-change="handlePageSizeChange"
     />
   </article>
+  <BaseModal v-if="resetTarget" @close="closePasswordReset">
+    <template #header><h3>重置密码</h3></template>
+    <form @submit.prevent="submitPasswordReset">
+      <label>新密码
+        <input v-model="newPassword" type="password" required minlength="6" maxlength="64" autocomplete="new-password" />
+      </label>
+      <button class="primary-btn" type="submit" :disabled="resetPending">确认重置</button>
+    </form>
+  </BaseModal>
 </template>
 
 <script setup lang="ts">
@@ -84,6 +93,7 @@ import { useDebouncedRef } from '@/composables/useDebounce'
 import { resetPassword } from '@/api/client'
 import type { User } from '@/types'
 import PaginationBar from '@/components/common/PaginationBar.vue'
+import BaseModal from '@/components/common/BaseModal.vue'
 
 const store = useAppStore()
 
@@ -111,14 +121,39 @@ function handlePageSizeChange(size: number) {
   store.loadUsersPage(1, searchQuery.value || undefined, 'student', classFilter.value || undefined)
 }
 
-async function handleResetPassword(user: User) {
-  const ok = await store.confirmDialog(`确定要重置 ${user.name} 的密码为 123456 吗？`, { title: '重置密码确认', confirmText: '重置', danger: true })
+const resetTarget = ref<User | null>(null)
+const newPassword = ref('')
+const resetPending = ref(false)
+
+function handleResetPassword(user: User) {
+  resetTarget.value = user
+  newPassword.value = ''
+}
+
+function closePasswordReset() {
+  resetTarget.value = null
+  newPassword.value = ''
+}
+
+async function submitPasswordReset() {
+  const user = resetTarget.value
+  if (!user || resetPending.value) return
+  const password = newPassword.value
+  if (password.trim().length < 6) {
+    store.showToast('必须显式输入有效的新密码', 'error')
+    return
+  }
+  const ok = await store.confirmDialog(`确定要重置 ${user.name} 的密码吗？`, { title: '重置密码确认', confirmText: '重置', danger: true })
   if (!ok) return
+  resetPending.value = true
   try {
-    await resetPassword(user.id, '123456')
+    await resetPassword(user.id, password)
     store.showToast(`已重置 ${user.name} 的密码`, 'success')
+    closePasswordReset()
   } catch (err: any) {
     store.showToast(err?.message || '重置密码失败', 'error')
+  } finally {
+    resetPending.value = false
   }
 }
 

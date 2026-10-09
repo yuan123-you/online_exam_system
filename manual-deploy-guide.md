@@ -108,27 +108,27 @@ sudo systemctl start mysql
 sudo systemctl enable mysql
 ```
 
-设置 root 密码（项目配置中默认使用 `123456`，你可以改成自己的）：
+设置 root 密码（项目配置中默认使用 `<通过受控环境提供>`，你可以改成自己的）：
 
 ```bash
-sudo mysql -e "ALTER USER 'root'@'localhost' IDENTIFIED WITH mysql_native_password BY '123456';"
-sudo mysql -u root -p'123456' -e "FLUSH PRIVILEGES;"
+sudo mysql -e "ALTER USER 'root'@'localhost' IDENTIFIED WITH mysql_native_password BY '<通过受控环境提供>';"
+sudo mysql -u root -p'<通过受控环境提供>' -e "FLUSH PRIVILEGES;"
 ```
 
 创建数据库：
 
 ```bash
-sudo mysql -u root -p'123456' -e "CREATE DATABASE IF NOT EXISTS online_exam_system CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
+sudo mysql -u root -p'<通过受控环境提供>' -e "CREATE DATABASE IF NOT EXISTS online_exam_system CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
 ```
 
 验证数据库已创建：
 
 ```bash
-sudo mysql -u root -p'123456' -e "SHOW DATABASES;"
+sudo mysql -u root -p'<通过受控环境提供>' -e "SHOW DATABASES;"
 # 应看到 online_exam_system
 ```
 
-> 注意：如果你修改了 root 密码（不是 123456），后面启动后端时需要通过环境变量传入新密码。
+> 注意：如果你修改了 root 密码（不是 <通过受控环境提供>），后面启动后端时需要通过环境变量传入新密码。
 
 ---
 
@@ -205,10 +205,10 @@ java -jar backend/target/online-exam-backend-1.0.0.jar
 
 ```bash
 sudo systemctl status mysql
-sudo mysql -u root -p'123456' -e "SELECT 1;"
+sudo mysql -u root -p'<通过受控环境提供>' -e "SELECT 1;"
 ```
 
-如果密码不是默认的 123456，启动时传入环境变量：
+如果密码不是默认的 <通过受控环境提供>，启动时传入环境变量：
 
 ```bash
 MYSQL_PASSWORD=你的密码 java -jar backend/target/online-exam-backend-1.0.0.jar
@@ -224,7 +224,7 @@ MYSQL_PASSWORD=你的密码 java -jar backend/target/online-exam-backend-1.0.0.j
 sudo tee /opt/online-exam/env.conf << 'EOF'
 MYSQL_URL=jdbc:mysql://localhost:3306/online_exam_system?createDatabaseIfNotExist=true&useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true&useSSL=false
 MYSQL_USER=root
-MYSQL_PASSWORD=123456
+MYSQL_PASSWORD=<通过受控环境提供>
 PORT=8080
 EOF
 ```
@@ -297,7 +297,7 @@ sudo apt-get install -y nginx
 sudo tee /etc/nginx/sites-available/online-exam << 'EOF'
 server {
     listen 80;
-    server_name web.novo.ccwu.cc 54.179.150.131;
+    server_name web.novo.ccwu.cc 129.151.25.15;
 
     # 前端静态文件
     root /opt/online-exam/dist;

@@ -44,7 +44,8 @@ public class SubmissionService {
    */
   public void gradeSubmission(Store store, Map<String, Object> submission) {
     Map<String, Object> exam = find(store.exams, str(submission, "examId"));
-    Map<String, Object> paper = exam == null ? null : find(store.papers, str(exam, "paperId"));
+    Map<String, Object> paper = exam == null ? null : ExamContent.paper(store, exam);
+    List<Map<String, Object>> contentQuestions = exam == null ? List.of() : ExamContent.questions(store, exam);
     Map<String, Object> answerMap = new HashMap<>();
     for (Object raw : asList(submission.get("answers"))) {
       Map<String, Object> item = asMap(raw);
@@ -54,7 +55,7 @@ public class SubmissionService {
     boolean needsManual = false;
     List<Object> details = new ArrayList<>();
     for (Object rawId : asList(paper == null ? null : paper.get("questionIds"))) {
-      Map<String, Object> q = find(store.questions, String.valueOf(rawId));
+      Map<String, Object> q = find(contentQuestions, String.valueOf(rawId));
       if (q == null) continue;
       CompareResult result = compare(q, answerMap.get(str(q, "id")), false);
       int score = 0;
@@ -80,11 +81,23 @@ public class SubmissionService {
    * 构建提交审查信息
    */
   public Map<String, Object> buildSubmissionReview(Store store, Map<String, Object> submission) {
-    Map<String, Object> exam = find(store.exams, str(submission, "examId"));
-    Map<String, Object> paper = exam == null ? null : find(store.papers, str(exam, "paperId"));
+    Map<String, Object> exam = ExamContent.examForHistory(store,str(submission,"examId"));
+    Map<String, Object> paper = exam == null ? null : ExamContent.displayPaper(store, exam);
+    boolean missingVersion = exam == null || paper == null || "MISSING".equals(ExamContent.status(store, exam));
     int score = asInt(submission.get("finalScore"));
     int passScore = asInt(paper == null ? 0 : paper.get("passScore"));
-    List<Map<String, Object>> finished = store.submissions.stream()
+    // Include the just-saved detached candidate without changing the shared read view.
+    List<Map<String, Object>> reviewSubmissions = new ArrayList<>(store.submissions);
+    boolean replaced = false;
+    for (int i = 0; i < reviewSubmissions.size(); i++) {
+      if (Objects.equals(str(reviewSubmissions.get(i), "id"), str(submission, "id"))) {
+        reviewSubmissions.set(i, submission);
+        replaced = true;
+        break;
+      }
+    }
+    if (!replaced) reviewSubmissions.add(submission);
+    List<Map<String, Object>> finished = reviewSubmissions.stream()
       .filter(s -> Objects.equals(str(s, "examId"), str(submission, "examId")) && COMPLETED.equals(str(s, "status")))
       .sorted(java.util.Comparator.comparingInt((Map<String, Object> s) -> asInt(s.get("finalScore"))).reversed())
       .toList();
@@ -95,12 +108,15 @@ public class SubmissionService {
     review.put("paperName", paper == null ? "-" : str(paper, "name"));
     review.put("totalScore", asInt(paper == null ? 0 : paper.get("totalScore")));
     review.put("durationMinutes", asInt(paper == null ? 0 : paper.get("durationMinutes")));
-    review.put("passScore", passScore);
-    review.put("passStatus", COMPLETED.equals(str(submission, "status")) ? (score >= passScore ? "\u5df2\u53ca\u683c" : "\u672a\u53ca\u683c") : "\u5f85\u5b9a");
+    review.put("passScore", missingVersion ? null : passScore);
+    review.put("contentVersionStatus", missingVersion ? "MISSING" : ExamContent.status(store, exam));
+    review.put("examArchived", exam != null && Boolean.TRUE.equals(exam.get("deleted")));
+    review.put("passThresholdKnown", !missingVersion);
+    review.put("passStatus", missingVersion ? "版本待恢复" : COMPLETED.equals(str(submission, "status")) ? (score >= passScore ? "\u5df2\u53ca\u683c" : "\u672a\u53ca\u683c") : "\u5f85\u5b9a");
     review.put("scoreRate", asInt(paper == null ? 0 : paper.get("totalScore")) > 0 ? Math.round(score * 1000.0 / asInt(paper.get("totalScore"))) / 10.0 : null);
     review.put("rank", rank > 0 ? rank : null);
     review.put("finishedCount", finished.size());
-    review.put("participantCount", store.submissions.stream().filter(s -> Objects.equals(str(s, "examId"), str(submission, "examId"))).count());
+    review.put("participantCount", reviewSubmissions.stream().filter(s -> Objects.equals(str(s, "examId"), str(submission, "examId"))).count());
     review.put("targetStudentCount", exam == null ? 0 : store.users.stream().filter(u -> isRole(u, "student") && asList(exam.get("targetClassIds")).contains(str(u, "classId"))).count());
     review.put("usedTimeText", buildUsedTimeText(submission));
     Instant startedAt = parseInstant(str(submission, "startedAt")).orElse(null);
@@ -127,6 +143,10 @@ public class SubmissionService {
     List<String> given = normalizeAnswer(rawAnswer);
     List<String> expected = normalizeAnswer(question.get("answer"));
     String type = str(question, "type");
+    if (Set.of("single", "multiple", "judge").contains(type)) {
+      given = ChoiceAnswers.forScoring(question.get("options"), given);
+      expected = ChoiceAnswers.forScoring(question.get("options"), expected);
+    }
     Boolean correct = null;
     if ("single".equals(type) || "judge".equals(type)) correct = !given.isEmpty() && !expected.isEmpty() && Objects.equals(given.get(0), expected.get(0));
     else if ("multiple".equals(type)) correct = new HashSet<>(given).equals(new HashSet<>(expected)) && given.size() == expected.size();

@@ -112,23 +112,16 @@ public class SubmissionController {
     if (submission == null) return error(HttpStatus.NOT_FOUND, "Submission not found.");
     Map<String, Object> exam = find(store.exams, str(submission, "examId"));
     if (exam == null || !Objects.equals(str(exam, "teacherId"), userId)) return error(HttpStatus.FORBIDDEN, "Forbidden.");
-    Map<String, Object> scores = asMap(body.get("scores"));
-    int finalScore = 0;
-    List<Object> details = new ArrayList<>();
-    for (Object raw : asList(submission.get("answerDetail"))) {
-      Map<String, Object> detail = new LinkedHashMap<>(asMap(raw));
-      int full = asInt(detail.get("fullScore"));
-      if (scores.containsKey(str(detail, "questionId"))) {
-        int score = Math.max(0, Math.min(full, asInt(scores.get(str(detail, "questionId")))));
-        detail.put("score", score);
-        detail.put("correct", full > 0 && score >= full);
-      }
-      finalScore += asInt(detail.get("score"));
-      details.add(detail);
+    if (!PENDING.equals(str(submission, "status")) && !COMPLETED.equals(str(submission, "status"))) {
+      return error(HttpStatus.CONFLICT, "Submission has not been submitted.");
     }
-    submission.put("answerDetail", details);
-    submission.put("finalScore", finalScore);
-    submission.put("status", COMPLETED);
+    com.onlineexam.service.ExamContent.paper(store, exam);
+    try {
+      submission = com.onlineexam.service.ManualGradePolicy.apply(submission,body.get("scores"),
+          com.onlineexam.service.ExamContent.questions(store,exam));
+    } catch (IllegalArgumentException invalidRequest) {
+      return error(HttpStatus.BAD_REQUEST,invalidRequest.getMessage());
+    }
     submission.put("gradedBy", str(user, "name"));
     submission.put("updatedAt", Instant.now().toString());
     storeService.saveRecord("submissions", submission);

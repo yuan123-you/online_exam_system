@@ -94,7 +94,7 @@ public class DataIsolationService {
     Map<String, Object> submission = find(store.submissions, submissionId);
     if (submission == null) return false;
     if (isTeacher(user)) {
-      Map<String, Object> exam = find(store.exams, str(submission, "examId"));
+      Map<String, Object> exam = ExamContent.examForHistory(store,str(submission,"examId"));
       return exam != null && Objects.equals(str(exam, "teacherId"), userId);
     }
     if (isStudent(user)) {
