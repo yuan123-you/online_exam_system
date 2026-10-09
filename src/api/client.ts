@@ -1134,7 +1134,7 @@ export function logBehavior(params: {
   return request<{ logged: boolean }>('/api/recommendations/behavior', {
     method: 'POST',
     body: JSON.stringify(params),
-  });
+  }).catch(() => ({ logged: false }));
 }
 
 /** 提交推荐反馈 */

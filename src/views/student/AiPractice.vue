@@ -26,10 +26,10 @@
           <div class="welcome-icon">{{ activeTab === 'chat' ? '👋' : '📝' }}</div>
           <h3>{{ activeTab === 'chat' ? '有什么可以帮助你的？' : 'AI 智能练题' }}</h3>
           <div class="welcome-chips" v-if="activeTab === 'chat'">
-            <button v-for="s in suggestions" :key="s" class="wc-chip" @click="send(s)">{{ s }}</button>
+            <button v-for="s in suggestions" :key="s" class="wc-chip" :disabled="currentLoading" @click="send(s)">{{ s }}</button>
           </div>
           <div class="welcome-chips" v-if="activeTab === 'practice'">
-            <button v-for="c in practiceQuickChips" :key="c.label" class="wc-chip" @click="send(c.prompt)">{{ c.icon }} {{ c.label }}</button>
+            <button v-for="c in practiceQuickChips" :key="c.label" class="wc-chip" :disabled="currentLoading" @click="send(c.prompt)">{{ c.icon }} {{ c.label }}</button>
           </div>
 
           <!-- 个性化推荐面板 -->
@@ -134,7 +134,7 @@
           <div v-if="currentMessages.length > 0 && recentThemes.length > 0 && !currentLoading" class="quick-chips">
             <button
               v-for="theme in recentThemes"
-              :key="theme"
+              :key="theme" :disabled="currentLoading"
               @click="send(activeTab === 'practice' ? `帮我出关于「${theme}」的练习题，附详细解析` : `请深入讲解「${theme}」`)"
             >
               {{ theme }}
@@ -367,7 +367,7 @@ function switchTab(tab: 'chat' | 'practice') {
 }
 
 function send(text: string) {
-  if (!text.trim()) return
+  if (!text.trim() || currentLoading.value) return
   // 记录行为日志
   store.trackBehavior(activeTab.value === 'chat' ? 'chat' : 'practice', 'conversation', undefined, { message: text.trim() })
   if (activeTab.value === 'chat') {
@@ -378,6 +378,7 @@ function send(text: string) {
 }
 
 function doSend() {
+  if (currentLoading.value) return
   const text = inputText.value.trim()
   if (!text) return
   inputText.value = ''
@@ -452,6 +453,7 @@ function recTypeLabel(type: string): string {
 }
 
 function handleRecommendationClick(rec: RecommendationItem) {
+  if (currentLoading.value) return
   // 记录推荐点击行为
   store.trackBehavior('recommendation_click', 'recommendation', undefined, { type: rec.type, title: rec.title })
 
@@ -754,6 +756,12 @@ onUnmounted(() => {
   transition: all 0.12s;
 }
 .wc-chip:hover { border-color: var(--ai-text-faint); background: var(--ai-surface-soft); }
+.wc-chip:disabled,
+.quick-chips button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  pointer-events: none;
+}
 
 /* ===== Recommendations Panel ===== */
 .recommendations-panel {

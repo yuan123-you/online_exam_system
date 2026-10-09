@@ -107,4 +107,13 @@ class AiIntentAndPromptTest {
     List<String> validatedFalse = ChoiceAnswers.validate(options, answerFalse, "judge");
     assertEquals(List.of("B. 错误"), validatedFalse);
   }
+  @Test
+  void testRecommendModelRespectsFlashModel() {
+    AiService.UserIntent intentEnglish = aiService.analyzeUserIntent("帮我出5道大学英语单选题");
+    // When default model is glm-4-flash, it must not be upgraded to paid glm-4-air
+    assertEquals("glm-4-flash", intentEnglish.recommendModel("glm-4-flash"));
+
+    // When default model is glm-4-air, complex subjects can stay on glm-4-air
+    assertEquals("glm-4-air", intentEnglish.recommendModel("glm-4-air"));
+  }
 }

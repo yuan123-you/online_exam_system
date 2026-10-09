@@ -92,7 +92,7 @@ public class AiService {
   @Value("${ai.api-key:}")
   private String apiKey;
 
-  @Value("${ai.model:glm-4-air}")
+  @Value("${ai.model:glm-4-flash}")
   private String model;
 
   /** 备用模型列表：主模型 429 时自动降级（flash更快，作为降级保底） */
@@ -911,11 +911,12 @@ public class AiService {
         conn.setReadTimeout(180000);    // 180s读取超时（原60s）
 
         // Build request body - 智能参数调节：根据intent自动选择最优模型和参数
-        String effectiveModel = model;
+        String baseModel = getActiveModel();
+        String effectiveModel = baseModel;
         double effectiveTemperature = temperature;
         int effectiveMaxTokens = 8192; // 降低默认值加速生成
         if (intent != null) {
-          effectiveModel = intent.recommendModel(model);
+          effectiveModel = intent.recommendModel(baseModel);
           effectiveTemperature = intent.recommendTemperature();
           effectiveMaxTokens = intent.recommendMaxTokens();
           log.info("[AiService SSE] [{}] 智能参数: model={}, temp={}, maxTokens={}, complexity={}",
@@ -950,9 +951,18 @@ public class AiService {
 
         // 429/503 重试
         if ((responseCode == 429 || responseCode == 503) && attempt < maxRetries) {
-          long waitMs = responseCode == 429
+          onModel429();
+          java.io.InputStream errorStream = conn.getErrorStream();
+          String errorBody = errorStream != null ? new String(errorStream.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8) : "";
+          boolean isBalanceExhausted = errorBody.contains("1113") || errorBody.contains("余额不足");
+          if (isBalanceExhausted) {
+            log.warn("[AiService SSE] [{}] API返回余额不足(1113)，立即切换为glm-4-flash重试", threadId);
+            activeModel = "glm-4-flash";
+            model429Time = System.currentTimeMillis();
+          }
+          long waitMs = isBalanceExhausted ? 500 : (responseCode == 429
             ? (long) (5000 * Math.pow(3, attempt - 1))
-            : (long) (3000 * Math.pow(2.5, attempt - 1));
+            : (long) (3000 * Math.pow(2.5, attempt - 1)));
           log.info("[AiService SSE] [{}] 收到{}，{}ms后重试", threadId, responseCode, waitMs);
           conn.disconnect(); conn = null;
           try { Thread.sleep(waitMs); } catch (InterruptedException ie) { Thread.currentThread().interrupt(); }
@@ -1215,7 +1225,8 @@ public class AiService {
           );
 
           // 构建请求
-          String effectiveModel = batchIntent.recommendModel(model);
+          String baseBatchModel = getActiveModel();
+          String effectiveModel = batchIntent.recommendModel(baseBatchModel);
           double effectiveTemperature = batchIntent.recommendTemperature();
           int effectiveMaxTokens = batchIntent.recommendMaxTokens();
 
@@ -1265,9 +1276,18 @@ public class AiService {
 
               // 429/503 重试
               if ((responseCode == 429 || responseCode == 503) && attempt < maxRetries) {
-                long waitMs = responseCode == 429
+                onModel429();
+                java.io.InputStream errorStream = conn.getErrorStream();
+                String errorBody = errorStream != null ? new String(errorStream.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8) : "";
+                boolean isBalanceExhausted = errorBody.contains("1113") || errorBody.contains("余额不足");
+                if (isBalanceExhausted) {
+                  log.warn("[AiService SSE Batch] API返回余额不足(1113)，立即切换为glm-4-flash重试");
+                  activeModel = "glm-4-flash";
+                  model429Time = System.currentTimeMillis();
+                }
+                long waitMs = isBalanceExhausted ? 500 : (responseCode == 429
                   ? (long) (5000 * Math.pow(3, attempt - 1))
-                  : (long) (3000 * Math.pow(2.5, attempt - 1));
+                  : (long) (3000 * Math.pow(2.5, attempt - 1)));
                 log.info("[AiService SSE Batch] 批次 {} 收到{}，{}ms后重试", batch + 1, responseCode, waitMs);
                 conn.disconnect(); conn = null;
                 try { Thread.sleep(waitMs); } catch (InterruptedException ie) { Thread.currentThread().interrupt(); }
@@ -2245,6 +2265,9 @@ public class AiService {
 
   /** Map raw AI API error codes to user-friendly Chinese messages */
   private String friendlyAiError(int httpCode, String errorBody) {
+    if (errorBody != null && (errorBody.contains("1113") || errorBody.contains("余额不足"))) {
+      return "AI 模型余额不足，已自动切换为免费模型 glm-4-flash，请重试";
+    }
     return switch (httpCode) {
       case 429 -> "AI 服务当前访问繁忙，系统正在自动重试中，请稍候...";
       case 401 -> "AI API 密钥无效或已过期，请联系管理员更新";
@@ -2893,6 +2916,9 @@ public class AiService {
 
     /** 推断最优模型名称 */
     String recommendModel(String defaultModel) {
+      if ("glm-4-flash".equals(defaultModel) || (defaultModel != null && defaultModel.contains("flash"))) {
+        return defaultModel;
+      }
       // 高复杂度任务（大学英语、编程、多学科综合）使用更强模型
       if ("high".equals(complexity) || isForeignLanguageSubject(subject)) {
         return "glm-4-air";  // 更强推理能力

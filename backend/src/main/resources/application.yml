@@ -20,7 +20,7 @@ ai:
   api-url: https://open.bigmodel.cn/api/paas/v4/chat/completions
   api-key: ${AI_API_KEY:}
   # glm-4-air: 更强推理能力，解决"思考能力差"问题；速度仍较快
-  model: ${AI_MODEL:glm-4-air}
+  model: ${AI_MODEL:glm-4-flash}
   timeout-ms: 60000
   rate-limit-per-minute: 60
   concurrent-limit: ${AI_CONCURRENT_LIMIT:10}

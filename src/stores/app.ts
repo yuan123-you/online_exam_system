@@ -1526,6 +1526,7 @@ export const useAppStore = defineStore('app', () => {
     detail?: Record<string, unknown>,
     durationMs?: number,
   ) {
+    if (!currentUser.value) return
     logBehavior({ action, targetType, targetId, detail, durationMs }).catch(() => {
       // silently ignore behavior logging errors
     })
