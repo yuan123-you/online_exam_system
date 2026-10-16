@@ -9,11 +9,15 @@
     @clear-message="store.loginMessage = ''"
   >
     <template #heading>
-      <h1 class="auth-title">{{ activeTab === 'login' ? '用户登录' : '注册学生账号' }}</h1>
-      <p class="auth-subtitle">{{ activeTab === 'login' ? '欢迎回来，请输入您的账号信息' : '填写账号和用户名即可，学院与班级自动安排' }}</p>
+      <h1 class="auth-title" :class="{ 'auth-title--register': activeTab === 'register' }">
+        {{ activeTab === 'login' ? '用户登录' : '注册学生账号' }}
+      </h1>
+      <p class="auth-subtitle" :class="{ 'auth-subtitle--register': activeTab === 'register' }">
+        {{ activeTab === 'login' ? '欢迎回来，请输入您的账号信息' : '填写账号和用户名即可，学院与班级自动安排' }}
+      </p>
     </template>
     <template #tabs>
-      <div class="auth-tabs" role="tablist" aria-label="登录或注册">
+      <div class="auth-tabs" :class="{ 'auth-tabs--register': activeTab === 'register' }" role="tablist" aria-label="登录或注册">
         <button v-for="tab in tabs" :key="tab.key" :id="tab.key + '-tab'" type="button" role="tab"
           :aria-selected="activeTab === tab.key" :aria-controls="tab.key + '-panel'"
           :tabindex="activeTab === tab.key ? 0 : -1" @click="activeTab = tab.key"
@@ -22,7 +26,7 @@
     </template>
     <template #registration>
       <div v-if="activeTab === 'register'" id="register-panel" role="tabpanel" aria-labelledby="register-tab">
-        <RegisterView @login="returnToLogin" />
+        <RegisterView @login="returnToLogin" @registered="handleAutoLogin" />
       </div>
     </template>
   </AuthLogin>
@@ -70,13 +74,22 @@ async function handleLogin(payload: { username: string; password: string }) {
     loginLoading.value = false;
   }
 }
+
+async function handleAutoLogin(username: string) {
+  registeredUsername.value = username
+  await handleLogin({ username, password: '123456' })
+}
 </script>
 
 <style scoped>
 .auth-title { color:#203d32; margin:0 0 10px; font-size:30px; }
+.auth-title--register { font-size:22px; margin:0 0 6px; }
 .auth-subtitle { color:#526e60; font-size:14px; line-height:1.7; }
+.auth-subtitle--register { font-size:13px; line-height:1.5; }
 .auth-tabs { display:flex; padding:4px; gap:4px; background:#eaf3ee; border:1px solid #c3dbcf; border-radius:12px; margin:0 0 24px; }
+.auth-tabs--register { margin:0 0 16px; padding:3px; border-radius:10px; }
 .auth-tabs button { flex:1; padding:11px 16px; border:0; border-radius:8px; color:#405d50; background:transparent; font:inherit; font-weight:600; cursor:pointer; }
+.auth-tabs--register button { padding:8px 12px; font-size:13px; }
 .auth-tabs button[aria-selected="true"] { background:#287d63; color:#fff; }
 .auth-tabs button:focus-visible { outline:3px solid #6bb69a; outline-offset:2px; }
 </style>

@@ -2,8 +2,8 @@
   <section class="register-content">
     <div v-if="success" class="register-success" role="status">
       <h2>注册成功</h2>
-      <p>账号 {{ form.username }} 已创建，默认密码为 <strong>123456</strong>。</p>
-      <p>登录后可在个人中心修改密码。</p>
+      <p>账号 {{ form.username }} 已创建，默认密码为 <strong>123456</strong>，正在为您自动登录…</p>
+      <p class="register-tip">登录后可在个人中心修改密码。</p>
       <button class="register-submit register-login" type="button" @click="emit('login', form.username)">前往登录</button>
     </div>
     <template v-else>
@@ -26,7 +26,10 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { getRegistrationOptions, registerStudent, type RegistrationOptions } from '@/api/client'
 import { validateUsername } from '@/utils/validation'
-const emit = defineEmits<{ login: [username: string] }>()
+const emit = defineEmits<{
+  login: [username: string]
+  registered: [username: string]
+}>()
 const form = reactive({ username: '', name: '' })
 const submitting = ref(false), success = ref(false), error = ref('')
 const optionsLoading = ref(true), optionsFailed = ref(false)
@@ -49,24 +52,29 @@ async function submit() {
   if (!username.valid) { error.value = username.message; return }
   if (!form.name || form.name.length > 50 || /[<>\p{Cc}]/u.test(form.name)) { error.value = '请填写有效用户名（最多50个字符）'; return }
   submitting.value = true
-  try { await registerStudent({ ...form }); success.value = true }
+  try {
+    await registerStudent({ ...form })
+    success.value = true
+    emit('registered', form.username)
+  }
   catch (e) { error.value = e instanceof Error ? e.message : '注册失败，请稍后重试。' }
   finally { submitting.value = false }
 }
 onMounted(loadOptions)
 </script>
 <style scoped>
-.register-content { color:#203d32; }
-.register-form { display:grid; gap:20px; }
-label { display:grid; gap:9px; color:#203d32; font-size:14px; font-weight:600; }
-input { box-sizing:border-box; width:100%; min-width:0; padding:14px; border:1px solid #a7c6b7; border-radius:10px; background:#fff; color:#203d32; font:inherit; }
-input::placeholder { color:#62766c; opacity:1; font-weight:400; }
-input:focus-visible,button:focus-visible { outline:3px solid #6bb69a; outline-offset:3px; }
-.register-defaults { border:1px solid #c3dbcf; border-radius:10px; padding:12px 14px; background:#f0f7f3; color:#405d50; font-size:13px; line-height:1.7; }
-.register-defaults p { margin:4px 0; }.register-defaults strong { color:#203d32; }
-.register-submit { display:block; width:100%; padding:14px 20px; border:0; border-radius:10px; background:#287d63; color:white; font:inherit; font-weight:600; cursor:pointer; }
+.register-content { color:#203d32; font-size:13px; }
+.register-form { display:grid; gap:13px; }
+label { display:grid; gap:5px; color:#203d32; font-size:13px; font-weight:600; }
+input { box-sizing:border-box; width:100%; min-width:0; padding:9px 12px; font-size:13px; border:1px solid #a7c6b7; border-radius:8px; background:#fff; color:#203d32; font:inherit; }
+input::placeholder { color:#62766c; opacity:1; font-weight:400; font-size:12px; }
+input:focus-visible,button:focus-visible { outline:3px solid #6bb69a; outline-offset:2px; }
+.register-defaults { border:1px solid #c3dbcf; border-radius:8px; padding:9px 11px; background:#f0f7f3; color:#405d50; font-size:12px; line-height:1.55; }
+.register-defaults p { margin:2px 0; }.register-defaults strong { color:#203d32; }
+.register-submit { display:block; width:100%; padding:10px 16px; font-size:13px; border:0; border-radius:8px; background:#287d63; color:white; font:inherit; font-weight:600; cursor:pointer; transition:background 0.15s ease; }
 .register-submit:hover { background:#206a52; }.register-submit:disabled { opacity:.55; cursor:not-allowed; }
-.register-error { color:#922b2b; background:#fff0ef; padding:14px; border-radius:8px; margin-bottom:18px; }
-.register-success h2 { color:#206a52; }.register-success p { color:#203d32; line-height:1.8; margin:14px 0 20px; }
-.retry-button { margin-bottom:18px; background:#fff; color:#206a52; border:1px solid #287d63; border-radius:8px; padding:10px 14px; cursor:pointer; }
+.register-error { color:#922b2b; background:#fff0ef; padding:9px 12px; font-size:12px; border-radius:6px; margin-bottom:12px; }
+.register-success h2 { color:#206a52; font-size:18px; margin:0 0 6px; }.register-success p { color:#203d32; font-size:13px; line-height:1.55; margin:6px 0 10px; }
+.register-tip { font-size:12px; color:#526e60; }
+.retry-button { margin-bottom:12px; background:#fff; color:#206a52; border:1px solid #287d63; border-radius:6px; padding:8px 12px; font-size:12px; cursor:pointer; }
 </style>

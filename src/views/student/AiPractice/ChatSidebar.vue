@@ -474,14 +474,17 @@ async function onDelete(id: string) {
 .conv-item:hover .ci-delete { display: flex; }
 .ci-delete:hover { background: #fee2e2; color: #ef4444; }
 
-/* ===== Responsive — Mobile overlay sidebar ===== */
-@media (max-width: 768px) {
+/* ===== Responsive — Mobile/tablet: overlay drawer, ~half of the screen width ===== */
+@media (max-width: 1023px) {
   .chat-sidebar {
     position: absolute;
     left: 0; top: 0; bottom: 0;
-    width: 240px;
+    width: 50vw;
+    min-width: 180px;
+    max-width: 320px;
     z-index: 40;
     box-shadow: 4px 0 16px rgba(0,0,0,0.12);
+    border-radius: 0 12px 12px 0;
   }
 
   .brand-collapse-btn {

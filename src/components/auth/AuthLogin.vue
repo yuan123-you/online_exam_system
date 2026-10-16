@@ -34,7 +34,7 @@
 
     <!-- Right: login form -->
     <div class="login-panel">
-      <div class="login-card">
+      <div class="login-card" :class="{ 'login-card--register': registrationActive }">
         <div class="brand-block">
           <div class="brand-icon">
             <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/></svg>
@@ -329,6 +329,23 @@ onMounted(() => nextTick(() => {
     0 12px 40px rgba(26, 58, 52, 0.04);
   animation: cardEnter 0.5s var(--ease) both;
   animation-delay: 0.1s;
+}
+
+.login-card--register {
+  max-width: 380px;
+  padding: 28px 24px;
+}
+.login-card--register .brand-block {
+  margin-bottom: 16px;
+}
+.login-card--register .brand-icon {
+  width: 40px;
+  height: 40px;
+  margin-bottom: 10px;
+}
+.login-card--register .brand-icon svg {
+  width: 20px;
+  height: 20px;
 }
 
 @keyframes cardEnter {

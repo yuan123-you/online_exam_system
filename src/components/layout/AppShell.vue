@@ -78,10 +78,11 @@
     </aside>
 
     <main :class="['main-panel', { 'main-panel--full': isAiPractice }]" @click="handleClickOutside">
-      <!-- Desktop topbar (hidden on AI assistant page for full-screen layout) -->
-      <header v-if="!isAiPractice" class="topbar">
+      <!-- Topbar. On the AI assistant page it is hidden on desktop (full-screen chat)
+           but shown on mobile/tablet as a compact bar with the main-nav hamburger. -->
+      <header class="topbar" :class="{ 'topbar--ai': isAiPractice }">
         <div style="display:flex;align-items:center;gap:12px;">
-          <button class="mobile-menu-btn" type="button" @click="sidebarOpen = !sidebarOpen">
+          <button class="mobile-menu-btn" type="button" aria-label="打开导航菜单" @click="sidebarOpen = !sidebarOpen">
             <svg viewBox="0 0 24 24"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
           </button>
           <div>

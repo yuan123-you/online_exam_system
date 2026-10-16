@@ -190,17 +190,23 @@ import { useRouter } from 'vue-router'
 import { useAppStore } from '@/stores/app'
 import type { RecommendationItem } from '@/api/client'
 import { useAutoScroll } from '@/composables/useAutoScroll'
+import { useDeviceType } from '@/composables/useDeviceType'
 import MessageBubbles from './AiPractice/MessageBubbles.vue'
 import ChatSidebar from './AiPractice/ChatSidebar.vue'
 
 const store = useAppStore()
 const router = useRouter()
+const { isMobile, isTablet } = useDeviceType()
 
 const activeTab = ref<'chat' | 'practice'>(store.activeTab || 'chat')
 // Keep store in sync with local tab (bidirectional)
 watch(activeTab, (val) => { store.activeTab = val })
 watch(() => store.activeTab, (val) => { if (val && val !== activeTab.value) activeTab.value = val })
-const sidebarExpanded = ref(window.innerWidth > 768)
+// Conversation history is a collapsible drawer: collapsed by default on mobile/tablet,
+// expanded on desktop where there is room for an inline sidebar.
+// Initialise from the real viewport width to avoid a flash of the drawer on first paint.
+const sidebarExpanded = ref(window.innerWidth > 1024)
+watch([isMobile, isTablet], ([m, t]) => { sidebarExpanded.value = !(m || t) })
 const inputText = ref('')
 const msgList = ref<HTMLElement | null>(null)
 const inputRef = ref<HTMLTextAreaElement | null>(null)
@@ -1212,6 +1218,15 @@ onUnmounted(() => {
 
 /* ===== Responsive — Mobile & Tablet (tab bar offset) ===== */
 @media (max-width: 1023px) {
+  /* History drawer backdrop: tap anywhere outside the drawer to collapse it */
+  .sidebar-overlay {
+    display: block;
+    position: absolute;
+    inset: 0;
+    background: rgba(0,0,0,0.3);
+    z-index: 35;
+  }
+
   .float-input-panel {
     /* Content panel padding already accounts for tab bar + safe area */
     padding-bottom: 0 !important;

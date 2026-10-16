@@ -31,6 +31,7 @@ describe('simplified student registration', () => {
     const w = create(); await fill(w); await w.get('form').trigger('submit'); await flushPromises()
     expect(registerStudent).toHaveBeenCalledWith({ username: 'student_new', name: '测试用户' })
     expect(w.text()).toContain('注册成功'); expect(w.text()).toContain('123456')
+    expect(w.emitted('registered')).toEqual([['student_new']])
     await w.get('.register-login').trigger('click')
     expect(w.emitted('login')).toEqual([['student_new']])
   })
