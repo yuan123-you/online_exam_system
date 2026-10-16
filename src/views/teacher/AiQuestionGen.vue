@@ -813,7 +813,6 @@ onBeforeRouteLeave((to, from, next) => {
   --primary-hover: #4f46e5;
   display: flex;
   height: calc(100vh - 140px);
-  max-height: 750px;
   max-width: 100%;
   min-height: 420px;
   background: #fff;

@@ -104,8 +104,8 @@
 
       <section :class="['content-panel', { 'content-panel--full': isAiPractice }]">
         <router-view v-slot="{ Component }">
-          <keep-alive :include="['AiQuestionGen']">
-            <component :is="Component" />
+          <keep-alive :max="12">
+            <component :is="Component" :key="activeMenuKey" />
           </keep-alive>
         </router-view>
       </section>
@@ -260,13 +260,7 @@ const avatarLetter = computed(() => {
 })
 
 function navigateTo(key: string) {
-  // First menu item navigates through /home for proper home route semantics
-  const firstKey = store.menuItems[0]?.key
-  if (key === firstKey) {
-    router.push('/home')
-  } else {
-    router.push('/' + key)
-  }
+  router.push('/' + key)
   sidebarOpen.value = false
 }
 

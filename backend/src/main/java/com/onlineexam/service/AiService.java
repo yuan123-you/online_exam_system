@@ -92,7 +92,7 @@ public class AiService {
   @Value("${ai.api-key:}")
   private String apiKey;
 
-  @Value("${ai.model:glm-4.7-flash}")
+  @Value("${ai.model:glm-4-flash}")
   private String model;
 
   /** 备用模型列表：主模型 429 时自动降级（glm-4-flash 免费且稳定，作为限流保底） */
@@ -106,7 +106,7 @@ public class AiService {
   @Value("${ai.rate-limit-per-minute:30}")
   private int rateLimitPerMinute;
 
-  @Value("${ai.concurrent-limit:1}")
+  @Value("${ai.concurrent-limit:10}")
   private int concurrentLimit;
 
   // ========== 并发控制 ==========
@@ -206,18 +206,9 @@ public class AiService {
 
   /** 主模型 429 时切换到备用模型 */
   private void onModel429() {
-    if (activeModel != null) return; // 已经在用备用模型
     model429Time = System.currentTimeMillis();
-    String currentModel = model;
-    for (String fallback : FALLBACK_MODELS) {
-      if (!fallback.equals(currentModel)) {
-        activeModel = fallback;
-        log.warn("[AiService] 主模型 {} 返回 429，切换到备用模型 {}", currentModel, fallback);
-        return;
-      }
-    }
-    // 没有可用的备用模型，保持原模型
-    log.warn("[AiService] 主模型 {} 返回 429，无可用备用模型", currentModel);
+    activeModel = "glm-4-flash";
+    log.warn("[AiService] 模型触发限流(429)，立即切换到稳定免费模型 glm-4-flash");
   }
 
   // ========== 定时清理任务 ==========
@@ -954,7 +945,7 @@ public class AiService {
           onModel429();
           java.io.InputStream errorStream = conn.getErrorStream();
           String errorBody = errorStream != null ? new String(errorStream.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8) : "";
-          boolean isBalanceExhausted = errorBody.contains("1113") || errorBody.contains("余额不足");
+          boolean isBalanceExhausted = errorBody.contains("1113") || errorBody.contains("余额不足") || errorBody.contains("1305") || errorBody.contains("访问量过大");
           if (isBalanceExhausted) {
             log.warn("[AiService SSE] [{}] API返回余额不足(1113)，立即切换为glm-4-flash重试", threadId);
             activeModel = "glm-4-flash";
@@ -1119,8 +1110,6 @@ public class AiService {
         log.info("[AiService SSE] [{}] {}ms后重试...", threadId, waitMs);
         try { Thread.sleep(waitMs); } catch (InterruptedException ie) { Thread.currentThread().interrupt(); }
       } finally {
-        streamDone.set(true);
-        heartbeatExec.shutdownNow();
         if (reader != null) try { reader.close(); } catch (Exception ignored) {}
         reader = null;
         if (conn != null) try { conn.disconnect(); } catch (Exception ignored) {}
@@ -2268,6 +2257,9 @@ public class AiService {
     if (errorBody != null && (errorBody.contains("1113") || errorBody.contains("余额不足"))) {
       return "AI 模型余额不足，已自动切换为免费模型 glm-4-flash，请重试";
     }
+    if (errorBody != null && (errorBody.contains("1305") || errorBody.contains("访问量过大"))) {
+      return "AI 模型当前访问量较大，已自动切换为稳定模型 glm-4-flash 重试";
+    }
     return switch (httpCode) {
       case 429 -> "AI 服务当前访问繁忙，系统正在自动重试中，请稍候...";
       case 401 -> "AI API 密钥无效或已过期，请联系管理员更新";
@@ -2919,11 +2911,7 @@ public class AiService {
       if ("glm-4-flash".equals(defaultModel) || (defaultModel != null && defaultModel.contains("flash"))) {
         return defaultModel;
       }
-      // 高复杂度任务（大学英语、编程、多学科综合）使用更强模型
-      if ("high".equals(complexity) || isForeignLanguageSubject(subject)) {
-        return "glm-4-air";  // 更强推理能力
-      }
-      return defaultModel;
+      return (defaultModel != null && !defaultModel.isBlank()) ? defaultModel : "glm-4-flash";
     }
 
     /** 推断最优temperature - 出题与严谨评估采用0.2~0.3低温度，防止发散偏移 */
@@ -3016,7 +3004,7 @@ public class AiService {
     headers.setBearerAuth(apiKey);
 
     Map<String, Object> requestBody = new LinkedHashMap<>();
-    requestBody.put("model", model);
+    requestBody.put("model", getActiveModel());
     requestBody.put("messages", List.of(
       Map.of("role", "system", "content", INTENT_ANALYSIS_SYSTEM_PROMPT),
       Map.of("role", "user", "content", "分析以下用户输入的意图：\n" + userText)
@@ -3044,7 +3032,7 @@ public class AiService {
       } catch (RestClientException e) {
         String msg = e.getMessage() != null ? e.getMessage() : "";
         if ((msg.contains("429") || msg.contains("500") || msg.contains("503")) && attempt < maxRetries) {
-          long waitMs = (long) (5000 * Math.pow(2, attempt));
+          onModel429(); long waitMs = 300;
           log.info("[AiService] 意图分析API {}，{}ms后重试(第{}次)", msg.substring(0, Math.min(30, msg.length())), waitMs, attempt + 1);
           try { Thread.sleep(waitMs); } catch (InterruptedException ie) { Thread.currentThread().interrupt(); }
           continue;
