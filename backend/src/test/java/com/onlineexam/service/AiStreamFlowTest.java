@@ -234,4 +234,19 @@ class AiStreamFlowTest {
     assertEquals(1, after.get("failedRequests"));
   }
 
+  @Test void streamedMathQuestionsReturnValidJsonWithoutLosingLatex() throws Exception {
+    String formula = "$\\lim_{x \\to 0} \\frac{\\sin x}{x}$";
+    ObjectMapper mapper = new ObjectMapper();
+    String raw = mapper.writeValueAsString(List.of(Map.of("title", formula, "type", "single",
+        "options", List.of("A. 1", "B. 2"), "answer", List.of("A"), "score", 5)))
+        .replace("\\\\", "\\");
+    providerReply = stream(raw);
+    var events = invoke("practice");
+    String complete = events.frames.stream().filter(frame -> frame.contains("event:complete")).findFirst().orElseThrow();
+    var envelope = mapper.readTree(complete.substring(complete.indexOf("data:") + 5).trim());
+    var questions = mapper.readTree(envelope.path("content").asText());
+    assertEquals(formula, questions.get(0).path("title").asText());
+    assertEquals("A", questions.get(0).path("answer").get(0).asText());
+  }
+
 }

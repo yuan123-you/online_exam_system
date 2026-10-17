@@ -14,6 +14,13 @@ import java.util.Set;
 final class AiQuestionPolicy {
   private static final Set<String> TYPES = Set.of("single", "multiple", "judge", "fill", "short", "coding");
   private static final Set<String> CHOICES = Set.of("single", "multiple", "judge");
+  // These LaTeX commands otherwise begin with legal JSON control/unicode escape letters.
+  private static final Set<String> JSON_COLLIDING_MATH_COMMANDS = Set.of(
+      "bar", "begin", "beta", "big", "bigg", "bigl", "bigr", "binom", "boldsymbol", "boxed",
+      "bmod", "fbox", "frac", "forall", "nabla", "ne", "neg", "neq", "nonumber", "not", "notin", "nu",
+      "rangle", "rho", "right", "rightarrow", "rm", "root", "tag", "tan", "tanh", "tau", "tbinom", "text", "textbf", "textit",
+      "theta", "tfrac", "tilde", "times", "tiny", "to", "top", "triangle", "tt",
+      "underbrace", "underline", "underset", "uparrow", "upsilon");
   private AiQuestionPolicy() {}
 
   static List<Map<String, Object>> parsePreview(String response, ObjectMapper mapper, String subject,
@@ -28,7 +35,7 @@ final class AiQuestionPolicy {
     List<?> entries;
     try {
       entries = mapper.readerFor(new TypeReference<List<Object>>() {})
-          .with(DeserializationFeature.FAIL_ON_TRAILING_TOKENS).readValue(content);
+          .with(DeserializationFeature.FAIL_ON_TRAILING_TOKENS).readValue(normalizeMathJsonEscapes(content));
     } catch (Exception e) {
       throw new IllegalArgumentException("AI 返回格式不是有效 JSON 题目数组", e);
     }
@@ -55,6 +62,49 @@ final class AiQuestionPolicy {
       }
     }
     return questions;
+  }
+
+  /** Normalize common provider LaTeX escapes inside $/$$ math without weakening JSON structure. */
+  private static String normalizeMathJsonEscapes(String content) {
+    StringBuilder result = new StringBuilder(content.length());
+    boolean quoted = false, math = false;
+    for (int i = 0; i < content.length(); i++) {
+      char current = content.charAt(i);
+      if (quoted && current == '\\' && i + 1 < content.length()) {
+        char next = content.charAt(i + 1);
+        int end = i + 1;
+        while (end < content.length() && Character.isLetter(content.charAt(end))) end++;
+        String word = content.substring(i + 1, end);
+        boolean command = JSON_COLLIDING_MATH_COMMANDS.contains(word) || word.startsWith("big")
+            || word.startsWith("text") || word.startsWith("triangle") || word.startsWith("right")
+            || word.startsWith("under") || word.startsWith("bold") || word.startsWith("not");
+        boolean invalidEscape = "\"\\/bfnrtu".indexOf(next) < 0;
+        // Existing \\ pairs and legitimate short JSON escapes stay unchanged.
+        if (math && next != '\\' && (command || invalidEscape)) result.append('\\');
+        result.append(current).append(next);
+        i++;
+        continue;
+      }
+      if (current == '"') {
+        quoted = !quoted;
+        math = false;
+      } else if (quoted && current == '$') {
+        int backslashes = 0;
+        for (int previous = i - 1; previous >= 0 && content.charAt(previous) == '\\'; previous--) backslashes++;
+        // JSON pairs decode to one slash; an odd decoded count makes this a literal dollar.
+        if ((backslashes / 2) % 2 == 1) {
+          result.append(current);
+          continue;
+        }
+        math = !math;
+        if (i + 1 < content.length() && content.charAt(i + 1) == '$') {
+          result.append(current);
+          i++;
+        }
+      }
+      result.append(current);
+    }
+    return result.toString();
   }
 
   static Map<String, Object> normalize(Map<?, ?> raw, String fallbackSubject, String fallbackPoint,
