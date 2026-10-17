@@ -179,6 +179,15 @@ public class AiCircuitBreaker {
         }
     }
 
+    /** User cancellation says nothing about provider health; only release a recovery probe. */
+    public void cancelRequest(String type) {
+        CircuitContext ctx = contextMap.get(type);
+        if (ctx == null) return;
+        synchronized (ctx) {
+            if (ctx.state == State.HALF_OPEN) ctx.probeInFlight.set(false);
+        }
+    }
+
     /**
      * 获取指定功能类型的熔断状态信息
      *
@@ -252,7 +261,7 @@ public class AiCircuitBreaker {
                     return false;
                 }
                 state = State.HALF_OPEN;
-                probeInFlight.set(false);
+                probeInFlight.set(true);
                 return true;
             }
         }

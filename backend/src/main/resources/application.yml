@@ -17,10 +17,11 @@ spring:
       continue-on-error: false
 
 ai:
-  api-url: https://open.bigmodel.cn/api/paas/v4/chat/completions
+  api-url: ${AI_API_URL:https://open.bigmodel.cn/api/paas/v4/chat/completions}
   api-key: ${AI_API_KEY:}
-  # glm-4-flash: 稳定免费模型；限流(429)时保持自动保底重试
-  model: ${AI_MODEL:glm-4-flash}
+  # 主模型失败且尚未输出内容时，使用备用模型；总尝试次数有界。
+  model: ${AI_MODEL:glm-4.7-flash}
+  fallback-model: ${AI_FALLBACK_MODEL:glm-4-flash}
   timeout-ms: 60000
   rate-limit-per-minute: 60
   concurrent-limit: ${AI_CONCURRENT_LIMIT:10}

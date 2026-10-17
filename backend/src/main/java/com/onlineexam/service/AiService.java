@@ -92,11 +92,11 @@ public class AiService {
   @Value("${ai.api-key:}")
   private String apiKey;
 
-  @Value("${ai.model:glm-4-flash}")
+  @Value("${ai.model:glm-4.7-flash}")
   private String model;
 
-  /** 备用模型列表：主模型 429 时自动降级（glm-4-flash 免费且稳定，作为限流保底） */
-  private static final List<String> FALLBACK_MODELS = List.of("glm-4-flash");
+  @Value("${ai.fallback-model:glm-4-flash}")
+  private String fallbackModel;
 
   /** 获取当前可用的模型名称（排除已 429 的主模型后尝试备用模型） */
   private volatile String activeModel = null;
@@ -206,9 +206,10 @@ public class AiService {
 
   /** 主模型 429 时切换到备用模型 */
   private void onModel429() {
+    if (fallbackModel == null || fallbackModel.isBlank() || fallbackModel.equals(model)) return;
     model429Time = System.currentTimeMillis();
-    activeModel = "glm-4-flash";
-    log.warn("[AiService] 模型触发限流(429)，立即切换到稳定免费模型 glm-4-flash");
+    activeModel = fallbackModel;
+    log.warn("[AiService] 主模型暂不可用，切换备用模型 {}", fallbackModel);
   }
 
   // ========== 定时清理任务 ==========
@@ -820,699 +821,196 @@ public class AiService {
   public void callAiApiStream(String systemPrompt, String userPrompt, boolean thinkingEnabled,
                                double temperature, boolean jsonMode, String circuitType,
                                UserIntent intent, SseEmitter emitter, ConversationSession session) {
-    if (apiKey == null || apiKey.isBlank()) {
-      log.error("[AiService SSE] API密钥未配置，无法发起流式请求");
-      try { emitter.send(SseEmitter.event().name("error").data("{\"error\":\"AI 功能暂未启用，请联系管理员配置 AI API 密钥\"}")); emitter.complete(); }
-      catch (Exception ignored) {}
-      return;
-    }
-
-    String threadId = Long.toHexString(Thread.currentThread().getId());
-    log.info("[AiService SSE] [{}] 开始流式请求: model={}, temp={}, thinking={}, jsonMode={}, 活跃SSE连接={}",
-      threadId, model, temperature, thinkingEnabled, jsonMode, activeSseConnections.get());
-
-    // 使用 AtomicBoolean 确保连接计数只减一次（修复竞态条件）
-    AtomicInteger connectionCounter = new AtomicInteger(1);
-    activeSseConnections.incrementAndGet();
-
-    Runnable decrementConnection = () -> {
-      if (connectionCounter.getAndSet(0) == 1) {
-        activeSseConnections.decrementAndGet();
-        log.debug("[AiService SSE] [{}] 连接结束，活跃SSE连接={}", threadId, activeSseConnections.get());
+    runAiStream(circuitType, emitter, cancellation -> {
+      AiStreamClient.Result result = streamProvider(systemPrompt, userPrompt, thinkingEnabled,
+          temperature, jsonMode, intent, emitter, cancellation);
+      String content = result.content();
+      if (!"chat".equals(circuitType)) {
+        content = objectMapper.writeValueAsString(validateStreamQuestions(content, intent,
+            intent != null ? intent.count : 0));
       }
-    };
-
-    // 注册 SSE 生命周期回调，确保计数只减一次
-    emitter.onCompletion(decrementConnection);
-    emitter.onTimeout(() -> {
-      log.warn("[AiService SSE] [{}] 连接超时", threadId);
-      decrementConnection.run();
+      if (session != null) session.addMessage("assistant", content);
+      return new LinkedHashMap<>(Map.of("content", content, "reasoning", result.reasoning(), "done", true));
     });
-    emitter.onError(e -> {
-      log.warn("[AiService SSE] [{}] 连接错误: {}", threadId, e.getMessage());
-      decrementConnection.run();
-    });
-
-    // 使用受管理的线程池替代 new Thread()
-    CompletableFuture.runAsync(() -> {
-      // 获取信号量限制并发 AI API 调用
-      Semaphore semaphore = getSemaphore();
-      try {
-        if (!semaphore.tryAcquire(60, TimeUnit.SECONDS)) {
-          log.error("[AiService SSE] [{}] 等待并发槽超时(60s)，拒绝请求", threadId);
-          try {
-            emitter.send(SseEmitter.event().name("error").data("{\"error\":\"AI 服务繁忙，请稍后再试\"}"));
-            emitter.complete();
-          } catch (Exception ignored) {}
-          return;
-        }
-      } catch (InterruptedException ie) {
-        Thread.currentThread().interrupt();
-        return;
-      }
-
-      // Heartbeat: send SSE comments every 15s to prevent frontend timeout
-      final java.util.concurrent.ScheduledExecutorService heartbeatExec =
-        java.util.concurrent.Executors.newSingleThreadScheduledExecutor(r -> {
-          Thread t = new Thread(r, "sse-heartbeat-" + threadId);
-          t.setDaemon(true);
-          return t;
-        });
-      final java.util.concurrent.atomic.AtomicBoolean streamDone = new java.util.concurrent.atomic.AtomicBoolean(false);
-
-      try { // 信号量守卫：finally 中释放
-      java.io.BufferedReader reader = null;
-      java.net.HttpURLConnection conn = null;
-      int maxRetries = 3;
-      long startTime = System.currentTimeMillis();
-      for (int attempt = 1; attempt <= maxRetries; attempt++) {
-      try {
-        log.info("[AiService SSE] [{}] 第{}次尝试连接API: {}", threadId, attempt, apiUrl);
-
-        java.net.URL url = new java.net.URL(apiUrl);
-        conn = (java.net.HttpURLConnection) url.openConnection();
-        conn.setRequestMethod("POST");
-        conn.setRequestProperty("Content-Type", "application/json");
-        conn.setRequestProperty("Authorization", "Bearer " + apiKey);
-        conn.setRequestProperty("Accept", "text/event-stream");
-        conn.setDoOutput(true);
-        conn.setConnectTimeout(10000);  // 10s连接超时（原15s）
-        // 增加读取超时至180秒，匹配SseEmitter超时时间
-        // 防止AI深度思考或慢速生成时后端过早中断连接
-        conn.setReadTimeout(180000);    // 180s读取超时（原60s）
-
-        // Build request body - 智能参数调节：根据intent自动选择最优模型和参数
-        String baseModel = getActiveModel();
-        String effectiveModel = baseModel;
-        double effectiveTemperature = temperature;
-        int effectiveMaxTokens = 8192; // 降低默认值加速生成
-        if (intent != null) {
-          effectiveModel = intent.recommendModel(baseModel);
-          effectiveTemperature = intent.recommendTemperature();
-          effectiveMaxTokens = intent.recommendMaxTokens();
-          log.info("[AiService SSE] [{}] 智能参数: model={}, temp={}, maxTokens={}, complexity={}",
-            threadId, effectiveModel, effectiveTemperature, effectiveMaxTokens, intent.complexity);
-        }
-        java.util.LinkedHashMap<String, Object> reqBody = new java.util.LinkedHashMap<>();
-        reqBody.put("model", effectiveModel);
-        reqBody.put("messages", java.util.List.of(
-          java.util.Map.of("role", "system", "content", systemPrompt),
-          java.util.Map.of("role", "user", "content", userPrompt)
-        ));
-        reqBody.put("temperature", effectiveTemperature);
-        reqBody.put("max_tokens", effectiveMaxTokens);
-        reqBody.put("stream", true);
-        if (jsonMode) {
-          reqBody.put("response_format", java.util.Map.of("type", "json_object"));
-        }
-        if (thinkingEnabled) {
-          reqBody.put("thinking", java.util.Map.of("type", "enabled"));
-        }
-
-        String jsonBody = objectMapper.writeValueAsString(reqBody);
-        log.debug("[AiService SSE] [{}] 请求体大小: {} bytes", threadId, jsonBody.length());
-
-        try (java.io.OutputStream os = conn.getOutputStream()) {
-          os.write(jsonBody.getBytes(java.nio.charset.StandardCharsets.UTF_8));
-          os.flush();
-        }
-
-        int responseCode = conn.getResponseCode();
-        log.info("[AiService SSE] [{}] API响应码: {}", threadId, responseCode);
-
-        // 429/503 重试
-        if ((responseCode == 429 || responseCode == 503) && attempt < maxRetries) {
-          onModel429();
-          java.io.InputStream errorStream = conn.getErrorStream();
-          String errorBody = errorStream != null ? new String(errorStream.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8) : "";
-          boolean isBalanceExhausted = errorBody.contains("1113") || errorBody.contains("余额不足") || errorBody.contains("1305") || errorBody.contains("访问量过大");
-          if (isBalanceExhausted) {
-            log.warn("[AiService SSE] [{}] API返回余额不足(1113)，立即切换为glm-4-flash重试", threadId);
-            activeModel = "glm-4-flash";
-            model429Time = System.currentTimeMillis();
-          }
-          long waitMs = isBalanceExhausted ? 500 : (responseCode == 429
-            ? (long) (5000 * Math.pow(3, attempt - 1))
-            : (long) (3000 * Math.pow(2.5, attempt - 1)));
-          log.info("[AiService SSE] [{}] 收到{}，{}ms后重试", threadId, responseCode, waitMs);
-          conn.disconnect(); conn = null;
-          try { Thread.sleep(waitMs); } catch (InterruptedException ie) { Thread.currentThread().interrupt(); }
-          continue;
-        }
-
-        if (responseCode != 200) {
-          java.io.InputStream errorStream = conn.getErrorStream();
-          String errorBody = errorStream != null ? new String(errorStream.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8) : "";
-          log.error("[AiService SSE] [{}] API错误: HTTP {}, body={}", threadId, responseCode,
-            errorBody.substring(0, Math.min(500, errorBody.length())));
-          circuitBreaker.recordFailure(circuitType);
-          String friendlyMsg = friendlyAiError(responseCode, errorBody);
-          if (attempt >= maxRetries && responseCode == 429) {
-            friendlyMsg = friendlyMsg + "（已自动重试 " + maxRetries + " 次）";
-          }
-          emitter.send(SseEmitter.event().name("error").data("{\"error\":\"" + escapeJson(friendlyMsg) + "\"}"));
-          emitter.complete();
-          return;
-        }
-
-        // 读取 SSE 流
-        reader = new java.io.BufferedReader(new java.io.InputStreamReader(conn.getInputStream(), java.nio.charset.StandardCharsets.UTF_8));
-        String line;
-        StringBuilder contentBuilder = new StringBuilder();
-        StringBuilder reasoningBuilder = new StringBuilder();
-        int chunkCount = 0;
-        int errorChunkCount = 0;
-
-        // Start heartbeat now that connection is established
-        heartbeatExec.scheduleAtFixedRate(() -> {
-          if (streamDone.get()) return;
-          try {
-            emitter.send(SseEmitter.event().comment("heartbeat"));
-          } catch (Exception ignored) {
-            // Connection already closed, ignore
-          }
-        }, 15, 15, java.util.concurrent.TimeUnit.SECONDS);
-
-        while ((line = reader.readLine()) != null) {
-          String data = null;
-          if (line.startsWith("data: ")) {
-            data = line.substring(6).trim();
-          } else if (line.startsWith("data:")) {
-            data = line.substring(5).trim();
-          }
-          if (data != null) {
-            if ("[DONE]".equals(data)) {
-              long elapsed = System.currentTimeMillis() - startTime;
-              log.info("[AiService SSE] [{}] 收到[DONE], 共{}个chunk, 内容长度={}, 推理长度={}, 耗时={}ms",
-                threadId, chunkCount, contentBuilder.length(), reasoningBuilder.length(), elapsed);
-              circuitBreaker.recordSuccess(circuitType);
-              // 记录性能指标
-              recordLatency(elapsed, true);
-              // 流式完成后将AI响应存入会话上下文
-              if (session != null && contentBuilder.length() > 0) {
-                session.addMessage("assistant", contentBuilder.toString());
-              }
-              java.util.Map<String, Object> donePayload = new java.util.LinkedHashMap<>();
-              donePayload.put("content", contentBuilder.toString());
-              donePayload.put("reasoning", reasoningBuilder.toString());
-              donePayload.put("done", true);
-              donePayload.put("durationMs", elapsed);
-              emitter.send(SseEmitter.event().name("complete").data(objectMapper.writeValueAsString(donePayload)));
-              emitter.complete();
-              return;
-            }
-            try {
-              @SuppressWarnings("unchecked")
-              java.util.Map<String, Object> jsonMap = objectMapper.readValue(data, java.util.Map.class);
-              @SuppressWarnings("unchecked")
-              java.util.List<java.util.Map<String, Object>> choices =
-                (java.util.List<java.util.Map<String, Object>>) jsonMap.get("choices");
-              if (choices != null && !choices.isEmpty()) {
-                @SuppressWarnings("unchecked")
-                java.util.Map<String, Object> delta = (java.util.Map<String, Object>) choices.get(0).get("delta");
-                if (delta != null) {
-                  String reasoningContent = delta.containsKey("reasoning_content") && delta.get("reasoning_content") != null
-                    ? String.valueOf(delta.get("reasoning_content")) : "";
-                  String content = delta.containsKey("content") && delta.get("content") != null
-                    ? String.valueOf(delta.get("content")) : "";
-
-                  if (!thinkingEnabled && !reasoningContent.isEmpty()) {
-                    reasoningContent = "";
-                  }
-
-                  if (!reasoningContent.isEmpty()) {
-                    reasoningBuilder.append(reasoningContent);
-                    java.util.Map<String, Object> chunk = new java.util.LinkedHashMap<>();
-                    chunk.put("type", "reasoning");
-                    chunk.put("text", reasoningContent);
-                    emitter.send(SseEmitter.event().name("chunk").data(objectMapper.writeValueAsString(chunk)));
-                    chunkCount++;
-                  }
-                  if (!content.isEmpty()) {
-                    contentBuilder.append(content);
-                    java.util.Map<String, Object> chunk = new java.util.LinkedHashMap<>();
-                    chunk.put("type", "content");
-                    chunk.put("text", content);
-                    emitter.send(SseEmitter.event().name("chunk").data(objectMapper.writeValueAsString(chunk)));
-                    chunkCount++;
-                  }
-                }
-              }
-            } catch (Exception parseEx) {
-              errorChunkCount++;
-              if (errorChunkCount <= 3) {
-                log.warn("[AiService SSE] [{}] 解析chunk失败(#{}): {}, 错误: {}",
-                  threadId, errorChunkCount, data.substring(0, Math.min(200, data.length())), parseEx.getMessage());
-              }
-            }
-          }
-        }
-        // 流结束但无 [DONE]
-        long elapsed = System.currentTimeMillis() - startTime;
-        log.info("[AiService SSE] [{}] 流读取结束(无[DONE]), 共{}个chunk, 内容长度={}, 耗时={}ms",
-          threadId, chunkCount, contentBuilder.length(), elapsed);
-        if (contentBuilder.length() > 0) {
-          circuitBreaker.recordSuccess(circuitType);
-          // 记录性能指标
-          recordLatency(elapsed, true);
-          // 流式完成后将AI响应存入会话上下文
-          if (session != null) {
-            session.addMessage("assistant", contentBuilder.toString());
-          }
-        }
-        java.util.Map<String, Object> donePayload = new java.util.LinkedHashMap<>();
-        donePayload.put("content", contentBuilder.toString());
-        donePayload.put("reasoning", reasoningBuilder.toString());
-        donePayload.put("done", true);
-        donePayload.put("durationMs", elapsed);
-        emitter.send(SseEmitter.event().name("complete").data(objectMapper.writeValueAsString(donePayload)));
-        emitter.complete();
-        return;
-
-      } catch (Exception e) {
-        long elapsed = System.currentTimeMillis() - startTime;
-        log.error("[AiService SSE] [{}] 第{}次请求异常(耗时{}ms): {}: {}",
-          threadId, attempt, elapsed, e.getClass().getSimpleName(), e.getMessage());
-        if (attempt >= maxRetries) {
-          circuitBreaker.recordFailure(circuitType);
-          recordLatency(elapsed, false);
-          try {
-            String errMsg = e.getMessage() != null ? e.getMessage() : "Unknown error";
-            emitter.send(SseEmitter.event().name("error")
-              .data("{\"error\":\"" + escapeJson(errMsg) + "\"}"));
-            emitter.complete();
-          } catch (Exception sendErr) {
-            log.error("[AiService SSE] [{}] 发送错误事件也失败: {}", threadId, sendErr.getMessage());
-          }
-          return;
-        }
-        long waitMs = (long) (2000 * Math.pow(2, attempt - 1));
-        log.info("[AiService SSE] [{}] {}ms后重试...", threadId, waitMs);
-        try { Thread.sleep(waitMs); } catch (InterruptedException ie) { Thread.currentThread().interrupt(); }
-      } finally {
-        if (reader != null) try { reader.close(); } catch (Exception ignored) {}
-        reader = null;
-        if (conn != null) try { conn.disconnect(); } catch (Exception ignored) {}
-        conn = null;
-      }
-      } // end retry loop
-      } finally {
-        streamDone.set(true);
-        heartbeatExec.shutdownNow();
-        semaphore.release();
-      }
-    }, aiTaskExecutor);
   }
 
-  /** Escape a string for embedding in JSON. */
+  private AiStreamClient.Result streamProvider(String systemPrompt, String userPrompt,
+      boolean thinking, double temperature, boolean jsonMode, UserIntent intent,
+      SseEmitter emitter, AiStreamClient.Cancellation cancellation) throws Exception {
+    return new AiStreamClient(objectMapper).stream(apiUrl, apiKey, () -> {
+      Map<String, Object> request = new LinkedHashMap<>();
+      // Every new operation starts with the configured primary model.
+      request.put("model", model);
+      request.put("messages", List.of(Map.of("role", "system", "content", systemPrompt),
+          Map.of("role", "user", "content", userPrompt)));
+      request.put("temperature", intent != null ? intent.recommendTemperature() : temperature);
+      request.put("max_tokens", intent != null ? intent.recommendMaxTokens() : 8192);
+      request.put("stream", true);
+      if (thinking || "glm-4.7-flash".equals(model)) {
+        request.put("thinking", Map.of("type", thinking ? "enabled" : "disabled"));
+      }
+      if (jsonMode) request.put("response_format", Map.of("type", "json_object"));
+      return request;
+    }, thinking, (type, text) -> emitter.send(SseEmitter.event().name("chunk").data(
+        objectMapper.writeValueAsString(Map.of("type", type, "text", text)))), cancellation, fallbackModel);
+  }
+
+  private List<Map<String, Object>> validateStreamQuestions(String content, UserIntent intent, int count) {
+    List<Map<String, Object>> questions = AiQuestionPolicy.parsePreview(content, objectMapper,
+        intent != null ? intent.subject : "", intent != null ? intent.knowledgePoint : "",
+        intent != null ? intent.difficulty : "", intent != null ? intent.type : "");
+    if (count > 0 && questions.size() != count) {
+      throw new IllegalArgumentException("AI 返回题目数量不符：需要 " + count + " 道，实际 " + questions.size() + " 道，请重试");
+    }
+    return questions;
+  }
+
+  /** All batches use exactly the same provider, retry and lifecycle code as a normal request. */
+  private void callAiApiStreamBatch(String systemPrompt, String baseUserPrompt,
+      boolean thinking, double temperature, String circuitType, UserIntent intent,
+      SseEmitter emitter, int totalCount, int batchSize) {
+    runAiStream(circuitType, emitter, cancellation -> {
+      int totalBatches = (totalCount + batchSize - 1) / batchSize;
+      List<Map<String, Object>> questions = new ArrayList<>();
+      StringBuilder reasoning = new StringBuilder();
+      sendBatchProgress(emitter, 0, totalBatches, totalCount, questions.size(), null);
+      for (int batch = 0; batch < totalBatches; batch++) {
+        cancellation.check();
+        int count = Math.min(batchSize, totalCount - batch * batchSize);
+        UserIntent batchIntent = new UserIntent(intent.subject, intent.difficulty, intent.knowledgePoint,
+            intent.intent, intent.type, count, intent.language, intent.complexity);
+        String prompt = baseUserPrompt.replaceAll("严格生成恰好 \\d+ ?道", "严格生成恰好 " + count + " 道");
+        if (prompt.equals(baseUserPrompt)) prompt = "本批严格生成恰好 " + count + " 道题目。\n" + prompt;
+        emitter.send(SseEmitter.event().name("batch_start").data(objectMapper.writeValueAsString(
+            Map.of("batch", batch + 1, "totalBatches", totalBatches, "totalCount", totalCount,
+                "generated", questions.size(), "batchCount", count))));
+        AiStreamClient.Result result = streamProvider(systemPrompt, prompt, thinking, temperature,
+            false, batchIntent, emitter, cancellation);
+        List<Map<String, Object>> batchQuestions = validateStreamQuestions(result.content(), batchIntent, count);
+        questions.addAll(batchQuestions);
+        reasoning.append(result.reasoning());
+        sendBatchProgress(emitter, batch + 1, totalBatches, totalCount, questions.size(),
+            objectMapper.writeValueAsString(batchQuestions));
+      }
+      return new LinkedHashMap<>(Map.of("content", objectMapper.writeValueAsString(questions),
+          "reasoning", reasoning.toString(), "done", true, "generatedTotal", questions.size(),
+          "totalBatches", totalBatches));
+    });
+  }
+
+  private void sendBatchProgress(SseEmitter emitter, int batch, int totalBatches, int totalCount,
+      int generated, String content) throws java.io.IOException {
+    Map<String, Object> payload = new LinkedHashMap<>(Map.of("batch", batch,
+        "totalBatches", totalBatches, "totalCount", totalCount, "generated", generated));
+    if (content != null) payload.put("batchContent", content);
+    emitter.send(SseEmitter.event().name("batch_progress").data(objectMapper.writeValueAsString(payload)));
+  }
+
+  private static final java.util.concurrent.ScheduledThreadPoolExecutor STREAM_HEARTBEATS = createStreamHeartbeats();
+  private static java.util.concurrent.ScheduledThreadPoolExecutor createStreamHeartbeats() {
+    var executor = new java.util.concurrent.ScheduledThreadPoolExecutor(1, runnable -> {
+      Thread thread = new Thread(runnable, "ai-stream-heartbeat"); thread.setDaemon(true); return thread;
+    });
+    executor.setRemoveOnCancelPolicy(true);
+    return executor;
+  }
+  @FunctionalInterface private interface StreamOperation {
+    Map<String, Object> run(AiStreamClient.Cancellation cancellation) throws Exception;
+  }
+
+  /** Queue, heartbeat, cancellation, metrics and terminal events have one owner. */
+  private void runAiStream(String circuitType, SseEmitter emitter, StreamOperation operation) {
+    if (apiKey == null || apiKey.isBlank()) {
+      sendStreamError(emitter, "AI 功能暂未启用，请联系管理员配置 AI API 密钥");
+      return;
+    }
+    var cancellation = new AiStreamClient.Cancellation();
+    var terminal = new java.util.concurrent.atomic.AtomicBoolean(false);
+    var cleaned = new java.util.concurrent.atomic.AtomicBoolean(false);
+    activeSseConnections.incrementAndGet();
+    var heartbeatInFlight = new java.util.concurrent.atomic.AtomicBoolean(false);
+    var heartbeat = STREAM_HEARTBEATS.scheduleAtFixedRate(() -> {
+      if (terminal.get() || !heartbeatInFlight.compareAndSet(false, true)) return;
+      // One slow socket must not block heartbeats for all other streams.
+      Thread.startVirtualThread(() -> {
+        try { if (!terminal.get()) emitter.send(SseEmitter.event().comment("heartbeat")); }
+        catch (Exception disconnected) { cancellation.cancel(); }
+        finally { heartbeatInFlight.set(false); }
+      });
+    }, 0, 15, TimeUnit.SECONDS);
+    Runnable cleanup = () -> {
+      terminal.set(true);
+      heartbeat.cancel(false);
+      cancellation.cancel();
+      if (cleaned.compareAndSet(false, true)) activeSseConnections.decrementAndGet();
+    };
+    emitter.onCompletion(cleanup);
+    emitter.onTimeout(cleanup);
+    emitter.onError(error -> cleanup.run());
+    try {
+      aiTaskExecutor.execute(() -> {
+        Semaphore semaphore = getSemaphore();
+        boolean acquired = false, admitted = false, outcomeRecorded = false;
+        long start = System.currentTimeMillis();
+        try {
+          long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(60);
+          while (!(acquired = semaphore.tryAcquire(250, TimeUnit.MILLISECONDS))) {
+            cancellation.check();
+            if (System.nanoTime() >= deadline) throw new AiStreamClient.Failure("AI 请求排队超时，请稍后重试");
+          }
+          cancellation.check();
+          if (!circuitBreaker.allowRequest(circuitType)) {
+            if (terminal.compareAndSet(false, true)) sendStreamError(emitter, "AI 服务暂时不可用（熔断保护中），请稍后重试");
+            return;
+          }
+          admitted = true;
+          Map<String, Object> payload = operation.run(cancellation);
+          cancellation.check();
+          payload.put("durationMs", System.currentTimeMillis() - start);
+          if (terminal.compareAndSet(false, true)) {
+            emitter.send(SseEmitter.event().name("complete").data(objectMapper.writeValueAsString(payload)));
+            circuitBreaker.recordSuccess(circuitType);
+            outcomeRecorded = true;
+            recordLatency(System.currentTimeMillis() - start, true);
+            emitter.complete();
+          }
+        } catch (java.util.concurrent.CancellationException cancelled) {
+          // Browser stopped or disconnected: never replay a request after partial output.
+        } catch (InterruptedException interrupted) {
+          Thread.currentThread().interrupt();
+          if (terminal.compareAndSet(false, true)) sendStreamError(emitter, "AI 请求已中断，请重试");
+        } catch (Exception failure) {
+          if (admitted) { circuitBreaker.recordFailure(circuitType); outcomeRecorded = true; }
+          recordLatency(System.currentTimeMillis() - start, false);
+          log.warn("[AiService SSE] {} 请求失败: {}", circuitType, failure.getClass().getSimpleName());
+          if (terminal.compareAndSet(false, true)) sendStreamError(emitter,
+              failure instanceof AiStreamClient.Failure || failure instanceof IllegalArgumentException
+                  ? failure.getMessage() : "AI 请求失败，请稍后重试");
+        } finally {
+          // Cancellation is not a provider failure, but a recovery probe must be released.
+          if (admitted && !outcomeRecorded) circuitBreaker.cancelRequest(circuitType);
+          if (acquired) semaphore.release();
+          cleanup.run();
+        }
+      });
+    } catch (RuntimeException rejected) {
+      if (terminal.compareAndSet(false, true)) sendStreamError(emitter, "AI 服务繁忙，请稍后重试");
+      cleanup.run();
+    }
+  }
+
+  private void sendStreamError(SseEmitter emitter, String message) {
+    try {
+      emitter.send(SseEmitter.event().name("error").data(objectMapper.writeValueAsString(Map.of("error", message))));
+      emitter.complete();
+    } catch (Exception disconnected) { emitter.completeWithError(disconnected); }
+  }
+
+  /** Escape a string for embedding in JSON in non-streaming entry-point errors. */
   private String escapeJson(String s) {
     if (s == null) return "";
     return s.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n").replace("\r", "\\r").replace("\t", "\\t");
   }
-
-  /**
-   * 分批流式出题 - 将大数量题目拆分为多次 API 调用，通过同一个 SSE emitter 推送。
-   * 每批生成 batchSize 道题，所有批次完成后发送 complete 事件。
-   * 适用于学生端/教师端大批量出题（如100道题），避免单次 API 调用因 max_tokens 限制被截断。
-   *
-   * @param systemPrompt  系统提示词
-   * @param baseUserPrompt 基础用户提示词（会被修改为每批的数量）
-   * @param thinkingEnabled 是否启用深度思考
-   * @param temperature   温度
-   * @param circuitType   熔断器类型
-   * @param intent        用户意图
-   * @param emitter       SSE 发射器
-   * @param totalCount    总题目数
-   * @param batchSize     每批题目数（默认20）
-   */
-  private void callAiApiStreamBatch(String systemPrompt, String baseUserPrompt,
-                                     boolean thinkingEnabled, double temperature,
-                                     String circuitType, UserIntent intent,
-                                     SseEmitter emitter, int totalCount, int batchSize) {
-    CompletableFuture.runAsync(() -> {
-      Semaphore semaphore = getSemaphore();
-      try {
-        if (!semaphore.tryAcquire(120, TimeUnit.SECONDS)) {
-          try {
-            emitter.send(SseEmitter.event().name("error").data("{\"error\":\"AI 服务繁忙，请稍后再试\"}"));
-            emitter.complete();
-          } catch (Exception ignored) {}
-          return;
-        }
-      } catch (InterruptedException ie) {
-        Thread.currentThread().interrupt();
-        return;
-      }
-
-      // Heartbeat executor for the entire batch process
-      final java.util.concurrent.ScheduledExecutorService heartbeatExec =
-        java.util.concurrent.Executors.newSingleThreadScheduledExecutor(r -> {
-          Thread t = new Thread(r, "sse-batch-heartbeat");
-          t.setDaemon(true);
-          return t;
-        });
-      final java.util.concurrent.atomic.AtomicBoolean batchDone = new java.util.concurrent.atomic.AtomicBoolean(false);
-
-      // Start heartbeat to keep SSE connection alive
-      heartbeatExec.scheduleAtFixedRate(() -> {
-        if (batchDone.get()) return;
-        try {
-          emitter.send(SseEmitter.event().comment("heartbeat"));
-        } catch (Exception ignored) {}
-      }, 15, 15, java.util.concurrent.TimeUnit.SECONDS);
-
-      try {
-        int totalBatches = (totalCount + batchSize - 1) / batchSize;
-        StringBuilder allContent = new StringBuilder();
-        StringBuilder allReasoning = new StringBuilder();
-        List<String> batchContents = new ArrayList<>(); // 每批的原始内容，用于合并JSON
-        long startTime = System.currentTimeMillis();
-        int generatedTotal = 0;
-
-        // 发送批次进度事件
-        emitter.send(SseEmitter.event().name("batch_progress").data(
-          objectMapper.writeValueAsString(Map.of("batch", 0, "totalBatches", totalBatches, "totalCount", totalCount, "generated", 0))
-        ));
-
-        for (int batch = 0; batch < totalBatches; batch++) {
-          int batchCount = Math.min(batchSize, totalCount - batch * batchSize);
-
-          // 构建本批的用户提示词：替换数量为本批次数量
-          String batchUserPrompt = baseUserPrompt
-            .replaceAll("严格生成恰好 \\d+ 道", "严格生成恰好 " + batchCount + " 道")
-            .replaceAll("严格生成恰好 \\d+道", "严格生成恰好 " + batchCount + "道");
-
-          // 如果替换没有生效（格式不同），在开头添加数量指令
-          if (batchUserPrompt.equals(baseUserPrompt)) {
-            batchUserPrompt = "严格生成恰好 " + batchCount + " 道题目，不要多也不要少。\n" + batchUserPrompt;
-          }
-
-          // 构建本批的 intent（调整 count）
-          UserIntent batchIntent = new UserIntent(
-            intent.subject, intent.difficulty, intent.knowledgePoint,
-            intent.intent, intent.type, batchCount, intent.language, intent.complexity
-          );
-
-          // 构建请求
-          String baseBatchModel = getActiveModel();
-          String effectiveModel = batchIntent.recommendModel(baseBatchModel);
-          double effectiveTemperature = batchIntent.recommendTemperature();
-          int effectiveMaxTokens = batchIntent.recommendMaxTokens();
-
-          java.util.LinkedHashMap<String, Object> reqBody = new java.util.LinkedHashMap<>();
-          reqBody.put("model", effectiveModel);
-          reqBody.put("messages", java.util.List.of(
-            java.util.Map.of("role", "system", "content", systemPrompt),
-            java.util.Map.of("role", "user", "content", batchUserPrompt)
-          ));
-          reqBody.put("temperature", effectiveTemperature);
-          reqBody.put("max_tokens", effectiveMaxTokens);
-          reqBody.put("stream", true);
-
-          String jsonBody = objectMapper.writeValueAsString(reqBody);
-          log.info("[AiService SSE Batch] 批次 {}/{}: 生成 {} 道题, model={}, maxTokens={}",
-            batch + 1, totalBatches, batchCount, effectiveModel, effectiveMaxTokens);
-
-          // 发送批次开始事件
-          emitter.send(SseEmitter.event().name("batch_start").data(
-            objectMapper.writeValueAsString(Map.of("batch", batch + 1, "totalBatches", totalBatches, "batchCount", batchCount))
-          ));
-
-          // 调用 AI API（非流式读取，批量场景下逐批读取更可靠）
-          java.net.HttpURLConnection conn = null;
-          java.io.BufferedReader reader = null;
-          int maxRetries = 3;
-          boolean batchSuccess = false;
-
-          for (int attempt = 1; attempt <= maxRetries; attempt++) {
-            try {
-              java.net.URL url = new java.net.URL(apiUrl);
-              conn = (java.net.HttpURLConnection) url.openConnection();
-              conn.setRequestMethod("POST");
-              conn.setRequestProperty("Content-Type", "application/json");
-              conn.setRequestProperty("Authorization", "Bearer " + apiKey);
-              conn.setRequestProperty("Accept", "text/event-stream");
-              conn.setDoOutput(true);
-              conn.setConnectTimeout(10000);
-              conn.setReadTimeout(180000);
-
-              try (java.io.OutputStream os = conn.getOutputStream()) {
-                os.write(jsonBody.getBytes(java.nio.charset.StandardCharsets.UTF_8));
-                os.flush();
-              }
-
-              int responseCode = conn.getResponseCode();
-
-              // 429/503 重试
-              if ((responseCode == 429 || responseCode == 503) && attempt < maxRetries) {
-                onModel429();
-                java.io.InputStream errorStream = conn.getErrorStream();
-                String errorBody = errorStream != null ? new String(errorStream.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8) : "";
-                boolean isBalanceExhausted = errorBody.contains("1113") || errorBody.contains("余额不足");
-                if (isBalanceExhausted) {
-                  log.warn("[AiService SSE Batch] API返回余额不足(1113)，立即切换为glm-4-flash重试");
-                  activeModel = "glm-4-flash";
-                  model429Time = System.currentTimeMillis();
-                }
-                long waitMs = isBalanceExhausted ? 500 : (responseCode == 429
-                  ? (long) (5000 * Math.pow(3, attempt - 1))
-                  : (long) (3000 * Math.pow(2.5, attempt - 1)));
-                log.info("[AiService SSE Batch] 批次 {} 收到{}，{}ms后重试", batch + 1, responseCode, waitMs);
-                conn.disconnect(); conn = null;
-                try { Thread.sleep(waitMs); } catch (InterruptedException ie) { Thread.currentThread().interrupt(); }
-                continue;
-              }
-
-              if (responseCode != 200) {
-                java.io.InputStream errorStream = conn.getErrorStream();
-                String errorBody = errorStream != null ? new String(errorStream.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8) : "";
-                log.error("[AiService SSE Batch] 批次 {} API错误: HTTP {}", batch + 1, responseCode);
-                String friendlyMsg = friendlyAiError(responseCode, errorBody);
-                // 发送批次错误但继续下一批
-                emitter.send(SseEmitter.event().name("batch_error").data(
-                  objectMapper.writeValueAsString(Map.of("batch", batch + 1, "error", friendlyMsg))
-                ));
-                break;
-              }
-
-              // 读取 SSE 流
-              reader = new java.io.BufferedReader(new java.io.InputStreamReader(conn.getInputStream(), java.nio.charset.StandardCharsets.UTF_8));
-              StringBuilder batchContent = new StringBuilder();
-              StringBuilder batchReasoning = new StringBuilder();
-              String line;
-
-              while ((line = reader.readLine()) != null) {
-                String data = null;
-                if (line.startsWith("data: ")) data = line.substring(6).trim();
-                else if (line.startsWith("data:")) data = line.substring(5).trim();
-
-                if (data != null) {
-                  if ("[DONE]".equals(data)) {
-                    break;
-                  }
-                  try {
-                    @SuppressWarnings("unchecked")
-                    java.util.Map<String, Object> jsonMap = objectMapper.readValue(data, java.util.Map.class);
-                    @SuppressWarnings("unchecked")
-                    java.util.List<java.util.Map<String, Object>> choices =
-                      (java.util.List<java.util.Map<String, Object>>) jsonMap.get("choices");
-                    if (choices != null && !choices.isEmpty()) {
-                      @SuppressWarnings("unchecked")
-                      java.util.Map<String, Object> delta = (java.util.Map<String, Object>) choices.get(0).get("delta");
-                      if (delta != null) {
-                        String reasoningContent = delta.containsKey("reasoning_content") && delta.get("reasoning_content") != null
-                          ? String.valueOf(delta.get("reasoning_content")) : "";
-                        String content = delta.containsKey("content") && delta.get("content") != null
-                          ? String.valueOf(delta.get("content")) : "";
-
-                        if (!thinkingEnabled && !reasoningContent.isEmpty()) {
-                          reasoningContent = "";
-                        }
-
-                        if (!reasoningContent.isEmpty()) {
-                          batchReasoning.append(reasoningContent);
-                          allReasoning.append(reasoningContent);
-                          // 转发 reasoning chunk
-                          java.util.Map<String, Object> chunk = new java.util.LinkedHashMap<>();
-                          chunk.put("type", "reasoning");
-                          chunk.put("text", reasoningContent);
-                          emitter.send(SseEmitter.event().name("chunk").data(objectMapper.writeValueAsString(chunk)));
-                        }
-                        if (!content.isEmpty()) {
-                          batchContent.append(content);
-                          allContent.append(content);
-                          // 转发 content chunk
-                          java.util.Map<String, Object> chunk = new java.util.LinkedHashMap<>();
-                          chunk.put("type", "content");
-                          chunk.put("text", content);
-                          emitter.send(SseEmitter.event().name("chunk").data(objectMapper.writeValueAsString(chunk)));
-                        }
-                      }
-                    }
-                  } catch (Exception parseEx) {
-                    // skip malformed chunk
-                  }
-                }
-              }
-
-              // 本批完成，解析生成的题目数量
-              int batchGenerated = countQuestionsInContent(batchContent.toString());
-              generatedTotal += batchGenerated;
-              batchSuccess = true;
-              batchContents.add(batchContent.toString()); // 保存本批内容
-
-              log.info("[AiService SSE Batch] 批次 {}/{} 完成: 生成 {} 道题, 累计 {} 道",
-                batch + 1, totalBatches, batchGenerated, generatedTotal);
-
-              // 发送批次完成事件
-              emitter.send(SseEmitter.event().name("batch_progress").data(
-                objectMapper.writeValueAsString(Map.of(
-                  "batch", batch + 1, "totalBatches", totalBatches,
-                  "totalCount", totalCount, "generated", generatedTotal,
-                  "batchContent", batchContent.toString()
-                ))
-              ));
-
-              // 批次间短暂延迟，避免 API 限流
-              if (batch < totalBatches - 1) {
-                Thread.sleep(1000);
-              }
-              break; // 成功，跳出重试循环
-
-            } catch (Exception e) {
-              log.error("[AiService SSE Batch] 批次 {} 第{}次异常: {}", batch + 1, attempt, e.getMessage());
-              if (attempt >= maxRetries) {
-                emitter.send(SseEmitter.event().name("batch_error").data(
-                  objectMapper.writeValueAsString(Map.of("batch", batch + 1, "error", "批次生成失败: " + e.getMessage()))
-                ));
-              } else {
-                long waitMs = (long) (2000 * Math.pow(2, attempt - 1));
-                try { Thread.sleep(waitMs); } catch (InterruptedException ie) { Thread.currentThread().interrupt(); }
-              }
-            } finally {
-              if (reader != null) try { reader.close(); } catch (Exception ignored) {}
-              reader = null;
-              if (conn != null) try { conn.disconnect(); } catch (Exception ignored) {}
-              conn = null;
-            }
-          } // end retry loop
-        } // end batch loop
-
-        // 所有批次完成，合并所有批次的 JSON 数组为一个有效的 JSON 数组
-        long elapsed = System.currentTimeMillis() - startTime;
-        circuitBreaker.recordSuccess(circuitType);
-        recordLatency(elapsed, true);
-
-        // 合并多批 JSON 数组
-        String mergedContent = mergeBatchJsonArrays(batchContents);
-
-        java.util.Map<String, Object> donePayload = new java.util.LinkedHashMap<>();
-        donePayload.put("content", mergedContent);
-        donePayload.put("reasoning", allReasoning.toString());
-        donePayload.put("done", true);
-        donePayload.put("durationMs", elapsed);
-        donePayload.put("generatedTotal", generatedTotal);
-        donePayload.put("totalBatches", totalBatches);
-        emitter.send(SseEmitter.event().name("complete").data(objectMapper.writeValueAsString(donePayload)));
-        emitter.complete();
-
-      } catch (Exception e) {
-        log.error("[AiService SSE Batch] 分批出题异常: {}", e.getMessage());
-        try {
-          emitter.send(SseEmitter.event().name("error").data(
-            "{\"error\":\"分批出题失败: " + escapeJson(e.getMessage()) + "\"}"));
-          emitter.complete();
-        } catch (Exception ignored) {}
-      } finally {
-        batchDone.set(true);
-        heartbeatExec.shutdownNow();
-        semaphore.release();
-      }
-    }, aiTaskExecutor);
-  }
-
-  /**
-   * 从 AI 生成的内容中统计题目数量。
-   * 尝试解析 JSON 数组获取长度，失败则通过题号模式估算。
-   */
-  private int countQuestionsInContent(String content) {
-    if (content == null || content.isBlank()) return 0;
-    String cleaned = content.trim();
-    // 去除 markdown 代码块
-    if (cleaned.startsWith("```")) {
-      int firstNewline = cleaned.indexOf('\n');
-      if (firstNewline > 0) cleaned = cleaned.substring(firstNewline + 1);
-      if (cleaned.endsWith("```")) cleaned = cleaned.substring(0, cleaned.length() - 3);
-      cleaned = cleaned.trim();
-    }
-    // 尝试 JSON 数组解析
-    int arrStart = cleaned.indexOf('[');
-    int arrEnd = cleaned.lastIndexOf(']');
-    if (arrStart >= 0 && arrEnd > arrStart) {
-      try {
-        List<Map<String, Object>> parsed = objectMapper.readValue(
-          cleaned.substring(arrStart, arrEnd + 1), new TypeReference<>() {});
-        return parsed.size();
-      } catch (Exception ignored) {}
-    }
-    // 回退：通过题号模式估算
-    int count = 0;
-    java.util.regex.Matcher m = java.util.regex.Pattern.compile("(?:^|\\n)\\s*\\d+\\.\\s").matcher(cleaned);
-    while (m.find()) count++;
-    return Math.max(count, 1);
-  }
-
-  /**
-   * 合并多批次的 JSON 数组为一个有效的 JSON 数组字符串。
-   * 每批内容可能是独立的 JSON 数组（如 [{...},{...}]），需要合并为 [{...},{...},{...},{...}]。
-   */
-  private String mergeBatchJsonArrays(List<String> batchContents) {
-    if (batchContents == null || batchContents.isEmpty()) return "[]";
-    if (batchContents.size() == 1) return batchContents.get(0);
-
-    List<Map<String, Object>> allQuestions = new ArrayList<>();
-    for (String content : batchContents) {
-      if (content == null || content.isBlank()) continue;
-      String cleaned = content.trim();
-      // 去除 markdown 代码块
-      if (cleaned.startsWith("```")) {
-        int firstNewline = cleaned.indexOf('\n');
-        if (firstNewline > 0) cleaned = cleaned.substring(firstNewline + 1);
-        if (cleaned.endsWith("```")) cleaned = cleaned.substring(0, cleaned.length() - 3);
-        cleaned = cleaned.trim();
-      }
-      // 提取 JSON 数组
-      int arrStart = cleaned.indexOf('[');
-      int arrEnd = cleaned.lastIndexOf(']');
-      if (arrStart >= 0 && arrEnd > arrStart) {
-        try {
-          List<Map<String, Object>> parsed = objectMapper.readValue(
-            cleaned.substring(arrStart, arrEnd + 1), new TypeReference<>() {});
-          allQuestions.addAll(parsed);
-        } catch (Exception e) {
-          log.warn("[AiService] 合并批次JSON失败，跳过该批次: {}", e.getMessage());
-        }
-      }
-    }
-    try {
-      return objectMapper.writeValueAsString(allQuestions);
-    } catch (Exception e) {
-      log.error("[AiService] 序列化合并后的题目失败: {}", e.getMessage());
-      // 回退：直接拼接
-      StringBuilder sb = new StringBuilder("[");
-      for (int i = 0; i < batchContents.size(); i++) {
-        String c = batchContents.get(i).trim();
-        if (c.startsWith("[")) c = c.substring(1);
-        if (c.endsWith("]")) c = c.substring(0, c.length() - 1);
-        if (i > 0 && !c.isEmpty()) sb.append(",");
-        sb.append(c);
-      }
-      sb.append("]");
-      return sb.toString();
-    }
-  }
-
-  // ========== 流式练习/出题 ==========
 
   /**
    * Streaming version for practice questions (student)
@@ -1533,15 +1031,6 @@ public class AiService {
     if (!isRole(user, "student")) {
       try {
         emitter.send(SseEmitter.event().name("error").data("{\"error\":\"Forbidden\"}"));
-        emitter.complete();
-      } catch (Exception ex) {}
-      return;
-    }
-
-    // 熔断器检查
-    if (!circuitBreaker.allowRequest("practice")) {
-      try {
-        emitter.send(SseEmitter.event().name("error").data("{\"error\":\"AI 练习服务暂时不可用（熔断保护中），请稍后重试\"}"));
         emitter.complete();
       } catch (Exception ex) {}
       return;
@@ -1574,7 +1063,10 @@ public class AiService {
         // 从历史中推断意图参数
         UserIntent intent = inferIntentFromHistory(history);
         if (intent != null) {
-          streamIntent = intent;
+          int requestedCount = extractCountFromText(customPrompt);
+          streamIntent = new UserIntent(intent.subject, intent.difficulty, intent.knowledgePoint,
+              intent.intent, intent.type, requestedCount > 0 ? requestedCount : 5,
+              intent.language, intent.complexity);
         } else {
           intent = analyzeUserIntent(customPrompt);
           userPrompt = buildSmartUserPrompt(customPrompt, body, 200, intent);
@@ -1645,15 +1137,6 @@ public class AiService {
     if (!isRole(user, "teacher") && !isRole(user, "admin")) {
       try {
         emitter.send(SseEmitter.event().name("error").data("{\"error\":\"Forbidden\"}"));
-        emitter.complete();
-      } catch (Exception ex) {}
-      return;
-    }
-
-    // 熔断器检查
-    if (!circuitBreaker.allowRequest("generate")) {
-      try {
-        emitter.send(SseEmitter.event().name("error").data("{\"error\":\"AI 出题服务暂时不可用（熔断保护中），请稍后重试\"}"));
         emitter.complete();
       } catch (Exception ex) {}
       return;
@@ -1792,15 +1275,6 @@ public class AiService {
     if (user == null) {
       try {
         emitter.send(SseEmitter.event().name("error").data("{\"error\":\"Not authenticated\"}"));
-        emitter.complete();
-      } catch (Exception ex) {}
-      return;
-    }
-
-    // 熔断器检查
-    if (!circuitBreaker.allowRequest("chat")) {
-      try {
-        emitter.send(SseEmitter.event().name("error").data("{\"error\":\"AI 对话服务暂时不可用（熔断保护中），请稍后重试\"}"));
         emitter.complete();
       } catch (Exception ex) {}
       return;
@@ -1958,7 +1432,7 @@ public class AiService {
     int count = 5; // 默认续出5道
     // 从当前消息中提取数量（如"再出3道"）
     int extractedCount = extractCountFromText(currentMessage);
-    if (extractedCount > 0) count = Math.min(extractedCount, 20);
+    if (extractedCount > 0) count = extractedCount;
 
     sb.append("严格生成恰好 ").append(count).append(" 道题目，不要多也不要少。\n");
 
@@ -2199,6 +1673,7 @@ public class AiService {
     int maxRetries = 3;
     for (int attempt = 1; attempt <= maxRetries; attempt++) {
       try {
+        requestBody.put("model", getActiveModel());
         ResponseEntity<Map> response = restTemplate.exchange(apiUrl, HttpMethod.POST, entity, Map.class);
 
         if (response.getStatusCode() == HttpStatus.OK && response.getBody() != null) {
@@ -2250,26 +1725,6 @@ public class AiService {
     } finally {
       semaphore.release();
     }
-  }
-
-  /** Map raw AI API error codes to user-friendly Chinese messages */
-  private String friendlyAiError(int httpCode, String errorBody) {
-    if (errorBody != null && (errorBody.contains("1113") || errorBody.contains("余额不足"))) {
-      return "AI 模型余额不足，已自动切换为免费模型 glm-4-flash，请重试";
-    }
-    if (errorBody != null && (errorBody.contains("1305") || errorBody.contains("访问量过大"))) {
-      return "AI 模型当前访问量较大，已自动切换为稳定模型 glm-4-flash 重试";
-    }
-    return switch (httpCode) {
-      case 429 -> "AI 服务当前访问繁忙，系统正在自动重试中，请稍候...";
-      case 401 -> "AI API 密钥无效或已过期，请联系管理员更新";
-      case 403 -> "AI 服务权限不足，请联系管理员";
-      case 503 -> "AI 服务暂时不可用，系统正在自动重试...";
-      case 500 -> "AI 服务内部错误，请稍后重试";
-      case 502 -> "AI 服务网关错误，请稍后重试";
-      case 504 -> "AI 服务响应超时，请稍后重试";
-      default -> "AI 请求失败（HTTP " + httpCode + "），请稍后重试";
-    };
   }
 
   // ========== AI 评分辅助 ==========
@@ -3018,6 +2473,7 @@ public class AiService {
     int maxRetries = 2;
     for (int attempt = 0; attempt <= maxRetries; attempt++) {
       try {
+        requestBody.put("model", getActiveModel());
         ResponseEntity<Map> response = restTemplate.exchange(apiUrl, HttpMethod.POST, entity, Map.class);
         if (response.getStatusCode() == HttpStatus.OK && response.getBody() != null) {
           @SuppressWarnings("unchecked")

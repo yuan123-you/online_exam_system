@@ -147,9 +147,7 @@ class AiCircuitBreakerTest {
         void halfOpen_allowsOnlyOneProbeRequest() throws Exception {
             transitionToHalfOpen();
 
-            // 第一次在 HALF_OPEN 状态下的 allowRequest 会获取探测位，应通过
-            assertTrue(circuitBreaker.allowRequest("chat"));
-            // 第二次请求探测位已被占用，应被拒绝
+            // The OPEN -> HALF_OPEN admission already owns the single probe.
             assertFalse(circuitBreaker.allowRequest("chat"));
         }
 
@@ -241,4 +239,20 @@ class AiCircuitBreakerTest {
             assertFalse(circuitBreaker.allowRequest("chat"));
         }
     }
+    @Test void cancelledRequestDoesNotIncrementHealthyCircuitFailures() {
+        assertTrue(circuitBreaker.allowRequest("chat"));
+        circuitBreaker.cancelRequest("chat");
+        assertEquals(0, circuitBreaker.getCircuitStatus("chat").get("failureCount"));
+        assertEquals("CLOSED", circuitBreaker.getCircuitStatus("chat").get("state"));
+    }
+    @Test void cancelledRecoveryProbeReleasesReservation() throws Exception {
+        setField(circuitBreaker, "resetTimeoutSeconds", 0);
+        for (int i = 0; i < 3; i++) circuitBreaker.recordFailure("chat");
+        assertTrue(circuitBreaker.allowRequest("chat"));
+        assertFalse(circuitBreaker.allowRequest("chat"));
+        circuitBreaker.cancelRequest("chat");
+        assertTrue(circuitBreaker.allowRequest("chat"));
+        assertFalse(circuitBreaker.allowRequest("chat"));
+    }
+
 }
