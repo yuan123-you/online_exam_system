@@ -1891,7 +1891,7 @@ public class AiService {
     performance.put("failedRequests", failedRequests.get());
     performance.put("successRate", total > 0 ? String.format("%.1f%%", (double) success / total * 100) : "N/A");
     synchronized (this) {
-      performance.put("avgResponseTimeMs", total > 0 ? totalResponseTimeMs / success : 0);
+      performance.put("avgResponseTimeMs", success > 0 ? totalResponseTimeMs / success : 0L);
       performance.put("minResponseTimeMs", minResponseTimeMs == Long.MAX_VALUE ? 0 : minResponseTimeMs);
       performance.put("maxResponseTimeMs", maxResponseTimeMs);
       performance.put("lastResponseTimeMs", lastResponseTimeMs);

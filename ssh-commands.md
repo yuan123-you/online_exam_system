@@ -1,92 +1,49 @@
-## SSH 一键更新部署命令
+# 生产 SSH 更新部署
 
-以下命令在**本地电脑终端**中执行（非服务器上）。
+当前生产源站为 Oracle `129.151.25.15`，不再向旧 AWS 主机推送部署。项目目录 `/opt/online-exam`，服务 `online-exam`，后端实际端口 **8085**。
 
----
+现有域名保持不变：
+- `web.novo.ccwu.cc`：Oracle 的考试站点。
+- `exam.iflare.cn`：腾讯云 `82.157.148.104` 代理至 `129.151.25.15:443`，SNI 使用 `web.novo.ccwu.cc` 并验证源站证书。
 
-### 最常用：推送代码 + 自动更新服务器
+## PowerShell 连接
 
-```bash
-# 从项目根目录执行（先 cd 到项目目录）
-ssh ubuntu@54.179.150.131 'bash /opt/online-exam/update.sh'
+```powershell
+ssh -i "D:\zhixun\.ssh_key" ubuntu@129.151.25.15
 ```
 
----
+密钥文件只保留在本机，不复制到仓库、不输出内容。
 
-### 完整工作流：Git Push + SSH 远程更新
+## 推送并更新
+
+先保存、测试、提交并推送项目改动。在服务器确认源码没有未保存更改；生产环境文件和生成静态资源需先备份，不要盲目重置或把环境文件提交 Git。
+
+本地 Git Bash 可使用现有助手：
 
 ```bash
-cd "D:\Codex Web\20252160A1025游源" && git add -A && git commit -m "update: $(date +%Y-%m-%d)" && git push origin master && ssh ubuntu@54.179.150.131 'bash /opt/online-exam/update.sh'
+DEPLOY_SSH_KEY='D:/zhixun/.ssh_key' bash push-and-deploy.sh
 ```
 
----
+可用 `DEPLOY_SERVER` 覆盖目标；默认 `ubuntu@129.151.25.15`。助手调用服务器现有更新脚本，不处理跨版本第一次部署前的未知本地修改。
 
-### 只更新前端
-
-```bash
-ssh ubuntu@54.179.150.131 'bash /opt/online-exam/update.sh --frontend'
-```
-
-### 只更新后端
+服务器已更新到当前脚本版本后，可运行：
 
 ```bash
-ssh ubuntu@54.179.150.131 'bash /opt/online-exam/update.sh --backend'
-```
-
----
-
-### 使用本地辅助脚本（推荐，自动 commit + push + 远程更新）
-
-```bash
-bash push-and-deploy.sh                    # 自动 commit 消息
-bash push-and-deploy.sh "fix: 修复登录bug"  # 自定义 commit 消息
-bash push-and-deploy.sh --skip-push        # 跳过 push，只触发远程更新
-```
-
----
-
-### 服务器端直接操作（SSH 登录后）
-
-```bash
-# 完整更新
 bash /opt/online-exam/update.sh
-
-# 查看后端状态
-sudo systemctl status online-exam
-
-# 查看实时日志
-sudo journalctl -u online-exam -f
-
-# 手动重启后端
-sudo systemctl restart online-exam
-
-# 重新加载 Nginx
-sudo systemctl reload nginx
-
-# 查看部署日志
-tail -100 /opt/online-exam/deploy.log
 ```
 
----
+默认健康检查是 `http://127.0.0.1:8085/api/health`，可通过 `HEALTH_URL` 覆盖。不能用其他端口的根页面作为成功兜底。
 
-### 紧急回滚（服务器上）
+## 验收
 
 ```bash
-# 查看最近的备份
-ls -lt /opt/online-exam-backups/
-
-# 手动恢复某个备份
-BACKUP_NAME="update-20250616-120000"
-sudo cp -r /opt/online-exam-backups/$BACKUP_NAME/dist /opt/online-exam/dist
-sudo cp /opt/online-exam-backups/$BACKUP_NAME/online-exam-backend-1.0.0.jar /opt/online-exam/backend/target/
-sudo systemctl restart online-exam
-sudo systemctl reload nginx
+systemctl is-active online-exam nginx
+curl -fsS http://127.0.0.1:8085/api/health
+curl -fsS http://127.0.0.1:8085/api/ai/health
+curl -fsS https://web.novo.ccwu.cc/api/health
+curl -fsS https://exam.iflare.cn/api/health
 ```
 
----
+需要同时比对线上前端入口文件、Oracle 的 `dist/index.html` 与部署提交，不能只凭进程启动或普通健康接口判断 AI 和代理链路成功。
 
-### 完整重新部署（从零开始）
-
-```bash
-ssh ubuntu@54.179.150.131 'bash -s' < deploy.sh
-```
+首次将旧版本 Oracle 更新到本版本的步骤与回滚边界，参见 `docs/plans/2026-10-17-oracle-production-deployment.md`。不更换域名、不修改其他站点、不清空业务数据。

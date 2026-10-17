@@ -16,7 +16,7 @@ set -euo pipefail
 APP_DIR="/opt/online-exam"
 BACKUP_DIR="/opt/online-exam-backups"
 JAR_NAME="online-exam-backend-1.0.0.jar"
-HEALTH_URL="http://localhost:8080/api/health"
+HEALTH_URL="${HEALTH_URL:-http://127.0.0.1:8085/api/health}"
 HEALTH_RETRIES=12
 HEALTH_INTERVAL=5
 LOCK_FILE="${APP_DIR}/.update.lock"
@@ -308,7 +308,7 @@ if [ "$UPDATE_BACKEND" = true ]; then
     info "Running health check"
     HEALTH_OK=false
     for i in $(seq 1 $HEALTH_RETRIES); do
-        if curl -sf "$HEALTH_URL" > /dev/null 2>&1 || curl -sf http://localhost:8080/ > /dev/null 2>&1; then
+        if curl -sf "$HEALTH_URL" > /dev/null 2>&1; then
             HEALTH_OK=true
             break
         fi

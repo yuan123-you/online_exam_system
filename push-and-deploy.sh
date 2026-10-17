@@ -11,7 +11,11 @@
 #==============================================================
 set -euo pipefail
 
-SERVER="ubuntu@54.179.150.131"
+SERVER="${DEPLOY_SERVER:-ubuntu@129.151.25.15}"
+SSH_ARGS=()
+if [ -n "${DEPLOY_SSH_KEY:-}" ]; then
+    SSH_ARGS=(-i "$DEPLOY_SSH_KEY")
+fi
 PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
 BRANCH="master"
 
@@ -91,7 +95,7 @@ fi
 info "Connecting to server via SSH..."
 echo ""
 
-if ssh "$SERVER" "bash /opt/online-exam/update.sh"; then
+if ssh "${SSH_ARGS[@]}" "$SERVER" "bash /opt/online-exam/update.sh"; then
     echo ""
     success "Remote update finished!"
 else

@@ -211,4 +211,27 @@ class AiStreamFlowTest {
     assertFalse(mapper.readTree(requestBodies.get(1)).has("thinking"));
   }
 
+  @Test void failedRequestsRemainReportableThroughHealthEndpoint() {
+    providerReply = "data: [DONE]\n\n";
+    invoke("chat");
+    var response = assertDoesNotThrow(service::getHealthStatus);
+    var performance = (Map<?, ?>) ((Map<?, ?>) response.getBody()).get("performance");
+    assertEquals(1, performance.get("totalRequests"));
+    assertEquals(0, performance.get("successRequests"));
+    assertEquals(1, performance.get("failedRequests"));
+    assertEquals(0L, performance.get("avgResponseTimeMs"));
+  }
+  @Test void failedRequestsDoNotChangeSuccessfulResponseAverage() throws Exception {
+    providerReply = stream("normal answer");
+    invoke("chat");
+    var before = (Map<?, ?>) ((Map<?, ?>) service.getHealthStatus().getBody()).get("performance");
+    providerReply = "data: [DONE]\n\n";
+    invoke("chat");
+    var after = (Map<?, ?>) ((Map<?, ?>) service.getHealthStatus().getBody()).get("performance");
+    assertEquals(before.get("avgResponseTimeMs"), after.get("avgResponseTimeMs"));
+    assertEquals(2, after.get("totalRequests"));
+    assertEquals(1, after.get("successRequests"));
+    assertEquals(1, after.get("failedRequests"));
+  }
+
 }
