@@ -44,3 +44,6 @@ id_ed25519*
 .tmp_ssh/
 *-data-export.sql
 *data-dump*.sql
+
+# Python test bytecode
+__pycache__/

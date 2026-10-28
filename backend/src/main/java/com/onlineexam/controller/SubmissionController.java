@@ -55,13 +55,18 @@ public class SubmissionController {
     if (!isRole(user, "student")) return error(HttpStatus.FORBIDDEN, "Forbidden.");
     Map<String, Object> exam = find(store.exams, str(body, "examId"));
     if (exam == null || !examService.canStudentAccess(user, exam)) return error(HttpStatus.NOT_FOUND, "Exam not found.");
+    Map<String, Object> existing = examService.studentSubmission(store, str(exam, "id"), userId);
+    if (existing != null && (examService.effectiveDeadline(exam, existing).isEmpty()
+        || submissionService.isExpired(store, existing))) {
+      return error(HttpStatus.BAD_REQUEST, "考试已到期或截止时间无法确认，未保存逾期修改。");
+    }
     Map<String, Object> submission = examService.ensureStudentSession(store, exam, user);
     if (submission.containsKey("error")) return error(HttpStatus.BAD_REQUEST, str(submission, "error"));
     if (examService.remainingMs(submission) <= 0) return error(HttpStatus.BAD_REQUEST, "Exam time is over.");
     submission.put("answers", asList(body.get("answers")));
     submission.put("switchCount", asInt(body.get("switchCount")));
     submission.put("updatedAt", Instant.now().toString());
-    storeService.saveRecord("submissions", submission);
+    storeService.saveStudentSubmission(submission);
     systemLogService.log(user, "save submission", str(exam, "id"));
     return ResponseEntity.ok(mapOf("success", true, "submission", submission));
   }
@@ -78,8 +83,24 @@ public class SubmissionController {
     if (existing != null && (PENDING.equals(str(existing, "status")) || COMPLETED.equals(str(existing, "status")))) {
       return ResponseEntity.ok(mapOf("submission", submissionService.buildSubmissionReview(store, existing)));
     }
+    if (existing != null && examService.effectiveDeadline(exam, existing).isEmpty()) {
+      return error(HttpStatus.BAD_REQUEST, "考试截止时间无法确认，请联系老师。");
+    }
+    if (existing != null && submissionService.isExpired(store, existing)) {
+      Map<String, Object> settled = submissionService.settleExpiredSubmission(store, existing);
+      return ResponseEntity.ok(mapOf("submission", submissionService.buildSubmissionReview(store, settled)));
+    }
+    if (Boolean.TRUE.equals(body.get("autoSubmit")) && existing == null) {
+      return error(HttpStatus.BAD_REQUEST, "No active exam session.");
+    }
     Map<String, Object> submission = examService.ensureStudentSession(store, exam, user);
     if (submission.containsKey("error")) return error(HttpStatus.BAD_REQUEST, str(submission, "error"));
+    if (Boolean.TRUE.equals(body.get("autoSubmit"))) {
+      return ResponseEntity.ok(mapOf("sessionState", "active", "session", mapOf(
+          "submissionId", str(submission, "id"), "startedAt", submission.get("startedAt"), "deadlineAt", submission.get("deadlineAt"),
+          "switchCount", asInt(submission.get("switchCount")), "answers", asList(submission.get("answers")),
+          "remainingMs", examService.remainingMs(submission))));
+    }
     submission.put("answers", asList(body.get("answers")));
     submission.put("switchCount", asInt(body.get("switchCount")));
     List<String> reasons = new ArrayList<>();
@@ -96,7 +117,7 @@ public class SubmissionController {
     submission.put("suspicious", !reasons.isEmpty());
     submission.put("suspiciousReasons", reasons);
     submissionService.gradeSubmission(store, submission);
-    storeService.saveRecord("submissions", submission);
+    storeService.saveStudentSubmission(submission);
     if (COMPLETED.equals(str(submission, "status"))) submissionService.syncWrongBook(store, submission);
     systemLogService.log(user, "submit submission", str(exam, "id"));
     return ResponseEntity.ok(mapOf("submission", submissionService.buildSubmissionReview(store, submission)));

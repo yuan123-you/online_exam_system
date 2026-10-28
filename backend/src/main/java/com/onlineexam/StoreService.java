@@ -287,6 +287,63 @@ public class StoreService {
     }
   }
 
+  /** Student writes recheck server time after acquiring the current row lock. */
+  @Transactional
+  public void saveStudentSubmission(Map<String, Object> record) {
+    saveTimedSubmission(record, false);
+  }
+
+  /** Only server-saved answers may enter this path; stale revisions still fail the shared CAS. */
+  @Transactional
+  public void settleExpiredSubmission(Map<String, Object> record) {
+    saveTimedSubmission(record, true);
+  }
+
+  private void saveTimedSubmission(Map<String, Object> record, boolean expiredSettlement) {
+    invalidateCacheAtCompletion();
+    Timestamp requestedDeadline = submissionJson.timestamp(record.get("deadlineAt"));
+    if (requestedDeadline == null || (expiredSettlement && !record.containsKey("revision"))) {
+      throw new org.springframework.web.server.ResponseStatusException(org.springframework.http.HttpStatus.BAD_REQUEST, "考试截止时间无法确认，请联系老师。");
+    }
+    Instant deadline = requestedDeadline.toInstant();
+    boolean manuallyExtended = false;
+    if (record.containsKey("revision")) {
+      List<Map<String, Object>> rows = jdbc.queryForList(
+          "select deadline_at,status,manual_extended_minutes from submission where id=? and exam_id=? and student_id=? for update",
+          str(record, "id"), str(record, "examId"), str(record, "studentId"));
+      if (rows.isEmpty() || !"进行中".equals(str(rows.getFirst(), "status"))) {
+        throw new org.springframework.web.server.ResponseStatusException(org.springframework.http.HttpStatus.CONFLICT, "答题记录已变化，请刷新后重试。");
+      }
+      Timestamp persistedDeadline = submissionJson.timestamp(submissionJson.asIso(rows.getFirst().get("deadline_at")));
+      if (persistedDeadline == null) {
+        throw new org.springframework.web.server.ResponseStatusException(org.springframework.http.HttpStatus.BAD_REQUEST, "考试截止时间无法确认，请联系老师。");
+      }
+      deadline = persistedDeadline.toInstant();
+      manuallyExtended = asInt(rows.getFirst().get("manual_extended_minutes")) > 0;
+    }
+    // Do not authorize a timed write from a cached schedule that an administrator has since changed.
+    List<Map<String, Object>> exams = jdbc.queryForList("select end_time from exam where id=? and deleted=0", str(record, "examId"));
+    if (exams.isEmpty()) {
+      throw new org.springframework.web.server.ResponseStatusException(org.springframework.http.HttpStatus.CONFLICT, "考试已归档或发生变化，请刷新后重试。");
+    }
+    if (!manuallyExtended) {
+      Timestamp globalDeadline = submissionJson.timestamp(submissionJson.asIso(exams.getFirst().get("end_time")));
+      if (globalDeadline == null) {
+        throw new org.springframework.web.server.ResponseStatusException(org.springframework.http.HttpStatus.BAD_REQUEST, "考试截止时间无法确认，请联系老师。");
+      }
+      if (globalDeadline.toInstant().isBefore(deadline)) deadline = globalDeadline.toInstant();
+    }
+    // The check must be after the lock: a pre-deadline request can wait until after expiry.
+    boolean expired = !deadline.isAfter(Instant.now());
+    if (expiredSettlement != expired) {
+      throw new org.springframework.web.server.ResponseStatusException(org.springframework.http.HttpStatus.CONFLICT,
+          "考试时间或答题记录已变化，请刷新后重试；逾期修改未保存。");
+    }
+    record.put("deadlineAt", deadline.toString());
+    if (expiredSettlement) record.put("submittedAt", deadline.toString());
+    upsertSubmission(record);
+  }
+
   /** Creation has an explicit insert-only authority, never an implicit update on a key collision. */
   @Transactional
   public void createRecord(String entity, Map<String,Object> record) {

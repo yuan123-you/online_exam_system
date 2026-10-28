@@ -1,4 +1,4 @@
-import { computed } from 'vue'
+import { computed, type ComputedRef } from 'vue'
 import { useDeviceType } from './useDeviceType'
 
 export type TableMode = 'cards' | 'compact' | 'full'
@@ -9,9 +9,9 @@ export interface ResponsiveLayout {
   isMobile: ReturnType<typeof useDeviceType>['isMobile']
   isTablet: ReturnType<typeof useDeviceType>['isTablet']
   isDesktop: ReturnType<typeof useDeviceType>['isDesktop']
-  tableMode: ReturnType<typeof computed<TableMode>>
-  formLayout: ReturnType<typeof computed<FormLayout>>
-  sidebarMode: ReturnType<typeof computed<SidebarMode>>
+  tableMode: ComputedRef<TableMode>
+  formLayout: ComputedRef<FormLayout>
+  sidebarMode: ComputedRef<SidebarMode>
 }
 
 /**

@@ -48,9 +48,10 @@
         </div>
 
         <div class="exam-sidebar-actions">
-          <button class="ghost-btn" type="button" @click="saveDraft(false)">保存答卷</button>
-          <button class="primary-btn" type="button" :disabled="submitting" @click="submitPaper">{{ submitting ? '提交中...' : '提交试卷' }}</button>
+          <button class="ghost-btn" type="button" :disabled="submitting || expired || finished" @click="saveDraft(false)">保存答卷</button>
+          <button class="primary-btn" type="button" :disabled="submitting || finished" @click="submitPaper()">{{ submitting ? '提交中...' : '提交试卷' }}</button>
         </div>
+        <p class="muted">到期后仅按服务端已保存的答案结算，逾期修改不会保存。</p>
         <p class="message" style="color:#60a5fa;">{{ message }}</p>
       </aside>
 
@@ -68,7 +69,7 @@
 
           <div v-if="currentQuestion.type === 'single' || currentQuestion.type === 'judge'" class="option-list">
             <label v-for="(option, oi) in currentQuestion.options" :key="option" class="option-item">
-              <input v-model="singleAnswer" :value="option" name="singleAnswer" type="radio" />
+              <input v-model="singleAnswer" :value="option" name="singleAnswer" type="radio" :disabled="submitting || expired || finished" />
               <span class="option-letter">{{ String.fromCharCode(65 + oi) }}</span>
               <span class="option-text" v-html="renderInlineRichContent(stripOptionPrefix(option))"></span>
             </label>
@@ -76,13 +77,13 @@
 
           <div v-else-if="currentQuestion.type === 'multiple'" class="option-list">
             <label v-for="(option, oi) in currentQuestion.options" :key="option" class="option-item">
-              <input v-model="multipleAnswer" :value="option" type="checkbox" />
+              <input v-model="multipleAnswer" :value="option" type="checkbox" :disabled="submitting || expired || finished" />
               <span class="option-letter">{{ String.fromCharCode(65 + oi) }}</span>
               <span class="option-text" v-html="renderInlineRichContent(stripOptionPrefix(option))"></span>
             </label>
           </div>
 
-          <textarea v-else v-model="textAnswer" class="exam-textarea" placeholder="请输入你的答案"></textarea>
+          <textarea v-else v-model="textAnswer" :disabled="submitting || expired || finished" class="exam-textarea" placeholder="请输入你的答案"></textarea>
         </div>
 
         <div class="exam-nav-footer">
@@ -126,6 +127,7 @@ const answerMap = ref<Record<string, string[]>>(
 const deadlineAt = ref(props.exam.session?.deadlineAt || new Date().toISOString());
 const switchCount = ref(props.exam.session?.switchCount || 0);
 const submitting = ref(false);
+const finished = ref(false);
 const message = ref("");
 
 const singleAnswer = ref("");
@@ -134,9 +136,14 @@ const textAnswer = ref("");
 
 // Reactive now — updated every second to drive countdown display
 const now = ref(Date.now());
+// Use server-reported remaining time, not an assumption that the browser clock is synchronized.
+const clockOffsetMs = ref(props.exam.session
+  ? new Date(deadlineAt.value).getTime() - props.exam.session.remainingMs - Date.now()
+  : 0);
+const expired = computed(() => new Date(deadlineAt.value).getTime() <= now.value + clockOffsetMs.value);
 
 const currentQuestion = computed(() => props.exam.questions[currentIndex.value]);
-const countdown = computed(() => formatDuration(Math.max(0, new Date(deadlineAt.value).getTime() - now.value)));
+const countdown = computed(() => formatDuration(Math.max(0, new Date(deadlineAt.value).getTime() - now.value - clockOffsetMs.value)));
 const answeredCount = computed(() => Object.values(answerMap.value).filter((a) => a.length > 0).length);
 const progressPercent = computed(() => Math.round((answeredCount.value / props.exam.questions.length) * 100));
 const isUrgent = computed(() => {
@@ -175,27 +182,35 @@ function buildAnswers(): AnswerPayload[] {
 }
 
 async function saveDraft(silent = true) {
-  persistCurrentAnswer();
-  const result = await saveSubmission(props.exam.id, buildAnswers(), switchCount.value);
-  if (result.submission?.deadlineAt) {
-    deadlineAt.value = result.submission.deadlineAt;
-  }
-  if (!silent) {
-    message.value = "答卷已保存。";
-    setTimeout(() => {
-      if (message.value === "答卷已保存。") message.value = "";
-    }, 2000);
-  }
-  emit("refreshed");
-}
-
-async function submitPaper() {
-  if (submitting.value) return;
-  submitting.value = true;
+  if (finished.value || submitting.value || new Date(deadlineAt.value).getTime() <= Date.now() + clockOffsetMs.value) return;
   try {
     persistCurrentAnswer();
-    await submitSubmission(props.exam.id, buildAnswers(), switchCount.value);
+    const result = await saveSubmission(props.exam.id, buildAnswers(), switchCount.value);
+    if (result.submission?.deadlineAt) deadlineAt.value = result.submission.deadlineAt;
+    if (!silent) message.value = "答卷已保存。";
+    emit("refreshed");
+  } catch (error: unknown) {
+    message.value = error instanceof Error ? error.message : "答卷保存失败，请重试。";
+  }
+}
+
+async function submitPaper(automatic = false) {
+  if (submitting.value || finished.value) return;
+  submitting.value = true;
+  try {
+    if (!automatic && !expired.value) persistCurrentAnswer();
+    const result = await submitSubmission(props.exam.id, buildAnswers(), switchCount.value, automatic);
+    if (result.sessionState === 'active') {
+      deadlineAt.value = result.session.deadlineAt;
+      clockOffsetMs.value = new Date(deadlineAt.value).getTime() - result.session.remainingMs - Date.now();
+      now.value = Date.now();
+      message.value = "考试仍有效，已同步服务端截止时间。";
+      return;
+    }
+    finished.value = true;
     emit("submitted");
+  } catch (error: unknown) {
+    message.value = error instanceof Error ? error.message : "交卷失败，请稍后重试。";
   } finally {
     submitting.value = false;
   }
@@ -237,8 +252,8 @@ onMounted(() => {
     now.value = Date.now();
   }, 1000);
   timer = window.setInterval(() => {
-    if (new Date(deadlineAt.value).getTime() <= Date.now()) {
-      submitPaper().catch(() => undefined);
+    if (!finished.value && new Date(deadlineAt.value).getTime() <= Date.now() + clockOffsetMs.value) {
+      submitPaper(true).catch(() => undefined);
     }
   }, 1000);
   autoSaveTimer = window.setInterval(() => {

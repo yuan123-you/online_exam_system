@@ -20,6 +20,8 @@ import org.springframework.stereotype.Service;
 @Service
 public class SubmissionService {
 
+  private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(SubmissionService.class);
+
   private static final String RUNNING = "\u8fdb\u884c\u4e2d";
   private static final String ENDED = "\u5df2\u7ed3\u675f";
   private static final String PENDING = "\u5f85\u9605\u5377";
@@ -75,6 +77,39 @@ public class SubmissionService {
     submission.put("status", needsManual ? PENDING : COMPLETED);
     submission.put("submittedAt", now());
     submission.put("updatedAt", now());
+  }
+
+  public boolean isExpired(Store store, Map<String, Object> submission) {
+    if (!RUNNING.equals(str(submission, "status"))) return false;
+    Map<String, Object> exam = find(store.exams, str(submission, "examId"));
+    return exam != null && examService.effectiveDeadline(exam, submission)
+        .map(deadline -> !deadline.isAfter(Instant.now())).orElse(false);
+  }
+
+  /** Shared by timeout requests, restoration and the server sweep; never accepts request answers. */
+  public Map<String, Object> settleExpiredSubmission(Store store, Map<String, Object> saved) {
+    if (!isExpired(store, saved)) {
+      throw new org.springframework.web.server.ResponseStatusException(org.springframework.http.HttpStatus.CONFLICT, "考试仍有效或答题记录已变化，请刷新后重试。");
+    }
+    Map<String, Object> exam = find(store.exams, str(saved, "examId"));
+    Instant deadline = examService.effectiveDeadline(exam, saved).orElseThrow();
+    Map<String, Object> settled = new LinkedHashMap<>(saved);
+    settled.put("deadlineAt", deadline.toString());
+    gradeSubmission(store, settled);
+    settled.put("submittedAt", deadline.toString());
+    boolean suspicious = asInt(saved.get("switchCount")) > asInt(exam.get("antiCheatLimit"));
+    settled.put("suspicious", suspicious);
+    settled.put("suspiciousReasons", suspicious ? List.of("切屏次数超限") : List.of());
+    storeService.settleExpiredSubmission(settled);
+    // The grade has committed. Secondary failures must not invite a second submission.
+    if (COMPLETED.equals(str(settled, "status"))) {
+      try { syncWrongBook(store, settled); }
+      catch (RuntimeException failure) { log.warn("Automatic submission wrong-book sync failed: {}", failure.getClass().getSimpleName()); }
+    }
+    Map<String, Object> student = find(store.users, str(saved, "studentId"));
+    try { systemLogService.log(student, "auto submit submission", str(saved, "examId")); }
+    catch (RuntimeException failure) { log.warn("Automatic submission audit log failed: {}", failure.getClass().getSimpleName()); }
+    return settled;
   }
 
   /**
@@ -148,7 +183,7 @@ public class SubmissionService {
       expected = ChoiceAnswers.forScoring(question.get("options"), expected);
     }
     Boolean correct = null;
-    if ("single".equals(type) || "judge".equals(type)) correct = !given.isEmpty() && !expected.isEmpty() && Objects.equals(given.get(0), expected.get(0));
+    if ("single".equals(type) || "judge".equals(type)) correct = given.size() == 1 && expected.size() == 1 && Objects.equals(given.get(0), expected.get(0));
     else if ("multiple".equals(type)) correct = new HashSet<>(given).equals(new HashSet<>(expected)) && given.size() == expected.size();
     else if ("fill".equals(type)) correct = !given.isEmpty() && !expected.isEmpty() && norm(given.get(0)).equals(norm(expected.get(0)));
     else if (allowSubjectiveAuto) correct = norm(String.join("\n", given)).equals(norm(String.join("\n", expected))) && !given.isEmpty();

@@ -19,7 +19,7 @@
 <script setup lang="ts">
 import { computed } from "vue";
 import BaseModal from "../common/BaseModal.vue";
-import type { BootstrapData, Paper } from "../../types";
+import type { BootstrapData, Paper, Question } from "../../types";
 import { typeLabel } from "../../utils/format";
 
 const props = defineProps<{
@@ -34,6 +34,6 @@ defineEmits<{
 const questions = computed(() =>
   props.paper.questionIds
     .map((id) => props.bootstrap.questions.find((item) => item.id === id))
-    .filter(Boolean)
+    .filter((item): item is Question => item !== undefined)
 );
 </script>

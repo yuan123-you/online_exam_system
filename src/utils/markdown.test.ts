@@ -1,3 +1,4 @@
+import katex from "katex";
 import { describe, it, expect } from "vitest";
 import { renderRichContent, renderInlineRichContent, escapeHtml } from "./markdown";
 
@@ -53,5 +54,28 @@ describe("markdown utils", () => {
       expect(html).toContain('<strong>注意</strong>');
       expect(html).toContain("<br>");
     });
+  });
+});
+
+
+describe("KaTeX security compatibility", () => {
+  it("does not enable trusted HTML from an inherited renderer option", () => {
+    const options = { throwOnError: false, strict: false };
+    Object.setPrototypeOf(options, { trust: true });
+    const html = katex.renderToString("\\href{https://example.invalid/security-check}{x}", options);
+    expect(html).not.toContain('href=');
+  });
+
+  it("still renders representative teaching formulas after the security upgrade", () => {
+    const formulas = [
+      String.raw`\frac{-b \pm \sqrt{b^2 - 4ac}}{2a}`,
+      String.raw`\int_0^1 x^2 \, dx = \frac{1}{3}`,
+      String.raw`\begin{pmatrix}1 & 2 \\ 3 & 4\end{pmatrix}`,
+    ];
+    for (const formula of formulas) {
+      const html = renderInlineRichContent('$' + formula + '$');
+      expect(html).toContain('class="katex"');
+      expect(html).not.toContain('katex-error');
+    }
   });
 });

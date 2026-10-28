@@ -21,8 +21,8 @@ function log(msg) {
 }
 
 function verifySignature(payload, signature) {
-  if (!SECRET) return true;  // No secret configured, skip verification
-  if (!signature) return false;
+  if (!SECRET) return false;  // Never allow unauthenticated deployment
+  if (typeof signature !== 'string' || !/^sha256=[0-9a-f]{64}$/.test(signature)) return false;
   const sig = `sha256=${crypto.createHmac('sha256', SECRET).update(payload).digest('hex')}`;
   return crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(signature));
 }

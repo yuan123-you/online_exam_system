@@ -129,7 +129,7 @@ describe('PaginationBar', () => {
 
     it('省略号按钮被禁用', () => {
       const wrapper = mountBar({ total: 200, currentPage: 10, pageSize: 10, maxVisiblePages: 5 })
-      const ellipsisBtn = wrapper.findAll('.pagination-btn.ellipsis').at(0)
+      const ellipsisBtn = wrapper.findAll('.pagination-btn.ellipsis')[0]
       expect(ellipsisBtn?.attributes('disabled')).toBeDefined()
     })
 

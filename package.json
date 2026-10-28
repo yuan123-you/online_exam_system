@@ -11,6 +11,9 @@
     "preview:web": "vite preview",
     "test:smoke": "node scripts/smoke-test.js",
     "test": "vitest run",
+    "typecheck": "vue-tsc --noEmit",
+    "test:webhook": "node --test tests/auto-deploy-webhook.test.cjs",
+    "test:dependencies": "node --test tests/dependency-security.test.cjs",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "verify:build": "node scripts/verify-build-consistency.js",
@@ -22,22 +25,21 @@
   "description": "",
   "dependencies": {
     "echarts": "^6.0.0",
-    "katex": "^0.17.0",
-    "pdfjs-dist": "^5.6.205",
+    "katex": "^0.18.10",
     "pinia": "^2.3.1",
     "tslib": "^2.8.1",
-    "vue": "^3.5.22",
+    "vue": "^3.5.44",
     "vue-router": "^4.6.4"
   },
   "devDependencies": {
     "@types/node": "^25.6.0",
     "@vitejs/plugin-vue": "^6.0.6",
-    "@vitest/coverage-v8": "^4.1.9",
+    "@vitest/coverage-v8": "^4.1.12",
     "@vue/test-utils": "^2.4.11",
-    "happy-dom": "^20.10.3",
+    "happy-dom": "^21.0.4",
     "typescript": "^6.0.3",
     "vite": "^8.0.10",
-    "vitest": "^4.1.9",
+    "vitest": "^4.1.12",
     "vue-tsc": "^3.2.7"
   }
 }

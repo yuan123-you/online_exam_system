@@ -70,13 +70,17 @@ public class ExamService {
    * 确保学生考试会话
    */
   public Map<String, Object> ensureStudentSession(Store store, Map<String, Object> exam, Map<String, Object> user) {
-    String status = examStatus(exam);
-    if (UPCOMING.equals(status)) return mapOf("error", "Exam has not started.");
-    if (ENDED.equals(status)) return mapOf("error", ENDED);
     Map<String, Object> existing = studentSubmission(store, str(exam, "id"), str(user, "id"));
     if (existing != null && (PENDING.equals(str(existing, "status")) || COMPLETED.equals(str(existing, "status")))) {
       return mapOf("error", "Submission already finished.");
     }
+    String status = examStatus(exam);
+    if (UPCOMING.equals(status)) return mapOf("error", "Exam has not started.");
+    // A persisted teacher extension can outlive the global schedule, but cannot create or revive a session.
+    boolean activeExtension = existing != null && RUNNING.equals(str(existing, "status"))
+        && (asInt(existing.get("manualExtendedMinutes")) > 0 || Boolean.TRUE.equals(existing.get("manualExtended")))
+        && remainingMs(existing) > 0;
+    if (ENDED.equals(status) && !activeExtension) return mapOf("error", ENDED);
     Map<String, Object> paper = ExamContent.paper(store, exam);
     if (paper == null) return mapOf("error", "Paper not found.");
     List<Map<String, Object>> contentQuestions = ExamContent.questions(store, exam);
@@ -110,10 +114,12 @@ public class ExamService {
     }
     session.put("status", RUNNING);
     session.putIfAbsent("startedAt", now());
-    // Only set deadline if not already manually extended by teacher
-    if (!session.containsKey("deadlineAt")
-        || (asInt(session.get("manualExtendedMinutes")) <= 0 && !Boolean.TRUE.equals(session.get("manualExtended")))) {
+    if (existing == null) {
       session.put("deadlineAt", computeDeadline(exam, paper, str(session, "startedAt")));
+    } else {
+      Optional<Instant> deadline = effectiveDeadline(exam, existing);
+      if (deadline.isEmpty()) return mapOf("error", "考试截止时间无法确认，请联系老师。");
+      session.put("deadlineAt", deadline.get().toString());
     }
     session.put("updatedAt", now());
     return session;
@@ -169,6 +175,16 @@ public class ExamService {
     Instant started = parseInstant(startedAt).orElse(Instant.now());
     Instant deadline = started.plusSeconds(asInt(paper.get("durationMinutes")) * 60L);
     return deadline.isBefore(end) ? deadline.toString() : end.toString();
+  }
+
+  /** Persisted personal deadlines cannot silently renew; only a teacher extension can outlive the schedule. */
+  public Optional<Instant> effectiveDeadline(Map<String, Object> exam, Map<String, Object> submission) {
+    Optional<Instant> individual = parseInstant(str(submission, "deadlineAt"));
+    if (individual.isEmpty()) return Optional.empty();
+    if (asInt(submission.get("manualExtendedMinutes")) > 0 || Boolean.TRUE.equals(submission.get("manualExtended"))) return individual;
+    Optional<Instant> global = parseInstant(str(exam, "endTime"));
+    if (global.isEmpty()) return Optional.empty();
+    return Optional.of(individual.get().isBefore(global.get()) ? individual.get() : global.get());
   }
 
   /**

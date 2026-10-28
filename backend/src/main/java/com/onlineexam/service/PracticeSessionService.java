@@ -275,6 +275,7 @@ public class PracticeSessionService {
       jdbc.update("DELETE FROM practice_question WHERE session_id = ?", sessionId);
     } catch (Exception e) {
       log.error("Failed to clear old questions: {}", e.getMessage());
+      throw e;
     }
 
     for (int i = 0; i < questions.size(); i++) {
@@ -308,6 +309,7 @@ public class PracticeSessionService {
         savedCount++;
       } catch (Exception e) {
         log.error("Failed to save question {}: {}", i, e.getMessage());
+        throw e;
       }
     }
 
@@ -319,6 +321,7 @@ public class PracticeSessionService {
       );
     } catch (Exception e) {
       log.error("Failed to update session: {}", e.getMessage());
+      throw e;
     }
 
     return ResponseEntity.ok(mapOf("savedCount", savedCount, "sessionId", sessionId));
@@ -334,17 +337,8 @@ public class PracticeSessionService {
       return error(HttpStatus.NOT_FOUND, "Practice question not found.");
     }
 
-    @SuppressWarnings("unchecked")
-    List<Object> answer = (List<Object>) body.get("answer");
-    if (answer == null) {
-      // 也支持字符串答案（填空题/简答题）
-      Object answerObj = body.get("answer");
-      if (answerObj instanceof String && !((String) answerObj).isBlank()) {
-        answer = List.of(answerObj);
-      } else {
-        return error(HttpStatus.BAD_REQUEST, "No answer provided.");
-      }
-    }
+    List<Object> answer = answerValues(body.get("answer"));
+    if (answer == null) return error(HttpStatus.BAD_REQUEST, "No answer provided.");
 
     String answerJson;
     try {
@@ -368,7 +362,7 @@ public class PracticeSessionService {
       }
     } catch (Exception e) {
       log.error("Failed to save answer: {}", e.getMessage());
-      return error(HttpStatus.INTERNAL_SERVER_ERROR, "Failed to save answer.");
+      throw e;
     }
 
     return ResponseEntity.ok(mapOf("saved", true, "questionId", questionId));
@@ -394,16 +388,8 @@ public class PracticeSessionService {
 
     for (Map<String, Object> item : answers) {
       int questionIndex = asInt(item.get("questionIndex"));
-      @SuppressWarnings("unchecked")
-      List<Object> answer = (List<Object>) item.get("answer");
-      if (answer == null) {
-        Object answerObj = item.get("answer");
-        if (answerObj instanceof String && !((String) answerObj).isBlank()) {
-          answer = List.of(answerObj);
-        } else {
-          continue;
-        }
-      }
+      List<Object> answer = answerValues(item.get("answer"));
+      if (answer == null) continue;
 
       String answerJson;
       try {
@@ -420,15 +406,12 @@ public class PracticeSessionService {
         if (updated > 0) savedCount++;
       } catch (Exception e) {
         log.error("Failed to save answer for question {}: {}", questionIndex, e.getMessage());
+        throw e;
       }
     }
 
-    // 更新会话时间戳
-    try {
-      jdbc.update("UPDATE practice_session SET updated_at = ? WHERE id = ?", nowStr, sessionId);
-    } catch (Exception e) {
-      // non-critical
-    }
+    // 更新会话时间戳；失败时同一事务中的答案也必须回滚
+    jdbc.update("UPDATE practice_session SET updated_at = ? WHERE id = ?", nowStr, sessionId);
 
     return ResponseEntity.ok(mapOf("savedCount", savedCount));
   }
@@ -488,10 +471,8 @@ public class PracticeSessionService {
         if (answerEntries != null) {
           for (Map<String, Object> entry : answerEntries) {
             if (asInt(entry.get("questionIndex")) == qIndex) {
-              Object ans = entry.get("answer");
-              if (ans instanceof List) {
-                userAnswer = (List<Object>) ans;
-              }
+              List<Object> latestAnswer = answerValues(entry.get("answer"));
+              if (latestAnswer != null) userAnswer = latestAnswer;
               break;
             }
           }
@@ -525,7 +506,7 @@ public class PracticeSessionService {
 
     } catch (Exception e) {
       log.error("Failed to submit session: {}", e.getMessage());
-      return error(HttpStatus.INTERNAL_SERVER_ERROR, "Failed to submit practice session.");
+      throw e;
     }
 
     return ResponseEntity.ok(mapOf(
@@ -547,7 +528,8 @@ public class PracticeSessionService {
       if (deleted == 0) return error(HttpStatus.NOT_FOUND, "Practice session not found.");
       jdbc.update("DELETE FROM practice_question WHERE session_id = ?", sessionId);
     } catch (Exception e) {
-      // Table may not exist yet
+      log.error("Failed to delete practice session: {}", e.getMessage());
+      throw e;
     }
     return ResponseEntity.ok(mapOf("deleted", true));
   }
@@ -574,6 +556,13 @@ public class PracticeSessionService {
     } catch (Exception e) {
       return false;
     }
+  }
+
+  /** Accept the string and array answer forms exposed by the practice API. */
+  private List<Object> answerValues(Object raw) {
+    if (raw instanceof List<?> values) return new ArrayList<>(values);
+    if (raw instanceof String value && !value.isBlank()) return List.of(value);
+    return null;
   }
 
   /** 比较用户答案和正确答案 */

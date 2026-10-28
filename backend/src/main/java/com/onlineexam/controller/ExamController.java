@@ -70,6 +70,16 @@ public class ExamController {
       return ResponseEntity.ok(examService.buildExamSnapshot(store, exam, false, null, null));
     }
     if (!examService.canStudentAccess(user, exam)) return error(HttpStatus.FORBIDDEN, "Forbidden.");
+    Map<String, Object> existing = examService.studentSubmission(store, examId, userId);
+    if (existing != null && RUNNING.equals(str(existing, "status"))) {
+      if (examService.effectiveDeadline(exam, existing).isEmpty()) return error(HttpStatus.BAD_REQUEST, "考试截止时间无法确认，请联系老师。");
+      if (submissionService.isExpired(store, existing)) {
+        submissionService.settleExpiredSubmission(store, existing);
+        Map<String, Object> snapshot = examService.buildExamSnapshot(store, exam, true, null, null);
+        snapshot.put("sessionState", "finished");
+        return ResponseEntity.ok(snapshot);
+      }
+    }
     Map<String, Object> submission = examService.ensureStudentSession(store, exam, user);
     if (submission.containsKey("error")) {
       String errorMessage = str(submission, "error");

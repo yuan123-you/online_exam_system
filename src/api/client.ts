@@ -1,5 +1,5 @@
 import { streamAiResponse } from './aiStream';
-import type { BootstrapData, ExamDetail, SubmissionReview, User, WrongBookEntry } from "../types";
+import type { BootstrapData, ExamDetail, ExamSessionState, SubmissionReview, User, WrongBookEntry } from "../types";
 import { normalizeApiData } from "../utils/text";
 
 let currentAuthToken = "";
@@ -116,10 +116,14 @@ export function saveSubmission(examId: string, answers: Array<{ questionId: stri
   });
 }
 
-export function submitSubmission(examId: string, answers: Array<{ questionId: string; answer: string[] }>, switchCount: number) {
-  return request<{ submission: SubmissionReview }>("/api/submissions/submit", {
+export type SubmissionResult =
+  | { submission: SubmissionReview; sessionState?: 'finished' }
+  | { sessionState: 'active'; session: ExamSessionState };
+
+export function submitSubmission(examId: string, answers: Array<{ questionId: string; answer: string[] }>, switchCount: number, automatic = false) {
+  return request<SubmissionResult>("/api/submissions/submit", {
     method: "POST",
-    body: JSON.stringify({ examId, answers, switchCount }),
+    body: JSON.stringify({ examId, answers, switchCount, ...(automatic ? { autoSubmit: true } : {}) }),
   });
 }
 

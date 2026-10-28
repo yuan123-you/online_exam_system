@@ -141,6 +141,7 @@ import { useAppStore } from '@/stores/app'
 import { classAnalysis } from '@/api/client'
 import type { ClassAnalysisResult, ClassAnalysisItem } from '@/api/client'
 import ChartCard from '@/components/common/ChartCard.vue'
+import type { EChartsOption } from 'echarts'
 
 const store = useAppStore()
 const selectedExamId = ref('')
@@ -165,24 +166,31 @@ function distPct(cls: ClassAnalysisItem, key: string): string {
   return Math.round(val / total * 100) + '%'
 }
 
+let analysisRequestId = 0
+
 async function loadAnalysis() {
+  const requestId = ++analysisRequestId
+  analysisData.value = null
+  selectedClassId.value = ''
   if (!selectedExamId.value) {
-    analysisData.value = null
+    loading.value = false
     return
   }
   loading.value = true
   try {
-    analysisData.value = await classAnalysis(selectedExamId.value)
-    selectedClassId.value = ''
-  } catch (err: any) {
-    store.showToast(err?.message || '加载班级分析失败', 'error')
+    const result = await classAnalysis(selectedExamId.value)
+    if (requestId === analysisRequestId) analysisData.value = result
+  } catch (err: unknown) {
+    if (requestId === analysisRequestId) {
+      store.showToast(err instanceof Error ? err.message : '加载班级分析失败', 'error')
+    }
   } finally {
-    loading.value = false
+    if (requestId === analysisRequestId) loading.value = false
   }
 }
 
 // 班级综合对比图表
-const comparisonChartOption = computed(() => {
+const comparisonChartOption = computed<EChartsOption>(() => {
   if (!analysisData.value) return {}
   const classes = analysisData.value.classes
   const names = classes.map(c => c.className)
@@ -205,7 +213,7 @@ const comparisonChartOption = computed(() => {
 })
 
 // 分数段分布堆叠柱状图
-const distributionChartOption = computed(() => {
+const distributionChartOption = computed<EChartsOption>(() => {
   if (!analysisData.value) return {}
   const classes = analysisData.value.classes
   const names = classes.map(c => c.className)
